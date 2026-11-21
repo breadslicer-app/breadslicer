@@ -10487,3 +10487,387 @@ msgid "Caliper repaired {n} object."
 msgid_plural "Caliper repaired {n} objects."
 msgstr[0] "Caliper reparó {n} objeto."
 msgstr[1] "Caliper reparó {n} objetos."
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "General"
+msgstr "General"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Language, the start card and the messages you silenced."
+msgstr "El idioma, la tarjeta de inicio y los mensajes que silenciaste."
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "LANGUAGE"
+msgstr "IDIOMA"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "System follows Windows."
+msgstr "Sistema sigue a Windows."
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "STARTING"
+msgstr "AL ABRIR"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Start card"
+msgstr "Tarjeta de inicio"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Recent files and how to begin, when Breadslicer opens without a file."
+msgstr "Los archivos recientes y cómo empezar, cuando Breadslicer abre sin un archivo."
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "MESSAGES"
+msgstr "MENSAJES"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Messages you silenced"
+msgstr "Mensajes que silenciaste"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "None: every message shows."
+msgstr "Ninguno: se muestran todos los mensajes."
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Show them again"
+msgstr "Volver a mostrarlos"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Look and feel"
+msgstr "Aspecto"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "How Breadslicer looks and how fast it draws."
+msgstr "Cómo se ve Breadslicer y qué tan rápido dibuja."
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "WINDOW"
+msgstr "VENTANA"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Softens the facets of models with few triangles. Supports are always smooth."
+msgstr "Suaviza las caras de los modelos con pocos triángulos. Los soportes siempre se ven suaves."
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "SPEED"
+msgstr "VELOCIDAD"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Draws a heavy scene for about 10 s and recommends a frame rate."
+msgstr "Dibuja una escena pesada unos 10 s y recomienda los cuadros por segundo."
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Test"
+msgstr "Probar"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "GIZMO"
+msgstr "GIZMO"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Style"
+msgstr "Estilo"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Outline shows every handle; Focused shows the tool picked on the rail."
+msgstr "Contorno muestra todas las manijas; Enfocado, la herramienta elegida en la barra."
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Outline"
+msgstr "Contorno"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Focused"
+msgstr "Enfocado"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Size"
+msgstr "Tamaño"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "How big the handles draw, whatever the zoom."
+msgstr "Qué tan grandes se dibujan las manijas, con cualquier zoom."
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Mouse and keys"
+msgstr "Mouse y teclas"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "How the mouse moves the 3D view."
+msgstr "Cómo mueve el mouse la vista 3D."
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "MOUSE"
+msgstr "MOUSE"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "KEYS"
+msgstr "TECLAS"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Every shortcut"
+msgstr "Todos los atajos"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "F1 shows them over the 3D view, in any tab."
+msgstr "F1 los muestra sobre la vista 3D, en cualquier pestaña."
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Edit"
+msgstr "Editar"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Printers and resins"
+msgstr "Impresoras y resinas"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "What new scenes slice for, and the profiles you made."
+msgstr "Para qué laminan las escenas nuevas, y los perfiles que hiciste."
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "IN USE"
+msgstr "EN USO"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Change…"
+msgstr "Cambiar…"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "YOUR PROFILES"
+msgstr "TUS PERFILES"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Printers and resins you add, copy or import show here."
+msgstr "Las impresoras y resinas que agregues, copies o importes aparecen acá."
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "BRING IN, TAKE OUT"
+msgstr "TRAER Y LLEVAR"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Add a printer by hand"
+msgstr "Agregar una impresora a mano"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Start from the closest printer and give it its screen and plate."
+msgstr "Partí de la impresora más parecida y poné su pantalla y su cama."
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Add printer…"
+msgstr "Agregar impresora…"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Import a profiles package"
+msgstr "Importar un paquete de perfiles"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "A .zip of printers and resins, exported from Breadslicer."
+msgstr "Un .zip de impresoras y resinas exportado desde Breadslicer."
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Import…"
+msgstr "Importar…"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Import printer settings"
+msgstr "Importar ajustes de impresora"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "The printer and resin settings other slicers export."
+msgstr "Los ajustes de impresora y resina que exportan otros laminadores."
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Export your profiles"
+msgstr "Exportar tus perfiles"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Every printer and resin you made, in one .zip."
+msgstr "Todas las impresoras y resinas que hiciste, en un .zip."
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Export…"
+msgstr "Exportar…"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "FOUND"
+msgstr "ENCONTRADAS"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "THE ONE PICKED"
+msgstr "LA ELEGIDA"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "How the layers are drawn and the supports prepared."
+msgstr "Cómo se dibujan las capas y se preparan los soportes."
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "LAYERS"
+msgstr "CAPAS"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Greys on the edges of each layer, for smoother walls. Off writes black and white."
+msgstr "Grises en los bordes de cada capa, para paredes más suaves. Apagado escribe blanco y negro."
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "SUPPORTS"
+msgstr "SOPORTES"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "While the scene sits still, so Generate starts sooner."
+msgstr "Mientras la escena está quieta, así Generar arranca antes."
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "What Breadslicer keeps, and what it never sends."
+msgstr "Lo que guarda Breadslicer, y lo que nunca manda."
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "DIAGNOSTIC LOG"
+msgstr "REGISTRO DE DIAGNÓSTICO"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Logs folder"
+msgstr "Carpeta de registros"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Search"
+msgstr "Buscar"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "No setting is called that."
+msgstr "Ningún ajuste se llama así."
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Click one to go to its page."
+msgstr "Hacé clic en uno para ir a su página."
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "SETTINGS"
+msgstr "AJUSTES"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Saved as you change them"
+msgstr "Se guardan al cambiarlos"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Search settings"
+msgstr "Buscar ajustes"
+
+#: ui/preferences/preferences-layer.slint
+#, rust-format
+msgctxt "PreferencesLayer"
+msgid "The whole catalogue of {} printers is in Printer & resin, on the top bar."
+msgstr "El catálogo entero de {} impresoras está en Impresora y resina, en la barra de arriba."
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Every change is saved at once and reaches every open window."
+msgstr "Cada cambio se guarda al instante y llega a todas las ventanas abiertas."
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Restore defaults on this page"
+msgstr "Volver a los valores de fábrica en esta página"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Printer and resin in use"
+msgstr "Impresora y resina en uso"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Your profiles"
+msgstr "Tus perfiles"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "No printer chosen"
+msgstr "Ninguna impresora elegida"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "No resin chosen"
+msgstr "Ninguna resina elegida"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Printer"
+msgstr "Impresora"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "Resin"
+msgstr "Resina"
+
+#: src/preferences_window/mod.rs
+#, rust-format
+msgctxt "PreferencesLayer"
+msgid "Resin, your settings for {n} more printer"
+msgid_plural "Resin, your settings for {n} more printers"
+msgstr[0] "Resina, tus ajustes para {n} impresora más"
+msgstr[1] "Resina, tus ajustes para {n} impresoras más"

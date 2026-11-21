@@ -29,6 +29,8 @@ use crate::i18n::ctr;
 /// implies the scope, so no separate selector is needed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ExportScope {
+    /// Every printer and resin of the person's library (#670).
+    All,
     Printers,
     Materials,
 }
@@ -36,6 +38,7 @@ pub(crate) enum ExportScope {
 impl ExportScope {
     pub(crate) fn selection(self) -> ExportSelection {
         match self {
+            ExportScope::All => ExportSelection::All,
             ExportScope::Printers => ExportSelection::Printers,
             ExportScope::Materials => ExportSelection::Materials,
         }
@@ -44,6 +47,7 @@ impl ExportScope {
     /// Default file name to seed the save dialog with.
     pub(crate) fn default_file_name(self) -> &'static str {
         match self {
+            ExportScope::All => "breadslicer-profiles.zip",
             ExportScope::Printers => "printers.zip",
             ExportScope::Materials => "materials.zip",
         }

@@ -1,0 +1,1145 @@
+/*
+ * SPDX-FileCopyrightText: 2026 SynrgStudio
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+// Preferences (#670), drawn inside the main window like Printer & resin: a
+// dimmed layer with a card on it, its pages listed on the left. Rust
+// (`preferences_window`) fills it through the `Prefs` global, one per window.
+
+import { Theme } from "../kit/theme.slint";
+import { ScrollView } from "std-widgets.slint";
+import {
+    ScButton as Button,
+    ScCheckBox,
+    ScComboBox,
+    ScLineEdit,
+    ScProgress,
+    Segmented,
+    Icon,
+} from "../kit/controls.slint";
+import { Icons } from "../kit/icons.slint";
+import { CloseButton } from "../kit/dialog.slint";
+import { MessageAnswer, MessageKind, MessageLayer } from "../message-layer.slint";
+
+export enum ThemePreference { System, Light, Dark }
+
+// One network printer in the list (#631): the name it is shown by, what it
+// is and where, and what it is kept for.
+export struct NetworkPrinterRow {
+    name: string,
+    detail: string,
+    kept: string,
+    saved: bool,
+}
+
+// A setting found by the search box: its name and the page it is on.
+export struct PrefsHit {
+    label: string,
+    page-name: string,
+    page: int,
+}
+
+// A printer or a resin of the person's own library. `index` is its place in
+// the catalog, `extension` a resin's settings for more printers.
+export struct PrefsProfile {
+    name: string,
+    detail: string,
+    printer: bool,
+    extension: bool,
+    index: int,
+}
+
+// What Rust sets and hears of the card: each window has its own.
+export global Prefs {
+    in-out property <bool> open: false;
+    // 0 General, 1 Look and feel, 2 Mouse and keys, 3 Printers and resins,
+    // 4 Network printers, 5 Slicing, 6 Privacy.
+    in-out property <int> page: 0;
+    in-out property <string> search;
+    in property <[PrefsHit]> hits;
+
+    // General.
+    in property <[string]> language-options;
+    in-out property <int> current-language-index: 0;
+    in-out property <bool> show-start-dialog: true;
+    in property <int> silenced-message-count: 0;
+
+    // Look and feel.
+    in-out property <ThemePreference> theme: ThemePreference.System;
+    in-out property <bool> smooth-models: false;
+    in-out property <int> current-frame-rate-index: 0;
+    in-out property <int> current-gizmo-style-index: 0;
+    in-out property <int> current-gizmo-size-index: 2;
+    in property <bool> probe-running: false;
+    in property <float> probe-progress: 0;
+    in property <string> probe-message;
+    in property <int> probe-recommended-fps: 0;
+
+    // Mouse and keys.
+    in property <[string]> controls-options;
+    in-out property <int> current-controls-index: 0;
+    in property <string> controls-summary;
+
+    // Printers and resins.
+    in property <string> in-use-printer;
+    in property <string> in-use-detail;
+    in property <image> in-use-image;
+    in property <bool> has-in-use-image;
+    in property <[PrefsProfile]> profiles;
+    in property <int> printer-count;
+
+    // Network printers (#631).
+    in property <[NetworkPrinterRow]> network-rows;
+    in-out property <int> network-selected: -1;
+    in-out property <string> network-own-name;
+    in property <string> network-reported;
+    in property <[string]> network-printer-options;
+    in-out property <int> network-printer-index;
+    in property <[string]> network-resin-options;
+    in-out property <int> network-resin-index;
+    in-out property <string> network-note;
+
+    // Slicing.
+    in-out property <int> current-aa-index: 0;
+    in-out property <bool> prescan-supports: false;
+
+    // Privacy (#74).
+    in-out property <bool> diagnostic-log: false;
+    in property <string> diagnostic-log-error;
+    in property <bool> log-question-open: false;
+    in property <int> log-question-serial: 0;
+
+    callback close-requested();
+    callback search-edited(string);
+    callback restore-defaults(int);
+
+    callback language-changed(int);
+    callback show-start-dialog-changed(bool);
+    callback show-all-messages-again();
+
+    callback theme-changed(ThemePreference);
+    callback smooth-models-changed(bool);
+    callback frame-rate-changed(int);
+    callback test-performance();
+    callback use-recommended-frame-rate();
+    callback gizmo-style-changed(int);
+    callback gizmo-size-changed(int);
+
+    callback controls-selected(int);
+
+    // Change… opens Printer & resin; the profiles open there to edit.
+    callback change-in-use();
+    callback add-printer-requested();
+    callback edit-profile(PrefsProfile);
+    callback delete-profile(PrefsProfile);
+    callback import-package-requested();
+    callback import-settings-requested();
+    callback export-requested();
+
+    callback network-picked(int);
+    // 0 its name (`text`), 1 its printer profile and 2 its resin (`index`
+    // in their lists), 3 its note (`text`).
+    callback network-edited(int, string, int);
+    callback network-remove-requested();
+
+    callback aa-level-changed(int);
+    callback prescan-supports-changed(bool);
+
+    callback diagnostic-log-changed(bool);
+    callback log-question-answered(MessageAnswer);
+    callback open-logs-folder();
+}
+
+// The small capitals over a group of rows, with a line under them.
+component PrefSection inherits VerticalLayout {
+    in property <string> text;
+    in property <string> count;
+
+    padding-top: 14px;
+    spacing: 6px;
+    HorizontalLayout {
+        Text {
+            text: root.text;
+            font-family: Theme.mono;
+            font-size: 10.5px;
+            letter-spacing: 0.6px;
+            color: Theme.text-muted;
+            horizontal-stretch: 1;
+        }
+        if root.count != "": Text {
+            text: root.count;
+            font-family: Theme.mono;
+            font-size: 10.5px;
+            color: Theme.text-faint;
+        }
+    }
+    Rectangle {
+        height: 1px;
+        background: Theme.border-soft;
+    }
+}
+
+// One setting: its name and a line on what it does on the left, its control
+// on the right, a faint line under it.
+component PrefRow inherits VerticalLayout {
+    in property <string> title;
+    in property <string> hint;
+
+    HorizontalLayout {
+        padding-top: 10px;
+        padding-bottom: 10px;
+        spacing: 24px;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 3px;
+            Text {
+                text: root.title;
+                font-size: Theme.font;
+                font-weight: 500;
+                color: Theme.text;
+                wrap: word-wrap;
+            }
+            if root.hint != "": Text {
+                text: root.hint;
+                font-size: Theme.font-xs;
+                color: Theme.text-muted;
+                wrap: word-wrap;
+            }
+        }
+        HorizontalLayout {
+            alignment: end;
+            spacing: 8px;
+            @children
+        }
+    }
+    Rectangle {
+        height: 1px;
+        background: Theme.border-soft;
+    }
+}
+
+component PageHead inherits VerticalLayout {
+    in property <string> title;
+    in property <string> subtitle;
+
+    spacing: 3px;
+    Text {
+        text: root.title;
+        font-size: Theme.font-lg;
+        font-weight: 600;
+        color: Theme.text;
+    }
+    Text {
+        text: root.subtitle;
+        font-size: Theme.font-xs;
+        color: Theme.text-muted;
+        wrap: word-wrap;
+    }
+}
+
+component NavItem inherits Rectangle {
+    in property <string> text;
+    in property <bool> current;
+    callback clicked();
+
+    height: 32px;
+    border-radius: Theme.radius;
+    background: root.current ? Theme.hover : touch.has-hover ? Theme.raised : transparent;
+    accessible-role: tab;
+    accessible-label: root.text;
+    accessible-checked: root.current;
+    accessible-action-default => {
+        root.clicked();
+    }
+
+    if root.current: Rectangle {
+        x: 0;
+        width: 2px;
+        height: parent.height - 8px;
+        y: 4px;
+        background: Theme.indicator;
+    }
+    Text {
+        x: 10px;
+        width: parent.width - 16px;
+        height: parent.height;
+        text: root.text;
+        font-size: Theme.font;
+        color: root.current ? Theme.text : Theme.text-soft;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+component NavRule inherits Rectangle {
+    height: 13px;
+    Rectangle {
+        y: 6px;
+        height: 1px;
+        x: 8px;
+        width: parent.width - 16px;
+        background: Theme.border-soft;
+    }
+}
+
+component GeneralPage inherits VerticalLayout {
+    alignment: start;
+    PageHead {
+        title: @tr("PreferencesLayer" => "General");
+        subtitle: @tr("PreferencesLayer" => "Language, the start card and the messages you silenced.");
+    }
+    PrefSection {
+        text: @tr("PreferencesLayer" => "LANGUAGE");
+    }
+    PrefRow {
+        title: @tr("AppearancePreferences" => "Language");
+        hint: @tr("PreferencesLayer" => "System follows Windows.");
+        ScComboBox {
+            width: 220px;
+            model: Prefs.language-options;
+            current-index: Prefs.current-language-index;
+            accessible-label: @tr("AppearancePreferences" => "Language");
+            selected => {
+                Prefs.current-language-index = self.current-index;
+                Prefs.language-changed(self.current-index);
+            }
+        }
+    }
+    PrefSection {
+        text: @tr("PreferencesLayer" => "STARTING");
+    }
+    PrefRow {
+        title: @tr("PreferencesLayer" => "Start card");
+        hint: @tr("PreferencesLayer" => "Recent files and how to begin, when Breadslicer opens without a file.");
+        ScCheckBox {
+            text: "";
+            checked: Prefs.show-start-dialog;
+            accessible-label: @tr("AppearancePreferences" => "Show the start window when Breadslicer opens");
+            toggled => {
+                Prefs.show-start-dialog = self.checked;
+                Prefs.show-start-dialog-changed(self.checked);
+            }
+        }
+    }
+    PrefSection {
+        text: @tr("PreferencesLayer" => "MESSAGES");
+    }
+    PrefRow {
+        title: @tr("PreferencesLayer" => "Messages you silenced");
+        hint: Prefs.silenced-message-count > 0
+            ? @tr("AppearancePreferences" => "Hidden messages: {}", Prefs.silenced-message-count)
+            : @tr("PreferencesLayer" => "None: every message shows.");
+        Button {
+            text: @tr("PreferencesLayer" => "Show them again");
+            enabled: Prefs.silenced-message-count > 0;
+            clicked => {
+                Prefs.show-all-messages-again();
+            }
+        }
+    }
+}
+
+component LookPage inherits VerticalLayout {
+    alignment: start;
+
+    function index-for-theme(t: ThemePreference) -> int {
+        if (t == ThemePreference.Light) { return 1; }
+        if (t == ThemePreference.Dark) { return 2; }
+        return 0;
+    }
+    function theme-for-index(i: int) -> ThemePreference {
+        if (i == 1) { return ThemePreference.Light; }
+        if (i == 2) { return ThemePreference.Dark; }
+        return ThemePreference.System;
+    }
+
+    PageHead {
+        title: @tr("PreferencesLayer" => "Look and feel");
+        subtitle: @tr("PreferencesLayer" => "How Breadslicer looks and how fast it draws.");
+    }
+    PrefSection {
+        text: @tr("PreferencesLayer" => "WINDOW");
+    }
+    PrefRow {
+        title: @tr("AppearancePreferences" => "Theme");
+        hint: @tr("PreferencesLayer" => "System follows Windows.");
+        Segmented {
+            width: 220px;
+            options: [
+                @tr("AppearancePreferences" => "System"),
+                @tr("AppearancePreferences" => "Light"),
+                @tr("AppearancePreferences" => "Dark"),
+            ];
+            current: root.index-for-theme(Prefs.theme);
+            picked(i) => {
+                Prefs.theme = root.theme-for-index(i);
+                Prefs.theme-changed(Prefs.theme);
+            }
+        }
+    }
+    PrefRow {
+        title: @tr("AppearancePreferences" => "Smooth shading on models");
+        hint: @tr("PreferencesLayer" => "Softens the facets of models with few triangles. Supports are always smooth.");
+        ScCheckBox {
+            text: "";
+            checked: Prefs.smooth-models;
+            accessible-label: @tr("AppearancePreferences" => "Smooth shading on models");
+            toggled => {
+                Prefs.smooth-models = self.checked;
+                Prefs.smooth-models-changed(self.checked);
+            }
+        }
+    }
+    PrefSection {
+        text: @tr("PreferencesLayer" => "SPEED");
+    }
+    PrefRow {
+        title: @tr("AppearancePreferences" => "Frame rate");
+        hint: @tr("AppearancePreferences" => "Automatic follows your monitor and uses 30 FPS on battery. The 3D view only draws when something changes.");
+        ScComboBox {
+            width: 180px;
+            model: [
+                @tr("AppearancePreferences" => "Automatic"),
+                @tr("AppearancePreferences" => "30 FPS"),
+                @tr("AppearancePreferences" => "60 FPS"),
+                @tr("AppearancePreferences" => "120 FPS"),
+            ];
+            current-index: Prefs.current-frame-rate-index;
+            accessible-label: @tr("AppearancePreferences" => "Frame rate");
+            selected => {
+                Prefs.current-frame-rate-index = self.current-index;
+                Prefs.frame-rate-changed(self.current-index);
+            }
+        }
+    }
+    PrefRow {
+        title: @tr("AppearancePreferences" => "Test performance");
+        hint: Prefs.probe-message != "" ? Prefs.probe-message
+            : @tr("PreferencesLayer" => "Draws a heavy scene for about 10 s and recommends a frame rate.");
+        if Prefs.probe-recommended-fps > 0 && !Prefs.probe-running: Button {
+            text: @tr("AppearancePreferences" => "Use {} FPS", Prefs.probe-recommended-fps);
+            primary: true;
+            clicked => {
+                Prefs.use-recommended-frame-rate();
+            }
+        }
+        Button {
+            text: @tr("PreferencesLayer" => "Test");
+            enabled: !Prefs.probe-running;
+            clicked => {
+                Prefs.test-performance();
+            }
+        }
+    }
+    if Prefs.probe-running: ScProgress {
+        progress: Prefs.probe-progress;
+    }
+    PrefSection {
+        text: @tr("PreferencesLayer" => "GIZMO");
+    }
+    PrefRow {
+        title: @tr("PreferencesLayer" => "Style");
+        hint: @tr("PreferencesLayer" => "Outline shows every handle; Focused shows the tool picked on the rail.");
+        Segmented {
+            width: 220px;
+            options: [
+                @tr("PreferencesLayer" => "Outline"),
+                @tr("PreferencesLayer" => "Focused"),
+            ];
+            current: Prefs.current-gizmo-style-index;
+            picked(i) => {
+                Prefs.current-gizmo-style-index = i;
+                Prefs.gizmo-style-changed(i);
+            }
+        }
+    }
+    PrefRow {
+        title: @tr("PreferencesLayer" => "Size");
+        hint: @tr("PreferencesLayer" => "How big the handles draw, whatever the zoom.");
+        ScComboBox {
+            width: 120px;
+            model: ["75 %", "90 %", "100 %", "110 %", "125 %", "150 %"];
+            current-index: Prefs.current-gizmo-size-index;
+            accessible-label: @tr("AppearancePreferences" => "Gizmo size");
+            selected => {
+                Prefs.current-gizmo-size-index = self.current-index;
+                Prefs.gizmo-size-changed(self.current-index);
+            }
+        }
+    }
+}
+
+component MousePage inherits VerticalLayout {
+    alignment: start;
+    PageHead {
+        title: @tr("PreferencesLayer" => "Mouse and keys");
+        subtitle: @tr("PreferencesLayer" => "How the mouse moves the 3D view.");
+    }
+    PrefSection {
+        text: @tr("PreferencesLayer" => "MOUSE");
+    }
+    PrefRow {
+        title: @tr("AppearancePreferences" => "Mouse controls");
+        hint: Prefs.controls-summary;
+        ScComboBox {
+            width: 220px;
+            model: Prefs.controls-options;
+            current-index: Prefs.current-controls-index;
+            accessible-label: @tr("AppearancePreferences" => "Mouse controls");
+            selected => {
+                Prefs.current-controls-index = self.current-index;
+                Prefs.controls-selected(self.current-index);
+            }
+        }
+    }
+    PrefSection {
+        text: @tr("PreferencesLayer" => "KEYS");
+    }
+    PrefRow {
+        title: @tr("PreferencesLayer" => "Every shortcut");
+        hint: @tr("PreferencesLayer" => "F1 shows them over the 3D view, in any tab.");
+        Text {
+            text: "F1";
+            font-family: Theme.mono;
+            font-size: Theme.font-sm;
+            color: Theme.text-soft;
+            vertical-alignment: center;
+        }
+    }
+}
+
+component ProfileRow inherits PrefRow {
+    in property <PrefsProfile> profile;
+    title: root.profile.name;
+    hint: root.profile.detail;
+    Button {
+        text: @tr("PreferencesLayer" => "Edit");
+        clicked => {
+            Prefs.edit-profile(root.profile);
+        }
+    }
+    Button {
+        text: @tr("PreferencesPage" => "Delete");
+        clicked => {
+            Prefs.delete-profile(root.profile);
+        }
+    }
+}
+
+component PrintersPage inherits VerticalLayout {
+    alignment: start;
+    PageHead {
+        title: @tr("PreferencesLayer" => "Printers and resins");
+        subtitle: @tr("PreferencesLayer" => "What new scenes slice for, and the profiles you made.");
+    }
+    PrefSection {
+        text: @tr("PreferencesLayer" => "IN USE");
+    }
+    Rectangle {
+        height: 68px;
+        border-radius: Theme.radius;
+        border-width: 1px;
+        border-color: Theme.border;
+        background: Theme.well;
+        HorizontalLayout {
+            padding: 10px;
+            spacing: 12px;
+            Rectangle {
+                width: 48px;
+                border-radius: Theme.radius-sm;
+                background: Theme.raised;
+                clip: true;
+                if Prefs.has-in-use-image: Image {
+                    width: parent.width;
+                    height: parent.height;
+                    source: Prefs.in-use-image;
+                    image-fit: contain;
+                }
+                if !Prefs.has-in-use-image: Icon {
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    commands: Icons.printer;
+                    size: 22px;
+                    color: Theme.text-muted;
+                }
+            }
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                spacing: 3px;
+                Text {
+                    text: Prefs.in-use-printer;
+                    font-weight: 600;
+                    color: Theme.text;
+                    overflow: elide;
+                }
+                Text {
+                    text: Prefs.in-use-detail;
+                    font-size: Theme.font-xs;
+                    color: Theme.text-muted;
+                    overflow: elide;
+                }
+            }
+            Button {
+                y: (parent.height - self.height) / 2;
+                text: @tr("PreferencesLayer" => "Change…");
+                primary: true;
+                clicked => {
+                    Prefs.change-in-use();
+                }
+            }
+        }
+    }
+    PrefSection {
+        text: @tr("PreferencesLayer" => "YOUR PROFILES");
+        count: Prefs.profiles.length > 0 ? "\{Prefs.profiles.length}" : "";
+    }
+    if Prefs.profiles.length == 0: Text {
+        height: 40px;
+        text: @tr("PreferencesLayer" => "Printers and resins you add, copy or import show here.");
+        font-size: Theme.font-sm;
+        color: Theme.text-faint;
+        vertical-alignment: center;
+    }
+    for p in Prefs.profiles: ProfileRow {
+        profile: p;
+    }
+    PrefSection {
+        text: @tr("PreferencesLayer" => "BRING IN, TAKE OUT");
+    }
+    PrefRow {
+        title: @tr("PreferencesLayer" => "Add a printer by hand");
+        hint: @tr("PreferencesLayer" => "Start from the closest printer and give it its screen and plate.");
+        Button {
+            text: @tr("PreferencesLayer" => "Add printer…");
+            clicked => {
+                Prefs.add-printer-requested();
+            }
+        }
+    }
+    PrefRow {
+        title: @tr("PreferencesLayer" => "Import a profiles package");
+        hint: @tr("PreferencesLayer" => "A .zip of printers and resins, exported from Breadslicer.");
+        Button {
+            text: @tr("PreferencesLayer" => "Import…");
+            clicked => {
+                Prefs.import-package-requested();
+            }
+        }
+    }
+    PrefRow {
+        title: @tr("PreferencesLayer" => "Import printer settings");
+        hint: @tr("PreferencesLayer" => "The printer and resin settings other slicers export.");
+        Button {
+            text: @tr("PreferencesLayer" => "Import…");
+            clicked => {
+                Prefs.import-settings-requested();
+            }
+        }
+    }
+    PrefRow {
+        title: @tr("PreferencesLayer" => "Export your profiles");
+        hint: @tr("PreferencesLayer" => "Every printer and resin you made, in one .zip.");
+        Button {
+            text: @tr("PreferencesLayer" => "Export…");
+            enabled: Prefs.profiles.length > 0;
+            clicked => {
+                Prefs.export-requested();
+            }
+        }
+    }
+}
+
+component FieldRow inherits HorizontalLayout {
+    in property <string> label;
+    spacing: 8px;
+    Text {
+        text: root.label;
+        width: 170px;
+        vertical-alignment: center;
+        color: Theme.text-soft;
+        font-size: Theme.font-sm;
+    }
+    @children
+}
+
+component NetworkPage inherits VerticalLayout {
+    alignment: start;
+    PageHead {
+        title: @tr("PreferencesMenu" => "Network printers");
+        subtitle: @tr("NetworkPrinterPreferences" => "The printers Breadslicer has found on your network. Give each a name of your own, the printer profile it is, the resin it is kept for and a note; Send to printer lists the saved ones first.");
+    }
+    PrefSection {
+        text: @tr("PreferencesLayer" => "FOUND");
+        count: Prefs.network-rows.length > 0 ? "\{Prefs.network-rows.length}" : "";
+    }
+    if Prefs.network-rows.length == 0: Text {
+        height: 40px;
+        text: @tr("NetworkPrinterPreferences" => "None yet: printers show up here once Send to printer finds them.");
+        font-size: Theme.font-sm;
+        color: Theme.text-faint;
+        vertical-alignment: center;
+        wrap: word-wrap;
+    }
+    for row[i] in Prefs.network-rows: Rectangle {
+        height: 52px;
+        border-radius: Theme.radius;
+        border-width: 1px;
+        border-color: i == Prefs.network-selected ? Theme.indicator : transparent;
+        background: i == Prefs.network-selected ? Theme.raised : touch.has-hover ? Theme.hover : transparent;
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                Prefs.network-selected = i;
+                Prefs.network-picked(i);
+            }
+        }
+        VerticalLayout {
+            padding-left: 10px;
+            padding-right: 10px;
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: row.name;
+                font-weight: 600;
+                color: Theme.text;
+                overflow: elide;
+            }
+            Text {
+                text: row.kept != "" ? row.detail + "  ·  " + row.kept : row.detail;
+                color: row.saved ? Theme.text-soft : Theme.text-faint;
+                font-size: Theme.font-sm;
+                overflow: elide;
+            }
+        }
+    }
+    if Prefs.network-selected >= 0 && Prefs.network-selected < Prefs.network-rows.length: PrefSection {
+        text: @tr("PreferencesLayer" => "THE ONE PICKED");
+    }
+    if Prefs.network-selected >= 0 && Prefs.network-selected < Prefs.network-rows.length: VerticalLayout {
+        padding-top: 8px;
+        spacing: 6px;
+        FieldRow {
+            label: @tr("SlicePanel" => "Its name in Breadslicer");
+            ScLineEdit {
+                text <=> Prefs.network-own-name;
+                placeholder-text: Prefs.network-reported;
+                accessible-label: @tr("SlicePanel" => "The printer's name in Breadslicer");
+                edited(t) => {
+                    Prefs.network-edited(0, t, 0);
+                }
+            }
+        }
+        FieldRow {
+            label: @tr("SlicePanel" => "Printer profile");
+            ScComboBox {
+                model: Prefs.network-printer-options;
+                current-index <=> Prefs.network-printer-index;
+                selected => {
+                    Prefs.network-edited(1, "", self.current-index);
+                }
+            }
+        }
+        FieldRow {
+            label: @tr("SlicePanel" => "Resin it is kept for");
+            ScComboBox {
+                model: Prefs.network-resin-options;
+                current-index <=> Prefs.network-resin-index;
+                selected => {
+                    Prefs.network-edited(2, "", self.current-index);
+                }
+            }
+        }
+        FieldRow {
+            label: @tr("SlicePanel" => "Note");
+            ScLineEdit {
+                text <=> Prefs.network-note;
+                placeholder-text: @tr("SlicePanel" => "Dental only, the one by the window…");
+                edited(t) => {
+                    Prefs.network-edited(3, t, 0);
+                }
+            }
+        }
+        HorizontalLayout {
+            alignment: start;
+            Button {
+                text: @tr("NetworkPrinterPreferences" => "Forget this printer");
+                clicked => {
+                    Prefs.network-remove-requested();
+                }
+            }
+        }
+    }
+}
+
+component SlicingPage inherits VerticalLayout {
+    alignment: start;
+    PageHead {
+        title: @tr("PreferencesMenu" => "Slicing");
+        subtitle: @tr("PreferencesLayer" => "How the layers are drawn and the supports prepared.");
+    }
+    PrefSection {
+        text: @tr("PreferencesLayer" => "LAYERS");
+    }
+    PrefRow {
+        title: @tr("SlicingPreferences" => "Anti-aliasing");
+        hint: @tr("PreferencesLayer" => "Greys on the edges of each layer, for smoother walls. Off writes black and white.");
+        Segmented {
+            width: 220px;
+            options: [
+                @tr("SlicingPreferences" => "Off"),
+                @tr("SlicingPreferences" => "2x"),
+                @tr("SlicingPreferences" => "4x"),
+                @tr("SlicingPreferences" => "8x"),
+            ];
+            current: Prefs.current-aa-index;
+            picked(i) => {
+                Prefs.current-aa-index = i;
+                Prefs.aa-level-changed(i);
+            }
+        }
+    }
+    PrefSection {
+        text: @tr("PreferencesLayer" => "SUPPORTS");
+    }
+    PrefRow {
+        title: @tr("SlicingPreferences" => "Prepare supports in the background");
+        hint: @tr("PreferencesLayer" => "While the scene sits still, so Generate starts sooner.");
+        ScCheckBox {
+            text: "";
+            checked: Prefs.prescan-supports;
+            accessible-label: @tr("SlicingPreferences" => "Prepare supports in the background");
+            toggled => {
+                Prefs.prescan-supports = self.checked;
+                Prefs.prescan-supports-changed(self.checked);
+            }
+        }
+    }
+}
+
+component PrivacyPage inherits VerticalLayout {
+    alignment: start;
+    PageHead {
+        title: @tr("PreferencesMenu" => "Privacy");
+        subtitle: @tr("PreferencesLayer" => "What Breadslicer keeps, and what it never sends.");
+    }
+    Rectangle {
+        border-radius: Theme.radius;
+        border-width: 1px;
+        border-color: Theme.border;
+        background: Theme.well;
+        VerticalLayout {
+            padding: 12px;
+            Text {
+                text: @tr("PrivacyPreferences" => "Breadslicer never sends us anything: no logs, no models, no data about you or about how you use it. Nothing reaches us unless you send it yourself.");
+                wrap: word-wrap;
+                font-weight: 600;
+                color: Theme.text;
+            }
+        }
+    }
+    PrefSection {
+        text: @tr("PreferencesLayer" => "DIAGNOSTIC LOG");
+    }
+    PrefRow {
+        title: @tr("PrivacyPreferences" => "Save a diagnostic log until Breadslicer closes");
+        hint: Prefs.diagnostic-log-error != "" ? Prefs.diagnostic-log-error
+            : @tr("PrivacyPreferences" => "For a bug report: it writes what the app does (steps, times and errors, without models, file names or anything you type) to the logs folder on this computer. It turns off by itself the next time you open Breadslicer.");
+        ScCheckBox {
+            text: "";
+            checked: Prefs.diagnostic-log;
+            accessible-label: @tr("PrivacyPreferences" => "Save a diagnostic log until Breadslicer closes");
+            toggled => {
+                Prefs.diagnostic-log-changed(self.checked);
+            }
+        }
+    }
+    PrefRow {
+        title: @tr("PreferencesLayer" => "Logs folder");
+        hint: @tr("PrivacyPreferences" => "To report a problem, use Help > Export Diagnostics: it saves a file on your computer that you can attach to the report.");
+        Button {
+            text: @tr("PrivacyPreferences" => "Open logs folder");
+            clicked => {
+                Prefs.open-logs-folder();
+            }
+        }
+    }
+}
+
+component SearchPage inherits VerticalLayout {
+    alignment: start;
+    PageHead {
+        title: @tr("PreferencesLayer" => "Search");
+        subtitle: Prefs.hits.length == 0
+            ? @tr("PreferencesLayer" => "No setting is called that.")
+            : @tr("PreferencesLayer" => "Click one to go to its page.");
+    }
+    PrefSection {
+        text: @tr("PreferencesLayer" => "SETTINGS");
+    }
+    for hit in Prefs.hits: Rectangle {
+        height: 40px;
+        border-radius: Theme.radius;
+        background: touch.has-hover ? Theme.hover : transparent;
+        accessible-role: button;
+        accessible-label: hit.label;
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                Prefs.page = hit.page;
+                Prefs.search = "";
+                Prefs.search-edited("");
+            }
+        }
+        HorizontalLayout {
+            padding-left: 10px;
+            padding-right: 10px;
+            Text {
+                text: hit.label;
+                color: Theme.text;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+            Text {
+                text: hit.page-name;
+                font-size: Theme.font-xs;
+                color: Theme.text-muted;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+export component PreferencesLayer inherits Rectangle {
+    visible: Prefs.open;
+    background: #0000008c;
+
+    property <[string]> page-names: [
+        @tr("PreferencesLayer" => "General"),
+        @tr("PreferencesLayer" => "Look and feel"),
+        @tr("PreferencesLayer" => "Mouse and keys"),
+        @tr("PreferencesLayer" => "Printers and resins"),
+        @tr("PreferencesMenu" => "Network printers"),
+        @tr("PreferencesMenu" => "Slicing"),
+        @tr("PreferencesMenu" => "Privacy"),
+    ];
+    // The pages whose settings have values to go back to.
+    property <bool> restorable: Prefs.search == ""
+        && (Prefs.page == 0 || Prefs.page == 1 || Prefs.page == 2 || Prefs.page == 5);
+
+    changed visible => {
+        if (self.visible) {
+            fs.focus();
+        }
+    }
+
+    fs := FocusScope {
+        width: 100%;
+        height: 100%;
+        enabled: Prefs.open;
+
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                if (Prefs.search != "") {
+                    Prefs.search = "";
+                    Prefs.search-edited("");
+                } else {
+                    Prefs.close-requested();
+                }
+            }
+            return accept;
+        }
+
+        // The dimmed window around the card holds the clicks; a click on it
+        // closes the card.
+        TouchArea {
+            clicked => {
+                Prefs.close-requested();
+            }
+            scroll-event(event) => {
+                return accept;
+            }
+        }
+
+        card := Rectangle {
+            width: Math.min(parent.width - 48px, 920px);
+            height: Math.min(parent.height - 48px, 660px);
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Theme.card;
+            border-color: Theme.border;
+            border-width: 1px;
+            border-radius: Theme.radius-lg;
+            drop-shadow-blur: 24px;
+            drop-shadow-color: #00000066;
+            clip: true;
+
+            TouchArea {
+                scroll-event(event) => {
+                    return accept;
+                }
+            }
+
+            VerticalLayout {
+                // The head: the title, the search box and the close button.
+                HorizontalLayout {
+                    padding-left: 20px;
+                    padding-right: 10px;
+                    padding-top: 14px;
+                    padding-bottom: 14px;
+                    spacing: 16px;
+                    VerticalLayout {
+                        width: 180px;
+                        alignment: center;
+                        spacing: 2px;
+                        Text {
+                            text: @tr("PreferencesWindow" => "Preferences");
+                            font-size: Theme.font-lg;
+                            font-weight: 600;
+                            color: Theme.text;
+                        }
+                        Text {
+                            text: @tr("PreferencesLayer" => "Saved as you change them");
+                            font-size: Theme.font-xs;
+                            color: Theme.text-muted;
+                            overflow: elide;
+                        }
+                    }
+                    HorizontalLayout {
+                        horizontal-stretch: 1;
+                        alignment: start;
+                        search := ScLineEdit {
+                            y: (parent.height - self.height) / 2;
+                            width: 280px;
+                            height: 28px;
+                            text <=> Prefs.search;
+                            placeholder-text: @tr("PreferencesLayer" => "Search settings");
+                            accessible-label: @tr("PreferencesLayer" => "Search settings");
+                            edited(t) => {
+                                Prefs.search-edited(t);
+                            }
+                        }
+                    }
+                    CloseButton {
+                        y: (parent.height - self.height) / 2;
+                        label: @tr("PrinterPicker" => "Close");
+                        clicked => {
+                            Prefs.close-requested();
+                        }
+                    }
+                }
+                Rectangle {
+                    height: 1px;
+                    background: Theme.border-soft;
+                }
+
+                HorizontalLayout {
+                    vertical-stretch: 1;
+
+                    // The pages.
+                    VerticalLayout {
+                        width: 200px;
+                        padding: 8px;
+                        padding-top: 12px;
+                        spacing: 2px;
+                        alignment: start;
+                        for name[i] in root.page-names: VerticalLayout {
+                            if i == 3 || i == 6: NavRule { }
+                            NavItem {
+                                text: name;
+                                current: Prefs.search == "" && Prefs.page == i;
+                                clicked => {
+                                    Prefs.page = i;
+                                    if (Prefs.search != "") {
+                                        Prefs.search = "";
+                                        Prefs.search-edited("");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Rectangle {
+                        width: 1px;
+                        background: Theme.border-soft;
+                    }
+
+                    ScrollView {
+                        horizontal-stretch: 1;
+                        VerticalLayout {
+                            padding-left: 22px;
+                            padding-right: 22px;
+                            padding-top: 18px;
+                            padding-bottom: 22px;
+                            alignment: start;
+                            if Prefs.search != "": SearchPage { }
+                            if Prefs.search == "" && Prefs.page == 0: GeneralPage { }
+                            if Prefs.search == "" && Prefs.page == 1: LookPage { }
+                            if Prefs.search == "" && Prefs.page == 2: MousePage { }
+                            if Prefs.search == "" && Prefs.page == 3: PrintersPage { }
+                            if Prefs.search == "" && Prefs.page == 4: NetworkPage { }
+                            if Prefs.search == "" && Prefs.page == 5: SlicingPage { }
+                            if Prefs.search == "" && Prefs.page == 6: PrivacyPage { }
+                        }
+                    }
+                }
+
+                // The foot: what happens to a change, and going back to the
+                // values Breadslicer ships with.
+                Rectangle {
+                    height: 1px;
+                    background: Theme.border-soft;
+                }
+                Rectangle {
+                    height: 50px;
+                    background: Theme.chrome;
+                    HorizontalLayout {
+                        padding-left: 20px;
+                        padding-right: 14px;
+                        spacing: 12px;
+                        Text {
+                            horizontal-stretch: 1;
+                            text: Prefs.search == "" && Prefs.page == 3
+                                ? @tr("PreferencesLayer" => "The whole catalogue of {} printers is in Printer & resin, on the top bar.", Prefs.printer-count)
+                                : @tr("PreferencesLayer" => "Every change is saved at once and reaches every open window.");
+                            font-size: Theme.font-xs;
+                            color: Theme.text-muted;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        if root.restorable: Button {
+                            y: (parent.height - self.height) / 2;
+                            text: @tr("PreferencesLayer" => "Restore defaults on this page");
+                            clicked => {
+                                Prefs.restore-defaults(Prefs.page);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // The question before the diagnostic log starts (#74), over the card.
+    MessageLayer {
+        width: 100%;
+        height: 100%;
+        message: { kind: MessageKind.diagnostic-log };
+        open: Prefs.log-question-open;
+        serial: Prefs.log-question-serial;
+        answered(answer) => {
+            Prefs.log-question-answered(answer);
+        }
+        outside-clicked => {
+            Prefs.log-question-answered(MessageAnswer.cancel);
+        }
+    }
+}

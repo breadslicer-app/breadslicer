@@ -21,7 +21,7 @@ use crate::network_profiles::{
 };
 use crate::preferences_bus::{PreferencesBus, PreferencesChange, Subscription};
 use crate::profile_catalog::ProfileCatalog;
-use crate::{NetworkPrinterRow, PreferencesWindow};
+use crate::{MainWindow, NetworkPrinterRow, Prefs};
 
 /// What the page shows, in the list's order.
 #[derive(Default)]
@@ -84,7 +84,7 @@ fn row_of(
 
 /// Shows the list and the picked printer's fields; the text fields keep what
 /// is being typed when it already says the same.
-fn show(window: &PreferencesWindow, catalog: &ProfileCatalog, shown: &mut Shown) {
+fn show(window: &Prefs, catalog: &ProfileCatalog, shown: &mut Shown) {
     let known = &shown.known;
     let rows: Vec<NetworkPrinterRow> = known
         .printers
@@ -159,10 +159,11 @@ fn edited(
 }
 
 pub(crate) fn wire(
-    window: &PreferencesWindow,
+    ui: &MainWindow,
     bus: &Rc<PreferencesBus>,
     catalog: Rc<RefCell<Rc<ProfileCatalog>>>,
 ) -> NetworkPrintersPage {
+    let window = &ui.global::<Prefs>();
     let shown = Rc::new(RefCell::new(Shown {
         known: read_known(),
         ..Shown::default()
@@ -170,25 +171,27 @@ pub(crate) fn wire(
     show(window, &catalog.borrow(), &mut shown.borrow_mut());
 
     window.on_network_picked({
-        let weak = window.as_weak();
+        let weak = ui.as_weak();
         let shown = shown.clone();
         let catalog = catalog.clone();
         move |_| {
-            if let Some(w) = weak.upgrade() {
+            if let Some(ui) = weak.upgrade() {
+                let w = ui.global::<Prefs>();
                 show(&w, &catalog.borrow(), &mut shown.borrow_mut());
             }
         }
     });
 
     window.on_network_edited({
-        let weak = window.as_weak();
+        let weak = ui.as_weak();
         let shown = shown.clone();
         let catalog = catalog.clone();
         let bus = bus.clone();
         move |field, text, index| {
-            let Some(w) = weak.upgrade() else {
+            let Some(ui) = weak.upgrade() else {
                 return;
             };
+            let w = ui.global::<Prefs>();
             {
                 let mut shown = shown.borrow_mut();
                 let Some(id) = usize::try_from(w.get_network_selected())
@@ -215,14 +218,15 @@ pub(crate) fn wire(
     });
 
     window.on_network_remove_requested({
-        let weak = window.as_weak();
+        let weak = ui.as_weak();
         let shown = shown.clone();
         let catalog = catalog.clone();
         let bus = bus.clone();
         move || {
-            let Some(w) = weak.upgrade() else {
+            let Some(ui) = weak.upgrade() else {
                 return;
             };
+            let w = ui.global::<Prefs>();
             {
                 let mut shown = shown.borrow_mut();
                 let Some(at) = usize::try_from(w.get_network_selected())
@@ -242,7 +246,7 @@ pub(crate) fn wire(
     });
 
     let subscription = bus.subscribe({
-        let weak = window.as_weak();
+        let weak = ui.as_weak();
         move |_, change| {
             if !matches!(
                 change,
@@ -252,9 +256,10 @@ pub(crate) fn wire(
             ) {
                 return;
             }
-            let Some(w) = weak.upgrade() else {
+            let Some(ui) = weak.upgrade() else {
                 return;
             };
+            let w = ui.global::<Prefs>();
             let mut shown = shown.borrow_mut();
             // Picked by printer, wherever it is in the list now.
             let picked = usize::try_from(w.get_network_selected())
@@ -347,10 +352,11 @@ mod tests {
                     }
                 }
             });
-            let window = PreferencesWindow::new().unwrap();
-            let _page = wire(&window, &bus, Rc::new(RefCell::new(Rc::new(catalog))));
+            let ui = MainWindow::new().unwrap();
+            let _page = wire(&ui, &bus, Rc::new(RefCell::new(Rc::new(catalog))));
+            let window = ui.global::<Prefs>();
 
-            let names = |w: &PreferencesWindow| {
+            let names = |w: &Prefs| {
                 w.get_network_rows()
                     .iter()
                     .map(|r| (r.name.to_string(), r.saved))

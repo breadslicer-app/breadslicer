@@ -10,7 +10,7 @@ use slint::ComponentHandle;
 use slint::platform::{Key, WindowEvent};
 
 use crate::test_support::slint_thread::{on_fresh_slint_thread, render_frames};
-use crate::{MainWindow, PreferencesWindow, WorkspaceSection};
+use crate::{MainWindow, WorkspaceSection};
 
 const SHOTS_ENV: &str = "BREADSLICER_UI_SHOTS";
 
@@ -173,30 +173,24 @@ fn the_pictures_of_the_app_are_written_when_asked() {
                 &format!("{language}-1-scene-panel-tree"),
             );
         });
+        // Preferences, a card over the window (#670): each of its pages.
         let dir = dir.clone();
         on_fresh_slint_thread(move || {
-            let window = PreferencesWindow::new().expect("a preferences window");
+            let window = MainWindow::new().expect("a main window");
             slint::select_bundled_translation(language).expect("bundled language");
             window.show().expect("the window shows");
             window
                 .window()
-                .set_size(slint::LogicalSize::new(900.0, 640.0));
-            window.set_theme(crate::ThemePreference::Dark);
-            for page in 0..6 {
+                .set_size(slint::LogicalSize::new(1280.0, 800.0));
+            let prefs = window.global::<crate::Prefs>();
+            prefs.set_open(true);
+            for page in 0..7 {
+                prefs.set_page(page);
                 write(
                     window.window(),
                     &dir,
                     &format!("{language}-preferences-{page}"),
                 );
-                for key in [Key::DownArrow, Key::Return] {
-                    let text: slint::SharedString = key.into();
-                    window
-                        .window()
-                        .dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
-                    window
-                        .window()
-                        .dispatch_event(WindowEvent::KeyReleased { text });
-                }
             }
         });
     }

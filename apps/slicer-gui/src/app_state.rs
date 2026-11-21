@@ -37,9 +37,7 @@ use crate::pending_load::PendingLoad;
 use crate::preferences_bus::{
     PreferencesBus, PreferencesChange, PreferencesSnapshot, Subscription,
 };
-use crate::preferences_window::{
-    WiredPreferencesWindow, build_preferences_window, wire_performance_test,
-};
+use crate::preferences_window::{CardActions, SetupStart, WiredPreferences, open_preferences};
 use crate::print_selection::PrintDefaults;
 use crate::profile_catalog::{CatalogLoad, ProfileCatalog};
 use crate::repair_run::RepairRun;
@@ -262,8 +260,8 @@ struct WindowDrivers {
 
 /// Owns the app-wide state:
 ///
-/// - the `AboutWindow` and the `PreferencesWindow`, each created on first use
-///   and shared by every main window;
+/// - the `AboutWindow`, created on first use and shared by every main window,
+///   and the Preferences card, open over one main window at a time (#670);
 /// - the `PreferencesBus`, which holds the preferences and notifies every live
 ///   window of a change;
 /// - the profile catalog, the default printer's envelope, the clipboard, the
@@ -280,7 +278,7 @@ pub(crate) struct AppState {
     about_window: RefCell<Option<WiredAboutWindow>>,
     /// Printer & resin (#151), and the first run (#608).
     setup_window: RefCell<Option<crate::setup_window::WiredSetupWindow>>,
-    preferences_window: RefCell<Option<WiredPreferencesWindow>>,
+    preferences_window: RefCell<Option<WiredPreferences>>,
     main_windows: RefCell<HashMap<u64, WiredMainWindow>>,
     next_window_id: Cell<u64>,
     prefs: Rc<PreferencesBus>,
@@ -1404,9 +1402,8 @@ impl AppState {
     /// window has gone (#617): left open, they would keep the app running
     /// with nothing to come back to.
     fn hide_tool_windows(&self) {
-        if let Some(prefs) = self.preferences_window.borrow().as_ref() {
-            let _ = prefs.window.hide();
-        }
+        // The Preferences card goes with its window.
+        drop(self.preferences_window.borrow_mut().take());
         if let Some(about) = self.about_window.borrow().as_ref() {
             let _ = about.window.hide();
         }
@@ -2040,30 +2037,53 @@ impl AppState {
         *self.setup_window.borrow_mut() = Some(wired);
     }
 
-    /// Shows the app-wide Preferences window centred over `over`, the window
-    /// that asked for it, creating it on first use and re-showing the same
-    /// instance on subsequent calls. The window's bus subscription keeps it
-    /// up-to-date while hidden. Its performance test runs in `viewport`, the
-    /// 3D view of `over`.
-    fn show_preferences(&self, over: &MainWindow, viewport: Weak<ViewportController>) {
-        let mut slot = self.preferences_window.borrow_mut();
-        if let Some(existing) = slot.as_ref() {
-            wire_performance_test(&existing.window, viewport);
-            let _ = existing.window.show();
-            crate::window_placement::centre_over(&existing.window, over);
-            return;
+    /// Opens Preferences over `over` (#670), a card in the window like
+    /// Printer & resin; one open over another window closes. Its performance
+    /// test runs in `viewport`, the 3D view of `over`.
+    fn show_preferences(self: &Rc<Self>, over: &MainWindow, viewport: Weak<ViewportController>) {
+        drop(self.preferences_window.borrow_mut().take());
+        for window in self.main_windows.borrow().values() {
+            window.window.global::<crate::Prefs>().set_open(false);
         }
-        match build_preferences_window(&self.prefs, self.catalog.clone()) {
-            Ok(wired) => {
-                wire_performance_test(&wired.window, viewport);
-                if let Err(err) = wired.window.show() {
-                    eprintln!("Failed to show Preferences window: {err}");
-                    return;
-                }
-                crate::window_placement::centre_over(&wired.window, over);
-                *slot = Some(wired);
+        let actions = CardActions {
+            open_setup: {
+                let app = Rc::downgrade(self);
+                let over = over.as_weak();
+                Rc::new(move |start| {
+                    if let (Some(app), Some(over)) = (app.upgrade(), over.upgrade()) {
+                        app.show_setup_at(&over, start);
+                    }
+                })
+            },
+            import_settings: {
+                let over = over.as_weak();
+                Rc::new(move || {
+                    if let Some(over) = over.upgrade() {
+                        over.invoke_import_printer_settings_requested();
+                    }
+                })
+            },
+        };
+        let wired = open_preferences(over, &self.prefs, self.catalog.clone(), viewport, actions);
+        *self.preferences_window.borrow_mut() = Some(wired);
+    }
+
+    /// Opens Printer & resin over `over` where Preferences sends the person:
+    /// the picker, a new printer's form, or the form of one of theirs.
+    fn show_setup_at(self: &Rc<Self>, over: &MainWindow, start: SetupStart) {
+        self.show_setup(over, false);
+        let picker = over.global::<crate::Picker>();
+        match start {
+            SetupStart::Picker => {}
+            SetupStart::AddPrinter => picker.invoke_add_printer_pressed(),
+            SetupStart::EditPrinter(at) => {
+                picker.invoke_printer_picked(at as i32);
+                picker.invoke_edit_printer_pressed();
             }
-            Err(err) => eprintln!("Failed to create Preferences window: {err}"),
+            SetupStart::EditResin(at) => {
+                picker.invoke_resin_picked(at as i32);
+                picker.invoke_edit_resin_pressed();
+            }
         }
     }
 }
@@ -2702,6 +2722,23 @@ mod subscribe_window_preferences_tests {
         PrinterId::new("listed-printer").expect("valid printer id")
     }
 
+    /// The Preferences card over the window of `subscribed`, sending nowhere.
+    fn test_card(subscribed: &SubscribedWindow) -> crate::preferences_window::WiredPreferences {
+        open_preferences(
+            &subscribed.window,
+            &subscribed.bus,
+            Rc::new(RefCell::new(Rc::new(ProfileCatalog::from_entries(
+                Vec::new(),
+                Vec::new(),
+            )))),
+            Weak::new(),
+            CardActions {
+                open_setup: Rc::new(|_| {}),
+                import_settings: Rc::new(|| {}),
+            },
+        )
+    }
+
     fn subscribed_window() -> SubscribedWindow {
         let ghost = PrinterId::new("ghost-printer").expect("valid printer id");
         let bus = PreferencesBus::new(PreferencesSnapshot {
@@ -2862,19 +2899,14 @@ mod subscribe_window_preferences_tests {
         let around = on_fresh_slint_thread(|| {
             let subscribed = subscribed_window();
             pick_language(&subscribed.bus, "es");
-            let catalog = Rc::new(RefCell::new(Rc::new(ProfileCatalog::from_entries(
-                Vec::new(),
-                Vec::new(),
-            ))));
-            let prefs = build_preferences_window(&subscribed.bus, catalog)
-                .expect("the headless platform creates the Preferences window");
-            prefs.window.window().set_size(slint::PhysicalSize::new(
-                520,
-                if crate::window_chrome::ON { 394 } else { 360 },
-            ));
-            prefs.window.show().expect("the headless platform shows it");
-            prefs.window.invoke_diagnostic_log_changed(true);
-            crate::test_support::message_cards::card_around_primary_button(prefs.window.window())
+            let _card = test_card(&subscribed);
+            let window = &subscribed.window;
+            window.window().set_size(slint::PhysicalSize::new(900, 560));
+            window.show().expect("the headless platform shows it");
+            let prefs = window.global::<crate::Prefs>();
+            prefs.set_page(crate::preferences_window::page::PRIVACY);
+            prefs.invoke_diagnostic_log_changed(true);
+            crate::test_support::message_cards::card_around_primary_button(window.window())
         });
         assert_eq!(around, (true, true), "(card right of the button, below it)");
     }
@@ -2890,15 +2922,11 @@ mod subscribe_window_preferences_tests {
             crate::breadcrumbs::write_log_into(dir.path());
             crate::breadcrumbs::start(env!("CARGO_PKG_VERSION"), crate::diagnostics::commit());
             let subscribed = subscribed_window();
-            let catalog = Rc::new(RefCell::new(Rc::new(ProfileCatalog::from_entries(
-                Vec::new(),
-                Vec::new(),
-            ))));
-            let prefs = build_preferences_window(&subscribed.bus, catalog)
-                .expect("the headless platform creates the Preferences window");
-            prefs.window.show().expect("the headless platform shows it");
-            prefs.window.invoke_diagnostic_log_changed(true);
-            let window = prefs.window.window();
+            let _card = test_card(&subscribed);
+            subscribed.window.show().expect("the headless platform shows it");
+            let prefs = subscribed.window.global::<crate::Prefs>();
+            prefs.invoke_diagnostic_log_changed(true);
+            let window = subscribed.window.window();
             for event in [
                 slint::platform::WindowEvent::KeyPressed {
                     text: slint::platform::Key::Return.into(),
@@ -2911,7 +2939,7 @@ mod subscribe_window_preferences_tests {
             }
             crate::breadcrumbs::note("test: after turning it on");
             let log = std::fs::read_to_string(dir.path().join("session.log"));
-            let shown_on = prefs.window.get_diagnostic_log();
+            let shown_on = prefs.get_diagnostic_log();
             // Closes the file, so the folder can go.
             crate::breadcrumbs::set_enabled(false).expect("the trail has started");
             (log, shown_on)
@@ -4125,27 +4153,28 @@ mod window_wiring_tests {
         assert!(objects_back, "the undo brings the object back");
     }
 
-    /// Closing the last main window hides Preferences too (#617): left open,
-    /// it kept the app running with no window to come back to.
+    /// Preferences is a card over the window that asked (#670): opening it
+    /// over another window closes the first, and it goes with the last
+    /// window (#617).
     #[test]
-    fn closing_the_last_window_hides_preferences() {
-        let (shown, hidden) = on_fresh_slint_thread(|| {
+    fn preferences_opens_over_one_window_at_a_time() {
+        let (first, moved, gone) = on_fresh_slint_thread(|| {
             let app = test_app(PreferencesSnapshot::for_tests());
-            let id = add_window(&app);
-            let window = window_of(&app, id);
-            app.show_preferences(&window, Weak::new());
-            let prefs = || {
-                app.preferences_window
-                    .borrow()
-                    .as_ref()
-                    .is_some_and(|p| p.window.window().is_visible())
-            };
-            let shown = prefs();
-            drop(app.remove_window(id));
-            (shown, prefs())
+            let a = add_window(&app);
+            let b = add_window(&app);
+            let (wa, wb) = (window_of(&app, a), window_of(&app, b));
+            let open = |w: &MainWindow| w.global::<crate::Prefs>().get_open();
+            app.show_preferences(&wa, Weak::new());
+            let first = (open(&wa), open(&wb));
+            app.show_preferences(&wb, Weak::new());
+            let moved = (open(&wa), open(&wb));
+            drop(app.remove_window(a));
+            drop(app.remove_window(b));
+            (first, moved, app.preferences_window.borrow().is_none())
         });
-        assert!(shown, "Preferences opened");
-        assert!(!hidden, "and went with the last window");
+        assert_eq!(first, (true, false));
+        assert_eq!(moved, (false, true));
+        assert!(gone, "the card went with the last window");
     }
 
     /// File > Clear Scene leaves the window empty, with no start dialog;

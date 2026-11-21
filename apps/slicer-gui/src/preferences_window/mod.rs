@@ -3,115 +3,310 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-mod extend_dialog;
-mod fork_dialog;
+//! Preferences (#670): a card over the main window, like Printer & resin,
+//! filled through the `Prefs` global of that window. Each change goes through
+//! the preferences bus, so it is saved at once and reaches every window. The
+//! printers and resins themselves are picked and edited in Printer & resin:
+//! this card lists the person's own profiles and sends them there.
+
 mod network_printers;
-mod preferences_follow;
-mod printer_dialog;
-mod profile_editor;
-mod profile_view_dialog;
 
-use std::cell::{Cell, RefCell};
-use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
-use std::rc::Rc;
-use std::sync::mpsc;
-use std::time::Duration;
+use std::cell::RefCell;
+use std::path::Path;
+use std::rc::{Rc, Weak};
 
-use slint::{
-    ComponentHandle, Image, Model, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, Timer,
-    TimerMode, VecModel,
-};
+use slint::{ComponentHandle, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString, VecModel};
 
-use sc_print_primitives::{MaterialId, PrinterId};
+use sc_print_primitives::MaterialId;
 use sc_print_profiles::{
-    CalibrationTarget, delete_material_extension_from_library,
-    delete_material_profile_from_library, user_library_dir,
+    ProfileSource, delete_material_extension_from_library, delete_material_profile_from_library,
+    printer_profile_path_in_library, user_library_dir,
 };
 
-use crate::aa_level::aa_level_from_combo_index;
+use crate::aa_level::{aa_combo_index, aa_level_from_combo_index};
+use crate::app_settings::AppSettings;
 use crate::frame_rate::FrameRateCap;
 use crate::i18n::ctr;
 use crate::language::LanguagePreference;
 use crate::preferences_bus::{
     PreferencesBus, PreferencesChange, PreferencesSnapshot, Subscription,
 };
-use crate::preferences_filters::{
-    PrinterCardData, ResinFilterData, apply_thumbnails_to_visible, build_brand_tabs,
-    build_card_data, build_manufacturer_tabs, build_resin_filter_data, selected_brand,
-    selected_manufacturer, set_visible_cards, set_visible_resin_rows, tab_index_for_label,
-    tab_label, visible_material_mask,
-};
-use crate::profile_catalog::{
-    MaterialCatalogEntry, MaterialExtensionEntry, PrinterCatalogEntry, ProfileCatalog,
-    ProfileSource, has_active_matcher, refresh_catalog,
-};
+use crate::profile_catalog::{ProfileCatalog, refresh_catalog};
 use crate::profile_transfer::{
     ExportScope, ImportOutcome, format_collision_report, overwrite_confirmed, run_export,
     run_import,
 };
 use crate::viewport::{ProbeResult, ProbeUpdate, ViewportController};
-use crate::window_prefs::WindowPreferences;
-use crate::{
-    ExtendDialog, ForkDialog, MessageAnswer, PillKind, PreferencesWindow, ProfileViewDialog,
-    ResinPill, ResinRow,
-};
+use crate::{MainWindow, MessageAnswer, Prefs, PrefsHit, PrefsProfile};
 
-use extend_dialog::open_extend_dialog;
-use fork_dialog::open_fork_dialog;
-use printer_dialog::open_printer_dialog;
-use profile_editor::open_profile_editor;
-use profile_view_dialog::open_profile_view_dialog;
-
-/// View-local state of the resin list: every derived row in tier order, the
-/// filter data for the materials those rows index into, the tab labels, and the
-/// active filter. Never reaches the bus.
-///
-/// `rows` and `filter_data` are rebuilt together from the same catalog, so a
-/// row's `id_index` always indexes `filter_data`.
-struct ResinView {
-    rows: Vec<ResinRow>,
-    filter_data: Vec<ResinFilterData>,
-    tabs: Vec<String>,
-    current_tab: i32,
-    search_lower: String,
+/// The pages of the card, in the order of its list.
+pub(crate) mod page {
+    pub(crate) const GENERAL: i32 = 0;
+    pub(crate) const LOOK: i32 = 1;
+    pub(crate) const MOUSE: i32 = 2;
+    pub(crate) const PRINTERS: i32 = 3;
+    pub(crate) const NETWORK: i32 = 4;
+    pub(crate) const SLICING: i32 = 5;
+    pub(crate) const PRIVACY: i32 = 6;
 }
 
-/// Bundle of a `PreferencesWindow` and its bus subscription. Drop drops the
-/// subscription so the listener is removed as soon as the wrapped window is no
-/// longer held.
-pub(crate) struct WiredPreferencesWindow {
-    pub window: PreferencesWindow,
+/// Where Printer & resin opens when the card sends the person there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SetupStart {
+    /// The picker, on the printer and resin in use.
+    Picker,
+    /// The form of a new printer.
+    AddPrinter,
+    /// The form of the printer at this place of the catalog.
+    EditPrinter(usize),
+    /// The form of the resin at this place of the catalog.
+    EditResin(usize),
+}
+
+/// What the card asks of the app: opening Printer & resin, and importing a
+/// printer's settings (File > Import printer settings).
+pub(crate) struct CardActions {
+    pub(crate) open_setup: Rc<dyn Fn(SetupStart)>,
+    pub(crate) import_settings: Rc<dyn Fn()>,
+}
+
+/// Keeps the card of a window wired: its bus subscription and its network
+/// page. Dropping it leaves the card as it is, no longer following.
+pub(crate) struct WiredPreferences {
     _subscription: Subscription,
-    // Keeps the thumbnail-loading poll timer alive for the window's lifetime;
-    // dropping it (when the window closes) stops the poll.
-    _thumbnail_timer: Rc<Timer>,
     _network_printers: network_printers::NetworkPrintersPage,
 }
 
-/// Points the "Test performance" button of `prefs` at `viewport`, the 3D view
-/// the test draws in, and shows the test's progress and result on the page.
-/// Called on every show, so the test follows the window that opened
-/// Preferences last.
-pub(crate) fn wire_performance_test(
-    prefs: &PreferencesWindow,
-    viewport: std::rc::Weak<ViewportController>,
-) {
-    let prefs_weak = prefs.as_weak();
-    prefs.on_test_performance(move || {
-        let Some(viewport) = viewport.upgrade() else {
-            return;
-        };
-        let prefs_weak = prefs_weak.clone();
-        viewport.start_performance_probe(Rc::new(move |update| {
-            if let Some(w) = prefs_weak.upgrade() {
-                show_probe_update(&w, update);
+/// Opens Preferences over `ui`, on the page it was last on. The performance
+/// test draws in `viewport`, the 3D view of `ui`.
+pub(crate) fn open_preferences(
+    ui: &MainWindow,
+    bus: &Rc<PreferencesBus>,
+    catalog: Rc<RefCell<Rc<ProfileCatalog>>>,
+    viewport: Weak<ViewportController>,
+    actions: CardActions,
+) -> WiredPreferences {
+    let prefs = ui.global::<Prefs>();
+    let snapshot = bus.snapshot();
+    apply_preferences(&prefs, &snapshot);
+    show_printing(&prefs, &snapshot, &catalog.borrow());
+    prefs.set_search(SharedString::new());
+    prefs.set_hits(ModelRc::default());
+    prefs.set_diagnostic_log_error(SharedString::new());
+    prefs.set_log_question_open(false);
+
+    let weak = ui.as_weak();
+    let actions = Rc::new(actions);
+    wire_general(&prefs, bus, &weak);
+    wire_look(&prefs, bus, &weak, viewport);
+    wire_printers(&prefs, bus, &catalog, &weak, &actions);
+    wire_slicing_and_privacy(&prefs, bus, &weak);
+
+    prefs.on_search_edited({
+        let weak = weak.clone();
+        move |text| {
+            if let Some(ui) = weak.upgrade() {
+                let hits = search(&text);
+                ui.global::<Prefs>()
+                    .set_hits(ModelRc::new(VecModel::from(hits)));
             }
-        }));
+        }
+    });
+    prefs.on_restore_defaults({
+        let bus = bus.clone();
+        move |page| restore_defaults(&bus, page)
+    });
+    prefs.on_close_requested({
+        let weak = weak.clone();
+        move || {
+            if let Some(ui) = weak.upgrade() {
+                ui.global::<Prefs>().set_open(false);
+            }
+        }
+    });
+
+    let subscription = bus.subscribe({
+        let weak = weak.clone();
+        let catalog = catalog.clone();
+        move |snap, change| {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let prefs = ui.global::<Prefs>();
+            apply_preferences(&prefs, snap);
+            if matches!(
+                change,
+                PreferencesChange::DefaultPrinter
+                    | PreferencesChange::DefaultResin
+                    | PreferencesChange::Profiles
+                    | PreferencesChange::Language
+            ) {
+                show_printing(&prefs, snap, &catalog.borrow());
+            }
+            if matches!(change, PreferencesChange::Language) && !prefs.get_search().is_empty() {
+                prefs.set_hits(ModelRc::new(VecModel::from(search(&prefs.get_search()))));
+            }
+        }
+    });
+    let network_printers = network_printers::wire(ui, bus, catalog);
+
+    prefs.set_open(true);
+    crate::breadcrumbs::note("window: preferences");
+    WiredPreferences {
+        _subscription: subscription,
+        _network_printers: network_printers,
+    }
+}
+
+/// Pushes the plain settings of `snap` into the card.
+pub(crate) fn apply_preferences(prefs: &Prefs, snap: &PreferencesSnapshot) {
+    prefs.set_theme(snap.theme);
+    // The language list again, so "System" follows the language in force.
+    prefs.set_language_options(LanguagePreference::display_options());
+    prefs.set_current_language_index(snap.language.combo_index());
+    prefs.set_current_aa_index(aa_combo_index(snap.aa_level));
+    prefs.set_prescan_supports(snap.prescan_supports);
+    prefs.set_smooth_models(snap.smooth_models);
+    prefs.set_controls_options(ModelRc::new(VecModel::from(
+        crate::controls_layout::ControlsLayout::ALL
+            .iter()
+            .map(|l| SharedString::from(l.label()))
+            .collect::<Vec<_>>(),
+    )));
+    prefs.set_current_controls_index(snap.controls_layout.combo_index());
+    prefs.set_controls_summary(snap.controls_layout.summary().into());
+    prefs.set_show_start_dialog(snap.show_start_dialog);
+    prefs.set_current_frame_rate_index(snap.frame_rate.combo_index());
+    prefs.set_current_gizmo_style_index(snap.gizmo_style.combo_index());
+    prefs.set_current_gizmo_size_index(crate::gizmo::look::size_combo_index(snap.gizmo_size));
+    prefs.set_diagnostic_log(snap.diagnostic_log);
+    prefs.set_silenced_message_count(snap.silenced_messages.len() as i32);
+}
+
+fn wire_general(prefs: &Prefs, bus: &Rc<PreferencesBus>, _weak: &slint::Weak<MainWindow>) {
+    prefs.on_language_changed({
+        let bus = bus.clone();
+        move |index| {
+            let language = LanguagePreference::from_combo_index(index);
+            bus.update(move |snap| {
+                snap.language = language;
+                PreferencesChange::Language
+            });
+        }
+    });
+    prefs.on_show_start_dialog_changed({
+        let bus = bus.clone();
+        move |on| {
+            bus.update(move |snap| {
+                snap.show_start_dialog = on;
+                PreferencesChange::StartDialog
+            });
+        }
+    });
+    prefs.on_show_all_messages_again({
+        let bus = bus.clone();
+        move || crate::error_dialog::show_all_messages_again(&bus)
+    });
+    prefs.on_controls_selected({
+        let bus = bus.clone();
+        move |index| {
+            bus.update(move |snap| {
+                snap.controls_layout =
+                    crate::controls_layout::ControlsLayout::from_combo_index(index);
+                PreferencesChange::Controls
+            });
+        }
     });
 }
 
-fn show_probe_update(prefs: &PreferencesWindow, update: ProbeUpdate) {
+fn wire_look(
+    prefs: &Prefs,
+    bus: &Rc<PreferencesBus>,
+    weak: &slint::Weak<MainWindow>,
+    viewport: Weak<ViewportController>,
+) {
+    prefs.on_theme_changed({
+        let bus = bus.clone();
+        move |theme| {
+            bus.update(move |snap| {
+                snap.theme = theme;
+                PreferencesChange::Theme
+            });
+        }
+    });
+    prefs.on_smooth_models_changed({
+        let bus = bus.clone();
+        move |on| {
+            bus.update(move |snap| {
+                snap.smooth_models = on;
+                PreferencesChange::SmoothModels
+            });
+        }
+    });
+    prefs.on_frame_rate_changed({
+        let bus = bus.clone();
+        move |index| {
+            bus.update(move |snap| {
+                snap.frame_rate = FrameRateCap::from_combo_index(index);
+                PreferencesChange::FrameRate
+            });
+        }
+    });
+    prefs.on_gizmo_style_changed({
+        let bus = bus.clone();
+        move |index| {
+            bus.update(move |snap| {
+                snap.gizmo_style = crate::gizmo::look::GizmoStyle::from_combo_index(index);
+                PreferencesChange::Gizmo
+            });
+        }
+    });
+    prefs.on_gizmo_size_changed({
+        let bus = bus.clone();
+        move |index| {
+            bus.update(move |snap| {
+                snap.gizmo_size = crate::gizmo::look::size_from_combo_index(index);
+                PreferencesChange::Gizmo
+            });
+        }
+    });
+    prefs.on_use_recommended_frame_rate({
+        let bus = bus.clone();
+        let weak = weak.clone();
+        move || {
+            let Some(ui) = weak.upgrade() else {
+                return;
+            };
+            let prefs = ui.global::<Prefs>();
+            let Ok(fps) = u32::try_from(prefs.get_probe_recommended_fps()) else {
+                return;
+            };
+            if let Some(cap) = FrameRateCap::fixed(fps) {
+                prefs.set_probe_recommended_fps(0);
+                bus.update(move |snap| {
+                    snap.frame_rate = cap;
+                    PreferencesChange::FrameRate
+                });
+            }
+        }
+    });
+    prefs.on_test_performance({
+        let weak = weak.clone();
+        move || {
+            let Some(viewport) = viewport.upgrade() else {
+                return;
+            };
+            let weak = weak.clone();
+            viewport.start_performance_probe(Rc::new(move |update| {
+                if let Some(ui) = weak.upgrade() {
+                    show_probe_update(&ui.global::<Prefs>(), update);
+                }
+            }));
+        }
+    });
+}
+
+fn show_probe_update(prefs: &Prefs, update: ProbeUpdate) {
     match update {
         ProbeUpdate::Progress(progress) => {
             prefs.set_probe_running(true);
@@ -157,177 +352,17 @@ fn probe_result_text(result: &ProbeResult) -> SharedString {
     }
 }
 
-pub(crate) fn build_preferences_window(
-    bus: &Rc<PreferencesBus>,
-    catalog_handle: Rc<RefCell<Rc<ProfileCatalog>>>,
-) -> Result<WiredPreferencesWindow, slint::PlatformError> {
-    let prefs = PreferencesWindow::new()?;
-    crate::window_chrome::wire_framed!(&prefs);
-    let catalog = catalog_handle.borrow().clone();
-
-    // The gallery tiles and the manufacturer tab bar are derived from the
-    // catalog, held behind interior mutability so `refresh_view` can rebuild
-    // them in place after each rebuild of the catalog.
-    let all_cards = Rc::new(RefCell::new(build_card_data(
-        catalog.printers(),
-        &bus.snapshot().favourite_printers,
-    )));
-    let tabs = Rc::new(RefCell::new(build_manufacturer_tabs(&catalog)));
-    // View-local filter state: which manufacturer tab and search text narrow
-    // the visible tiles. Never reaches the bus.
-    let current_tab = Rc::new(Cell::new(0i32));
-    let search_lower = Rc::new(RefCell::new(String::new()));
-
-    let snapshot = bus.snapshot();
-    prefs.apply_preferences(&snapshot);
-
-    // Start on the brand tab of the default resin, the way the gallery starts
-    // on the manufacturer of the default printer. Resolved before the first
-    // derivation, which pushes through this filter.
-    let brand_tabs = build_brand_tabs(&catalog);
-    let initial_brand_tab = tab_index_for_label(
-        &brand_tabs,
-        selected_brand(catalog.materials(), snapshot.default_resin.as_ref()).as_deref(),
-    );
-    prefs.set_current_brand_index(initial_brand_tab);
-    prefs.set_resin_brand_tabs(string_model(&brand_tabs));
-    let resin_view = Rc::new(RefCell::new(ResinView {
-        rows: Vec::new(),
-        filter_data: Vec::new(),
-        tabs: brand_tabs,
-        current_tab: initial_brand_tab,
-        search_lower: String::new(),
-    }));
-
-    // Selection first: the visible-cards pass below reads the selected printer
-    // index back from the window.
-    apply_printing(&prefs, &snapshot, &catalog, &resin_view);
-
-    // Start on the manufacturer tab of the app's default printer, so that
-    // printer is in view when the section first opens.
-    let initial_tab = tab_index_for_label(
-        &tabs.borrow(),
-        selected_manufacturer(&catalog, &snapshot).as_deref(),
-    );
-    current_tab.set(initial_tab);
-    prefs.set_current_manufacturer_index(initial_tab);
-
-    prefs.set_manufacturer_tabs(string_model(&tabs.borrow()));
-    set_visible_cards(
-        &prefs,
-        &all_cards.borrow(),
-        tab_label(&tabs.borrow(), initial_tab),
-        "",
-    );
-
-    let prefs_weak = prefs.as_weak();
-    PREFERENCES_WINDOW.with(|w| *w.borrow_mut() = prefs_weak.clone());
-
-    // Thumbnails decode on a worker thread and land in the gallery once ready;
-    // this timer polls for the finished batch. Kept alive by the returned
-    // `WiredPreferencesWindow`.
-    let thumbnail_timer = Rc::new(Timer::default());
-    start_thumbnail_load(
-        &thumbnail_timer,
-        &prefs,
-        all_cards.clone(),
-        thumbnail_paths(&catalog),
-    );
-
-    // Rebuild every catalog-derived view (gallery, tabs, resin list) from the
-    // current catalog handle, preserving the active filter and selection, then
-    // tell the bus that the profiles changed, so the Slice panels re-check
-    // their held slices (#296). Called after each rebuild of the catalog.
-    let refresh_view: Rc<dyn Fn()> = {
-        let prefs_weak = prefs_weak.clone();
-        let bus = bus.clone();
-        let catalog_handle = catalog_handle.clone();
-        let all_cards = all_cards.clone();
-        let tabs = tabs.clone();
-        let current_tab = current_tab.clone();
-        let search_lower = search_lower.clone();
-        let thumbnail_timer = thumbnail_timer.clone();
-        let resin_view = resin_view.clone();
-        Rc::new(move || {
-            let Some(w) = prefs_weak.upgrade() else {
-                return;
-            };
-            let catalog = catalog_handle.borrow().clone();
-            *all_cards.borrow_mut() =
-                build_card_data(catalog.printers(), &bus.snapshot().favourite_printers);
-            *tabs.borrow_mut() = build_manufacturer_tabs(&catalog);
-            // An import can add a brand, which shifts every tab index after it,
-            // so the active tab is re-resolved by its label.
-            {
-                let mut view = resin_view.borrow_mut();
-                let active = tab_label(&view.tabs, view.current_tab).map(str::to_owned);
-                view.tabs = build_brand_tabs(&catalog);
-                view.current_tab = tab_index_for_label(&view.tabs, active.as_deref());
-                w.set_current_brand_index(view.current_tab);
-                w.set_resin_brand_tabs(string_model(&view.tabs));
-            }
-            // Selection first: catalog indices may have shifted, and the
-            // visible-cards pass reads the selected printer index back from the
-            // window.
-            apply_printing(&w, &bus.snapshot(), &catalog, &resin_view);
-            w.set_manufacturer_tabs(string_model(&tabs.borrow()));
-            set_visible_cards(
-                &w,
-                &all_cards.borrow(),
-                tab_label(&tabs.borrow(), current_tab.get()),
-                &search_lower.borrow(),
-            );
-            start_thumbnail_load(
-                &thumbnail_timer,
-                &w,
-                all_cards.clone(),
-                thumbnail_paths(&catalog),
-            );
-            bus.update(|_| PreferencesChange::Profiles);
-        })
-    };
-
-    prefs.on_close_requested({
-        let prefs_weak = prefs_weak.clone();
-        move || {
-            if let Some(w) = prefs_weak.upgrade() {
-                let _ = w.hide();
-            }
-        }
-    });
-
-    prefs.on_theme_changed({
-        let bus = bus.clone();
-        move |new_theme| {
-            bus.update(move |snap| {
-                snap.theme = new_theme;
-                PreferencesChange::Theme
-            });
-        }
-    });
-
-    prefs.on_language_changed({
-        let bus = bus.clone();
-        move |index| {
-            let new_language = LanguagePreference::from_combo_index(index);
-            bus.update(move |snap| {
-                snap.language = new_language;
-                PreferencesChange::Language
-            });
-        }
-    });
-
+fn wire_slicing_and_privacy(prefs: &Prefs, bus: &Rc<PreferencesBus>, weak: &slint::Weak<MainWindow>) {
     prefs.on_aa_level_changed({
         let bus = bus.clone();
         move |index| {
-            let new_level = aa_level_from_combo_index(index);
+            let level = aa_level_from_combo_index(index);
             bus.update(move |snap| {
-                snap.aa_level = new_level;
+                snap.aa_level = level;
                 PreferencesChange::AaLevel
             });
         }
     });
-
     prefs.on_prescan_supports_changed({
         let bus = bus.clone();
         move |on| {
@@ -337,453 +372,40 @@ pub(crate) fn build_preferences_window(
             });
         }
     });
-
     prefs.on_diagnostic_log_changed({
         let bus = bus.clone();
-        let window = prefs.as_weak();
+        let weak = weak.clone();
         move |on| {
-            if let Some(window) = window.upgrade() {
-                diagnostic_log_toggled(&window, &bus, on);
+            if let Some(ui) = weak.upgrade() {
+                diagnostic_log_toggled(&ui.global::<Prefs>(), &bus, on);
             }
         }
     });
-
     prefs.on_log_question_answered({
         let bus = bus.clone();
-        let window = prefs.as_weak();
+        let weak = weak.clone();
         move |answer| {
-            if let Some(window) = window.upgrade() {
-                log_question_answered(&window, &bus, answer);
+            if let Some(ui) = weak.upgrade() {
+                log_question_answered(&ui.global::<Prefs>(), &bus, answer);
             }
         }
     });
-
-    prefs.on_show_all_messages_again({
-        let bus = bus.clone();
-        move || crate::error_dialog::show_all_messages_again(&bus)
-    });
-
     prefs.on_open_logs_folder(|| {
         if let Some(dir) = crate::breadcrumbs::logs_dir() {
-            // The platform's file manager, detached: a failure leaves nothing to report.
-            let opener = if cfg!(windows) {
-                "explorer"
-            } else if cfg!(target_os = "macos") {
-                "open"
-            } else {
-                "xdg-open"
-            };
-            let _ = std::process::Command::new(opener).arg(dir).spawn();
+            crate::app_state::open_in_browser(&dir.to_string_lossy());
         }
     });
-
-    prefs.on_show_start_dialog_changed({
-        let bus = bus.clone();
-        move |on| {
-            bus.update(move |snap| {
-                snap.show_start_dialog = on;
-                PreferencesChange::StartDialog
-            });
-        }
-    });
-
-    prefs.on_controls_selected({
-        let bus = bus.clone();
-        move |index| {
-            bus.update(move |snap| {
-                snap.controls_layout =
-                    crate::controls_layout::ControlsLayout::from_combo_index(index);
-                PreferencesChange::Controls
-            });
-        }
-    });
-
-    prefs.on_smooth_models_changed({
-        let bus = bus.clone();
-        move |on| {
-            bus.update(move |snap| {
-                snap.smooth_models = on;
-                PreferencesChange::SmoothModels
-            });
-        }
-    });
-
-    prefs.on_gizmo_style_changed({
-        let bus = bus.clone();
-        move |index| {
-            bus.update(move |snap| {
-                snap.gizmo_style = crate::gizmo::look::GizmoStyle::from_combo_index(index);
-                PreferencesChange::Gizmo
-            });
-        }
-    });
-
-    prefs.on_gizmo_size_changed({
-        let bus = bus.clone();
-        move |index| {
-            bus.update(move |snap| {
-                snap.gizmo_size = crate::gizmo::look::size_from_combo_index(index);
-                PreferencesChange::Gizmo
-            });
-        }
-    });
-
-    prefs.on_frame_rate_changed({
-        let bus = bus.clone();
-        move |index| {
-            bus.update(move |snap| {
-                snap.frame_rate = FrameRateCap::from_combo_index(index);
-                PreferencesChange::FrameRate
-            });
-        }
-    });
-
-    prefs.on_use_recommended_frame_rate({
-        let bus = bus.clone();
-        let prefs_weak = prefs_weak.clone();
-        move || {
-            let Some(w) = prefs_weak.upgrade() else {
-                return;
-            };
-            let Ok(fps) = u32::try_from(w.get_probe_recommended_fps()) else {
-                return;
-            };
-            if let Some(cap) = FrameRateCap::fixed(fps) {
-                w.set_probe_recommended_fps(0);
-                bus.update(move |snap| {
-                    snap.frame_rate = cap;
-                    PreferencesChange::FrameRate
-                });
-            }
-        }
-    });
-
-    prefs.on_manufacturer_tab_changed({
-        let prefs_weak = prefs_weak.clone();
-        let all_cards = all_cards.clone();
-        let tabs = tabs.clone();
-        let current_tab = current_tab.clone();
-        let search_lower = search_lower.clone();
-        move |index| {
-            current_tab.set(index);
-            if let Some(w) = prefs_weak.upgrade() {
-                set_visible_cards(
-                    &w,
-                    &all_cards.borrow(),
-                    tab_label(&tabs.borrow(), index),
-                    &search_lower.borrow(),
-                );
-            }
-        }
-    });
-
-    prefs.on_printer_search_changed({
-        let prefs_weak = prefs_weak.clone();
-        let all_cards = all_cards.clone();
-        let tabs = tabs.clone();
-        let current_tab = current_tab.clone();
-        let search_lower = search_lower.clone();
-        move |text| {
-            *search_lower.borrow_mut() = text.to_lowercase();
-            if let Some(w) = prefs_weak.upgrade() {
-                set_visible_cards(
-                    &w,
-                    &all_cards.borrow(),
-                    tab_label(&tabs.borrow(), current_tab.get()),
-                    &search_lower.borrow(),
-                );
-            }
-        }
-    });
-
-    prefs.on_brand_tab_changed({
-        let prefs_weak = prefs_weak.clone();
-        let resin_view = resin_view.clone();
-        move |index| {
-            resin_view.borrow_mut().current_tab = index;
-            if let Some(w) = prefs_weak.upgrade() {
-                push_visible_resins(&w, &resin_view.borrow());
-            }
-        }
-    });
-
-    prefs.on_resin_search_changed({
-        let prefs_weak = prefs_weak.clone();
-        let resin_view = resin_view.clone();
-        move |text| {
-            resin_view.borrow_mut().search_lower = text.to_lowercase();
-            if let Some(w) = prefs_weak.upgrade() {
-                // Without this the box would come back empty over a still
-                // filtered list when the section is rebuilt on a sidebar
-                // switch.
-                w.set_resin_search_text(text);
-                push_visible_resins(&w, &resin_view.borrow());
-            }
-        }
-    });
-
-    prefs.on_printer_selected({
-        let bus = bus.clone();
-        let catalog_handle = catalog_handle.clone();
-        move |index| {
-            let catalog = catalog_handle.borrow().clone();
-            let Some(entry) = catalog.printers().get(index as usize) else {
-                return;
-            };
-            let id = entry.id.clone();
-            bus.update(move |snap| {
-                snap.default_printer = Some(id);
-                PreferencesChange::DefaultPrinter
-            });
-        }
-    });
-
-    prefs.on_resin_selected({
-        let bus = bus.clone();
-        let catalog_handle = catalog_handle.clone();
-        move |index| {
-            let catalog = catalog_handle.borrow().clone();
-            let Some(entry) = catalog.materials().get(index as usize) else {
-                return;
-            };
-            let id = entry.id.clone();
-            bus.update(move |snap| {
-                snap.default_resin = Some(id);
-                PreferencesChange::DefaultResin
-            });
-        }
-    });
-
-    prefs.on_printer_favourite_toggled({
-        let bus = bus.clone();
-        let catalog_handle = catalog_handle.clone();
-        let all_cards = all_cards.clone();
-        let prefs_weak = prefs_weak.clone();
-        move |index| {
-            let catalog = catalog_handle.borrow().clone();
-            let Some(entry) = catalog.printers().get(index as usize) else {
-                return;
-            };
-            let id = entry.id.clone();
-            let make_favourite = !bus.snapshot().favourite_printers.contains(&id);
-            bus.update(move |snap| {
-                if make_favourite {
-                    snap.favourite_printers.insert(id);
-                } else {
-                    snap.favourite_printers.remove(&id);
-                }
-                PreferencesChange::Favourites
-            });
-            // Flip the star in place: the bus subscription re-applies the resin
-            // view but not the gallery, and rebuilding the cards would drop the
-            // async-loaded thumbnails, so update that card directly (keeps its
-            // thumbnail and the scroll position).
-            if let Some(data) = all_cards.borrow_mut().get_mut(index as usize) {
-                data.card.is_favourite = make_favourite;
-            }
-            if let Some(w) = prefs_weak.upgrade() {
-                let cards = w.get_printer_cards();
-                for row in 0..cards.row_count() {
-                    if let Some(mut card) = cards.row_data(row)
-                        && card.id_index == index
-                    {
-                        card.is_favourite = make_favourite;
-                        cards.set_row_data(row, card);
-                    }
-                }
-            }
-        }
-    });
-
-    prefs.on_resin_favourite_toggled({
-        let bus = bus.clone();
-        let catalog_handle = catalog_handle.clone();
-        move |index| {
-            let catalog = catalog_handle.borrow().clone();
-            let Some(entry) = catalog.materials().get(index as usize) else {
-                return;
-            };
-            let id = entry.id.clone();
-            let make_favourite = !bus.snapshot().favourite_resins.contains(&id);
-            bus.update(move |snap| {
-                if make_favourite {
-                    snap.favourite_resins.insert(id);
-                } else {
-                    snap.favourite_resins.remove(&id);
-                }
-                PreferencesChange::Favourites
-            });
-            // The bus subscription re-runs `apply_printing`, which rebuilds the
-            // resin rows against the updated favourites, so the row's star
-            // refreshes without extra work here.
-        }
-    });
-
-    prefs.on_import_requested({
-        let catalog_handle = catalog_handle.clone();
-        let refresh_view = refresh_view.clone();
-        let prefs_weak = prefs_weak.clone();
-        move || {
-            spawn_import(
-                prefs_weak.clone(),
-                catalog_handle.clone(),
-                refresh_view.clone(),
-            )
-        }
-    });
-    prefs.on_export_printers_requested({
-        let prefs_weak = prefs_weak.clone();
-        move || spawn_export(prefs_weak.clone(), ExportScope::Printers)
-    });
-    // Holds the printer form while it is open, like `fork_dialog` below.
-    let printer_dialog: Rc<RefCell<Option<crate::slint_ui::PrinterDialog>>> =
-        Rc::new(RefCell::new(None));
-    for edit in [false, true] {
-        let open = {
-            let prefs_weak = prefs_weak.clone();
-            let bus = bus.clone();
-            let catalog_handle = catalog_handle.clone();
-            let refresh_view = refresh_view.clone();
-            let printer_dialog = printer_dialog.clone();
-            move || {
-                open_printer_dialog(
-                    &prefs_weak,
-                    &bus,
-                    &catalog_handle,
-                    &refresh_view,
-                    &printer_dialog,
-                    edit,
-                );
-            }
-        };
-        if edit {
-            prefs.on_edit_printer_requested(open);
-        } else {
-            prefs.on_add_printer_requested(open);
-        }
-    }
-    prefs.on_export_materials_requested({
-        let prefs_weak = prefs_weak.clone();
-        move || spawn_export(prefs_weak.clone(), ExportScope::Materials)
-    });
-
-    // Holds the profile viewer or editor while one is open so it is not dropped
-    // (and closed) the moment its opener returns. Opening another profile
-    // replaces (and closes) the previous dialog.
-    let profile_dialog: Rc<RefCell<Option<ProfileViewDialog>>> = Rc::new(RefCell::new(None));
-    prefs.on_view_requested({
-        let bus = bus.clone();
-        let catalog_handle = catalog_handle.clone();
-        let profile_dialog = profile_dialog.clone();
-        move |index| {
-            open_profile_view_dialog(&bus, &catalog_handle, &profile_dialog, index);
-        }
-    });
-
-    prefs.on_edit_requested({
-        let bus = bus.clone();
-        let catalog_handle = catalog_handle.clone();
-        let refresh_view = refresh_view.clone();
-        let profile_dialog = profile_dialog.clone();
-        move |index, is_extension| {
-            open_profile_editor(
-                &bus,
-                &catalog_handle,
-                &refresh_view,
-                &profile_dialog,
-                index,
-                is_extension,
-                None,
-            );
-        }
-    });
-
-    prefs.on_delete_requested({
-        let bus = bus.clone();
-        let catalog_handle = catalog_handle.clone();
-        let refresh_view = refresh_view.clone();
-        let prefs_weak = prefs_weak.clone();
-        move |index, is_extension| {
-            spawn_delete_flow(
-                prefs_weak.clone(),
-                bus.clone(),
-                catalog_handle.clone(),
-                refresh_view.clone(),
-                index,
-                is_extension,
-            );
-        }
-    });
-
-    // Holds the fork dialog while one is open, like `profile_dialog` does for
-    // the viewer / editor.
-    let fork_dialog: Rc<RefCell<Option<ForkDialog>>> = Rc::new(RefCell::new(None));
-    prefs.on_fork_requested({
-        let bus = bus.clone();
-        let catalog_handle = catalog_handle.clone();
-        let refresh_view = refresh_view.clone();
-        let fork_dialog = fork_dialog.clone();
-        let profile_dialog = profile_dialog.clone();
-        move |index| {
-            open_fork_dialog(
-                &bus,
-                &catalog_handle,
-                &refresh_view,
-                &fork_dialog,
-                &profile_dialog,
-                index,
-            );
-        }
-    });
-
-    // Holds the extend dialog while one is open, like `fork_dialog`.
-    let extend_dialog: Rc<RefCell<Option<ExtendDialog>>> = Rc::new(RefCell::new(None));
-    prefs.on_extend_requested({
-        let bus = bus.clone();
-        let catalog_handle = catalog_handle.clone();
-        let refresh_view = refresh_view.clone();
-        let extend_dialog = extend_dialog.clone();
-        move |index| {
-            open_extend_dialog(&bus, &catalog_handle, &refresh_view, &extend_dialog, index);
-        }
-    });
-
-    let subscription = bus.subscribe({
-        let prefs_weak = prefs_weak.clone();
-        let catalog_handle = catalog_handle.clone();
-        let tabs = tabs.clone();
-        let resin_view = resin_view.clone();
-        move |snap, change| {
-            if let Some(w) = prefs_weak.upgrade() {
-                w.apply_preferences(snap);
-                let catalog = catalog_handle.borrow().clone();
-                apply_printing(&w, snap, &catalog, &resin_view);
-                if matches!(change, PreferencesChange::Language) {
-                    push_tab_labels(&w, &catalog, &tabs, &resin_view);
-                }
-            }
-        }
-    });
-
-    let network_printers = network_printers::wire(&prefs, bus, catalog_handle.clone());
-
-    Ok(WiredPreferencesWindow {
-        window: prefs,
-        _subscription: subscription,
-        _thumbnail_timer: thumbnail_timer,
-        _network_printers: network_printers,
-    })
 }
 
-/// The diagnostic log was ticked (`on`) or unticked in Preferences > Privacy.
-/// Ticking only asks: the box stays clear and the log off until the person
-/// confirms (#74). Unticking stops it at once.
-fn diagnostic_log_toggled(window: &PreferencesWindow, bus: &PreferencesBus, on: bool) {
-    window.set_diagnostic_log_error(SharedString::new());
+/// The diagnostic log was ticked (`on`) or unticked in Privacy. Ticking only
+/// asks: the box stays clear and the log off until the person confirms (#74).
+/// Unticking stops it at once.
+fn diagnostic_log_toggled(prefs: &Prefs, bus: &PreferencesBus, on: bool) {
+    prefs.set_diagnostic_log_error(SharedString::new());
     if on {
-        window.set_diagnostic_log(false);
-        window.set_log_question_serial(window.get_log_question_serial().wrapping_add(1));
-        window.set_log_question_open(true);
+        prefs.set_diagnostic_log(false);
+        prefs.set_log_question_serial(prefs.get_log_question_serial().wrapping_add(1));
+        prefs.set_log_question_open(true);
     } else {
         crate::breadcrumbs::note("diagnostic log: off");
         // Off can't fail in a way worth telling: the log stops either way.
@@ -798,8 +420,8 @@ fn diagnostic_log_toggled(window: &PreferencesWindow, bus: &PreferencesBus, on: 
 /// Closes the question before the diagnostic log. Turn on starts the log
 /// here, and the box shows it on only once `session.log` has started; when it
 /// can't, the box stays clear and the page says why, never failing quietly.
-fn log_question_answered(window: &PreferencesWindow, bus: &PreferencesBus, answer: MessageAnswer) {
-    window.set_log_question_open(false);
+fn log_question_answered(prefs: &Prefs, bus: &PreferencesBus, answer: MessageAnswer) {
+    prefs.set_log_question_open(false);
     if answer != MessageAnswer::Confirm {
         return;
     }
@@ -813,7 +435,8 @@ fn log_question_answered(window: &PreferencesWindow, bus: &PreferencesBus, answe
         }
         Err(err) => {
             crate::breadcrumbs::note(&format!("diagnostic log: could not start: {err}"));
-            window.set_diagnostic_log_error(ctr!(
+            prefs.set_diagnostic_log(false);
+            prefs.set_diagnostic_log_error(ctr!(
                 "PrivacyPreferences",
                 "The diagnostic log could not start: {}",
                 err
@@ -822,40 +445,340 @@ fn log_question_answered(window: &PreferencesWindow, bus: &PreferencesBus, answe
     }
 }
 
-fn string_model(values: &[String]) -> ModelRc<SharedString> {
-    ModelRc::new(VecModel::from(
-        values
-            .iter()
-            .map(|s| SharedString::from(s.as_str()))
-            .collect::<Vec<_>>(),
-    ))
-}
-
-thread_local! {
-    /// The app's Preferences window (there is 1), over which its dialogs open.
-    static PREFERENCES_WINDOW: RefCell<slint::Weak<PreferencesWindow>> =
-        RefCell::new(slint::Weak::default());
-}
-
-/// Centres a freshly shown dialog of the Preferences window over it (#133).
-fn centre_over_preferences(dialog: &(impl ComponentHandle + 'static)) {
-    if let Some(prefs) = PREFERENCES_WINDOW.with(|w| w.borrow().upgrade()) {
-        crate::window_placement::centre_over(dialog, &prefs);
+/// Puts the settings of `page` back to what Breadslicer ships with. Each one
+/// that changes goes through the bus, as if picked by hand.
+fn restore_defaults(bus: &PreferencesBus, page: i32) {
+    let shipped = AppSettings::default;
+    let now = bus.snapshot();
+    match page {
+        page::GENERAL => {
+            if now.language != shipped().language() {
+                bus.update(move |snap| {
+                    snap.language = shipped().language();
+                    PreferencesChange::Language
+                });
+            }
+            if now.show_start_dialog != shipped().show_start_dialog() {
+                bus.update(move |snap| {
+                    snap.show_start_dialog = shipped().show_start_dialog();
+                    PreferencesChange::StartDialog
+                });
+            }
+        }
+        page::LOOK => {
+            if now.theme != shipped().theme() {
+                bus.update(move |snap| {
+                    snap.theme = shipped().theme();
+                    PreferencesChange::Theme
+                });
+            }
+            if now.smooth_models != shipped().smooth_models() {
+                bus.update(move |snap| {
+                    snap.smooth_models = shipped().smooth_models();
+                    PreferencesChange::SmoothModels
+                });
+            }
+            if now.frame_rate != shipped().frame_rate() {
+                bus.update(move |snap| {
+                    snap.frame_rate = shipped().frame_rate();
+                    PreferencesChange::FrameRate
+                });
+            }
+            if now.gizmo_style != shipped().gizmo_style() || now.gizmo_size != shipped().gizmo_size() {
+                bus.update(move |snap| {
+                    snap.gizmo_style = shipped().gizmo_style();
+                    snap.gizmo_size = shipped().gizmo_size();
+                    PreferencesChange::Gizmo
+                });
+            }
+        }
+        page::MOUSE => {
+            if now.controls_layout != shipped().controls_layout() {
+                bus.update(move |snap| {
+                    snap.controls_layout = shipped().controls_layout();
+                    PreferencesChange::Controls
+                });
+            }
+        }
+        page::SLICING => {
+            if now.aa_level != shipped().aa_level() {
+                bus.update(move |snap| {
+                    snap.aa_level = shipped().aa_level();
+                    PreferencesChange::AaLevel
+                });
+            }
+            if now.prescan_supports != shipped().prescan_supports() {
+                bus.update(move |snap| {
+                    snap.prescan_supports = shipped().prescan_supports();
+                    PreferencesChange::PrescanSupports
+                });
+            }
+        }
+        _ => {}
     }
 }
 
-/// A native file dialog over the Preferences window, so the platform centres it
-/// over that window.
-fn file_dialog_of(owner: &slint::Weak<PreferencesWindow>) -> rfd::AsyncFileDialog {
+/// The settings the search box finds: each one's name, as its row says it,
+/// and its page.
+fn searchable() -> Vec<(SharedString, i32)> {
+    use page::*;
+    vec![
+        (ctr!("AppearancePreferences", "Language"), GENERAL),
+        (ctr!("PreferencesLayer", "Start card"), GENERAL),
+        (ctr!("PreferencesLayer", "Messages you silenced"), GENERAL),
+        (ctr!("AppearancePreferences", "Theme"), LOOK),
+        (ctr!("AppearancePreferences", "Smooth shading on models"), LOOK),
+        (ctr!("AppearancePreferences", "Frame rate"), LOOK),
+        (ctr!("AppearancePreferences", "Test performance"), LOOK),
+        (ctr!("AppearancePreferences", "Gizmo style"), LOOK),
+        (ctr!("AppearancePreferences", "Gizmo size"), LOOK),
+        (ctr!("AppearancePreferences", "Mouse controls"), MOUSE),
+        (ctr!("PreferencesLayer", "Every shortcut"), MOUSE),
+        (ctr!("PreferencesLayer", "Printer and resin in use"), PRINTERS),
+        (ctr!("PreferencesLayer", "Your profiles"), PRINTERS),
+        (ctr!("PreferencesLayer", "Add a printer by hand"), PRINTERS),
+        (ctr!("PreferencesLayer", "Import a profiles package"), PRINTERS),
+        (ctr!("PreferencesLayer", "Import printer settings"), PRINTERS),
+        (ctr!("PreferencesLayer", "Export your profiles"), PRINTERS),
+        (ctr!("PreferencesMenu", "Network printers"), NETWORK),
+        (ctr!("SlicingPreferences", "Anti-aliasing"), SLICING),
+        (
+            ctr!("SlicingPreferences", "Prepare supports in the background"),
+            SLICING,
+        ),
+        (
+            ctr!(
+                "PrivacyPreferences",
+                "Save a diagnostic log until Breadslicer closes"
+            ),
+            PRIVACY,
+        ),
+        (ctr!("PrivacyPreferences", "Open logs folder"), PRIVACY),
+    ]
+}
+
+fn page_name(page: i32) -> SharedString {
+    match page {
+        page::GENERAL => ctr!("PreferencesLayer", "General"),
+        page::LOOK => ctr!("PreferencesLayer", "Look and feel"),
+        page::MOUSE => ctr!("PreferencesLayer", "Mouse and keys"),
+        page::PRINTERS => ctr!("PreferencesLayer", "Printers and resins"),
+        page::NETWORK => ctr!("PreferencesMenu", "Network printers"),
+        page::SLICING => ctr!("PreferencesMenu", "Slicing"),
+        _ => ctr!("PreferencesMenu", "Privacy"),
+    }
+}
+
+/// The settings whose name, or whose page's, holds every word of `text`, in
+/// the language in force.
+fn search(text: &str) -> Vec<PrefsHit> {
+    let words: Vec<String> = text.split_whitespace().map(str::to_lowercase).collect();
+    if words.is_empty() {
+        return Vec::new();
+    }
+    searchable()
+        .into_iter()
+        .filter_map(|(label, page)| {
+            let name = page_name(page);
+            let haystack = format!("{} {}", label.to_lowercase(), name.to_lowercase());
+            words
+                .iter()
+                .all(|w| haystack.contains(w.as_str()))
+                .then_some(PrefsHit {
+                    label,
+                    page_name: name,
+                    page,
+                })
+        })
+        .collect()
+}
+
+fn wire_printers(
+    prefs: &Prefs,
+    bus: &Rc<PreferencesBus>,
+    catalog: &Rc<RefCell<Rc<ProfileCatalog>>>,
+    weak: &slint::Weak<MainWindow>,
+    actions: &Rc<CardActions>,
+) {
+    // Printer & resin opens over the card's window; the card goes.
+    let to_setup = {
+        let weak = weak.clone();
+        let actions = actions.clone();
+        move |start: SetupStart| {
+            if let Some(ui) = weak.upgrade() {
+                ui.global::<Prefs>().set_open(false);
+            }
+            (actions.open_setup)(start);
+        }
+    };
+    prefs.on_change_in_use({
+        let to_setup = to_setup.clone();
+        move || to_setup(SetupStart::Picker)
+    });
+    prefs.on_add_printer_requested({
+        let to_setup = to_setup.clone();
+        move || to_setup(SetupStart::AddPrinter)
+    });
+    prefs.on_edit_profile({
+        let to_setup = to_setup.clone();
+        move |profile| {
+            let Ok(at) = usize::try_from(profile.index) else {
+                return;
+            };
+            to_setup(if profile.printer {
+                SetupStart::EditPrinter(at)
+            } else {
+                SetupStart::EditResin(at)
+            });
+        }
+    });
+    // Profiles changed in a library: every view of them reads them again.
+    let refresh: Rc<dyn Fn()> = {
+        let bus = bus.clone();
+        Rc::new(move || bus.update(|_| PreferencesChange::Profiles))
+    };
+    prefs.on_delete_profile({
+        let weak = weak.clone();
+        let bus = bus.clone();
+        let catalog = catalog.clone();
+        let refresh = refresh.clone();
+        move |profile| {
+            let Ok(at) = usize::try_from(profile.index) else {
+                return;
+            };
+            let deletion = Deletion {
+                owner: weak.clone(),
+                bus: bus.clone(),
+                catalog: catalog.clone(),
+                refresh: refresh.clone(),
+                at,
+            };
+            if profile.printer {
+                spawn_delete_printer(deletion);
+            } else {
+                spawn_delete_resin(deletion, profile.extension);
+            }
+        }
+    });
+    prefs.on_import_package_requested({
+        let weak = weak.clone();
+        let catalog = catalog.clone();
+        let refresh = refresh.clone();
+        move || spawn_import(weak.clone(), catalog.clone(), refresh.clone())
+    });
+    prefs.on_import_settings_requested({
+        let weak = weak.clone();
+        let actions = actions.clone();
+        move || {
+            if let Some(ui) = weak.upgrade() {
+                ui.global::<Prefs>().set_open(false);
+            }
+            (actions.import_settings)();
+        }
+    });
+    prefs.on_export_requested({
+        let weak = weak.clone();
+        move || spawn_export(weak.clone(), ExportScope::All)
+    });
+}
+
+/// The printer and resin in use, and the person's own profiles.
+fn show_printing(prefs: &Prefs, snap: &PreferencesSnapshot, catalog: &ProfileCatalog) {
+    let printer = catalog
+        .effective_default_printer(snap.default_printer.as_ref())
+        .and_then(|id| catalog.printer_index(&id))
+        .and_then(|at| catalog.printers().get(at));
+    match printer {
+        Some(p) => {
+            prefs.set_in_use_printer(format!("{} {}", p.manufacturer, p.name).trim().into());
+            let image = p.image_path.as_deref().and_then(decode_thumbnail);
+            prefs.set_has_in_use_image(image.is_some());
+            prefs.set_in_use_image(image.map(Image::from_rgba8).unwrap_or_default());
+        }
+        None => {
+            prefs.set_in_use_printer(ctr!("PreferencesLayer", "No printer chosen"));
+            prefs.set_has_in_use_image(false);
+            prefs.set_in_use_image(Image::default());
+        }
+    }
+    let resin = snap
+        .default_resin
+        .as_ref()
+        .and_then(|id| catalog.material_index(id))
+        .and_then(|at| catalog.materials().get(at));
+    prefs.set_in_use_detail(match resin {
+        Some(r) => format!("{} {}", r.brand, r.name).into(),
+        None => ctr!("PreferencesLayer", "No resin chosen"),
+    });
+    prefs.set_printer_count(catalog.printers().len() as i32);
+    prefs.set_profiles(ModelRc::new(VecModel::from(own_profiles(catalog))));
+}
+
+/// The printers and resins of the person's own library, printers first, and
+/// the resins they gave settings for more printers.
+fn own_profiles(catalog: &ProfileCatalog) -> Vec<PrefsProfile> {
+    let printers = catalog
+        .printers()
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.source == ProfileSource::User)
+        .map(|(at, p)| PrefsProfile {
+            name: format!("{} {}", p.manufacturer, p.name).into(),
+            detail: ctr!("PreferencesLayer", "Printer"),
+            printer: true,
+            extension: false,
+            index: at as i32,
+        });
+    let resins = catalog
+        .materials()
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.source == ProfileSource::User)
+        .map(|(at, m)| PrefsProfile {
+            name: format!("{} {}", m.brand, m.name).into(),
+            detail: ctr!("PreferencesLayer", "Resin"),
+            printer: false,
+            extension: false,
+            index: at as i32,
+        });
+    let extensions = catalog.extensions().iter().filter_map(|e| {
+        let at = catalog.material_index(&e.id)?;
+        let m = catalog.materials().get(at)?;
+        Some(PrefsProfile {
+            name: format!("{} {}", m.brand, m.name).into(),
+            detail: ctr!(
+                "PreferencesLayer",
+                "Resin, your settings for {n} more printer",
+                "Resin, your settings for {n} more printers",
+                e.printers.len()
+            ),
+            printer: false,
+            extension: true,
+            index: at as i32,
+        })
+    });
+    printers.chain(resins).chain(extensions).collect()
+}
+
+/// Decodes a printer's thumbnail; `None` on any read or decode failure, and
+/// the card keeps its blank place.
+fn decode_thumbnail(path: &Path) -> Option<SharedPixelBuffer<Rgba8Pixel>> {
+    let rgba = image::open(path).ok()?.into_rgba8();
+    let (width, height) = rgba.dimensions();
+    let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(width, height);
+    buffer.make_mut_bytes().copy_from_slice(rgba.as_raw());
+    Some(buffer)
+}
+
+/// A native file dialog over the card's window.
+fn file_dialog_of(owner: &slint::Weak<MainWindow>) -> rfd::AsyncFileDialog {
     owner.upgrade().map_or_else(rfd::AsyncFileDialog::new, |w| {
         crate::error_dialog::file_dialog_over(w.window())
     })
 }
 
-/// A native message box over the Preferences window, like [`file_dialog_of`].
-/// The confirmations it asks (overwrite, delete) must be answered: the
-/// platform box is modal to the window.
-fn message_dialog_of(owner: &slint::Weak<PreferencesWindow>) -> rfd::AsyncMessageDialog {
+/// A native message box over the card's window, like [`file_dialog_of`].
+fn message_dialog_of(owner: &slint::Weak<MainWindow>) -> rfd::AsyncMessageDialog {
     owner
         .upgrade()
         .map_or_else(rfd::AsyncMessageDialog::new, |w| {
@@ -863,10 +786,9 @@ fn message_dialog_of(owner: &slint::Weak<PreferencesWindow>) -> rfd::AsyncMessag
         })
 }
 
-/// Runs the export flow for `scope`: pick a `.zip` destination, then package
-/// the matching profiles from the user library. Failures are reported on
-/// stderr; the library is read-only here.
-fn spawn_export(owner: slint::Weak<PreferencesWindow>, scope: ExportScope) {
+/// Picks a `.zip` and packs the profiles of `scope` from the user library
+/// into it. Failures go to stderr; the library is only read.
+fn spawn_export(owner: slint::Weak<MainWindow>, scope: ExportScope) {
     if let Err(err) = slint::spawn_local(async move {
         let Ok(library_dir) = user_library_dir() else {
             eprintln!("cannot resolve the user profile library directory");
@@ -888,13 +810,12 @@ fn spawn_export(owner: slint::Weak<PreferencesWindow>, scope: ExportScope) {
     }
 }
 
-/// Runs the import flow: pick a `.zip`, install it into the user library, and
-/// on a collision offer to overwrite. On success the catalog is rebuilt and the
-/// window's views refreshed so imported profiles appear immediately.
+/// Picks a `.zip`, installs it into the user library and, on a collision,
+/// offers to overwrite. On success the catalog is read again.
 fn spawn_import(
-    owner: slint::Weak<PreferencesWindow>,
-    catalog_handle: Rc<RefCell<Rc<ProfileCatalog>>>,
-    refresh_view: Rc<dyn Fn()>,
+    owner: slint::Weak<MainWindow>,
+    catalog: Rc<RefCell<Rc<ProfileCatalog>>>,
+    refresh: Rc<dyn Fn()>,
 ) {
     if let Err(err) = slint::spawn_local(async move {
         let Ok(library_dir) = user_library_dir() else {
@@ -909,7 +830,6 @@ fn spawn_import(
             return;
         };
         let src = handle.path().to_path_buf();
-
         let outcome = match run_import(&library_dir, &src, false) {
             Ok(outcome) => outcome,
             Err(err) => {
@@ -919,8 +839,8 @@ fn spawn_import(
         };
         match outcome {
             ImportOutcome::Installed => {
-                refresh_catalog(&catalog_handle);
-                refresh_view();
+                refresh_catalog(&catalog);
+                refresh();
             }
             ImportOutcome::Collisions(report) => {
                 let overwrite = ctr!("PreferencesPage", "Overwrite").to_string();
@@ -936,8 +856,8 @@ fn spawn_import(
                 if overwrite_confirmed(&result, &overwrite) {
                     match run_import(&library_dir, &src, true) {
                         Ok(_) => {
-                            refresh_catalog(&catalog_handle);
-                            refresh_view();
+                            refresh_catalog(&catalog);
+                            refresh();
                         }
                         Err(err) => eprintln!("{err}"),
                     }
@@ -949,70 +869,114 @@ fn spawn_import(
     }
 }
 
-/// Reports whether the just-deleted id was the default resin and no longer
-/// resolves to any profile. Deleting a user override of a bundled id keeps the
-/// default: the bundled copy still resolves it.
-fn default_resin_orphaned(
-    catalog: &ProfileCatalog,
-    default_resin: Option<&MaterialId>,
-    deleted: &MaterialId,
-) -> bool {
-    default_resin == Some(deleted) && catalog.material_index(deleted).is_none()
+/// What deleting one of the person's profiles needs.
+struct Deletion {
+    owner: slint::Weak<MainWindow>,
+    bus: Rc<PreferencesBus>,
+    catalog: Rc<RefCell<Rc<ProfileCatalog>>>,
+    refresh: Rc<dyn Fn()>,
+    /// Its place in the catalog's printers or resins.
+    at: usize,
 }
 
-/// Runs the delete flow for a custom row: confirm, remove the file (the full
-/// profile's, or the extension file with every pair it adds), then refresh.
-/// When the deleted id was the default resin and nothing else resolves it any
-/// more, the default is unset.
-fn spawn_delete_flow(
-    owner: slint::Weak<PreferencesWindow>,
-    bus: Rc<PreferencesBus>,
-    catalog_handle: Rc<RefCell<Rc<ProfileCatalog>>>,
-    refresh_view: Rc<dyn Fn()>,
-    index: i32,
-    is_extension: bool,
-) {
-    let catalog = catalog_handle.borrow().clone();
-    let Some(entry) = catalog.materials().get(index as usize) else {
+/// Asks, then deletes `label`'s confirmation; true once the person agreed.
+async fn confirmed(owner: &slint::Weak<MainWindow>, title: String, description: String) -> bool {
+    let delete_label = ctr!("PreferencesPage", "Delete").to_string();
+    let result = message_dialog_of(owner)
+        .set_title(title)
+        .set_description(description)
+        .set_buttons(rfd::MessageButtons::OkCancelCustom(
+            delete_label.clone(),
+            ctr!("PreferencesPage", "Cancel").to_string(),
+        ))
+        .show()
+        .await;
+    overwrite_confirmed(&result, &delete_label)
+}
+
+/// Asks before deleting a printer the person added, then deletes its file.
+/// The printer in use that goes is no longer in use.
+fn spawn_delete_printer(deletion: Deletion) {
+    let Some((id, name)) = deletion.catalog.borrow().printers().get(deletion.at).map(|p| {
+        (p.id.clone(), format!("{} {}", p.manufacturer, p.name))
+    }) else {
         return;
     };
-    let id = entry.id.clone();
-    let display_name = format!("{} {}", entry.brand, entry.name);
-
     if let Err(err) = slint::spawn_local(async move {
         let Ok(user_lib) = user_library_dir() else {
-            eprintln!("cannot resolve the user profile library directory");
             return;
         };
-        let description = if is_extension {
+        if !confirmed(
+            &deletion.owner,
+            ctr!("PrinterDialog", "Delete printer?").to_string(),
+            ctr!(
+                "PrinterDialog",
+                "Deleting {} removes the printer you added. Resins keep their settings for it.",
+                name
+            )
+            .to_string(),
+        )
+        .await
+        {
+            return;
+        }
+        if let Err(err) = std::fs::remove_file(printer_profile_path_in_library(&user_lib, &id)) {
+            eprintln!("{err}");
+            return;
+        }
+        refresh_catalog(&deletion.catalog);
+        if deletion.bus.snapshot().default_printer.as_ref() == Some(&id) {
+            deletion.bus.update(|snap| {
+                snap.default_printer = None;
+                PreferencesChange::DefaultPrinter
+            });
+        }
+        (deletion.refresh)();
+    }) {
+        eprintln!("failed to spawn the printer delete task: {err}");
+    }
+}
+
+/// Asks before deleting a resin the person made (`extension` false) or the
+/// settings they gave a resin for more printers, then deletes the file. A
+/// resin in use that no longer resolves is no longer in use.
+fn spawn_delete_resin(deletion: Deletion, extension: bool) {
+    let Some((id, name)) = deletion
+        .catalog
+        .borrow()
+        .materials()
+        .get(deletion.at)
+        .map(|m| (m.id.clone(), format!("{} {}", m.brand, m.name)))
+    else {
+        return;
+    };
+    if let Err(err) = slint::spawn_local(async move {
+        let Ok(user_lib) = user_library_dir() else {
+            return;
+        };
+        let description = if extension {
             ctr!(
                 "PreferencesPage",
                 "Deleting the extension of {} removes every calibration pair it adds.",
-                display_name,
+                name,
             )
-            .to_string()
         } else {
             ctr!(
                 "PreferencesPage",
                 "Deleting {} removes the custom profile file.",
-                display_name,
+                name,
             )
-            .to_string()
         };
-        let delete_label = ctr!("PreferencesPage", "Delete").to_string();
-        let result = message_dialog_of(&owner)
-            .set_title(ctr!("PreferencesPage", "Delete profile?").to_string())
-            .set_description(description)
-            .set_buttons(rfd::MessageButtons::OkCancelCustom(
-                delete_label.clone(),
-                ctr!("PreferencesPage", "Cancel").to_string(),
-            ))
-            .show()
-            .await;
-        if !overwrite_confirmed(&result, &delete_label) {
+        if !confirmed(
+            &deletion.owner,
+            ctr!("PreferencesPage", "Delete profile?").to_string(),
+            description.to_string(),
+        )
+        .await
+        {
             return;
         }
-        let deleted = if is_extension {
+        let deleted = if extension {
             delete_material_extension_from_library(&user_lib, &id)
         } else {
             delete_material_profile_from_library(&user_lib, &id)
@@ -1021,1067 +985,30 @@ fn spawn_delete_flow(
             eprintln!("{err}");
             return;
         }
-        refresh_catalog(&catalog_handle);
-        let catalog = catalog_handle.borrow().clone();
-        if default_resin_orphaned(&catalog, bus.snapshot().default_resin.as_ref(), &id) {
-            bus.update(|snap| {
+        refresh_catalog(&deletion.catalog);
+        let catalog = deletion.catalog.borrow().clone();
+        if default_resin_orphaned(&catalog, deletion.bus.snapshot().default_resin.as_ref(), &id) {
+            deletion.bus.update(|snap| {
                 snap.default_resin = None;
                 PreferencesChange::DefaultResin
             });
         }
-        refresh_view();
+        (deletion.refresh)();
     }) {
         eprintln!("failed to spawn delete task: {err}");
     }
 }
 
-/// Pushes the current selection (printer / resin indices, the derived resin
-/// ordering, and whether a printer is chosen) into the window. The manufacturer
-/// and search filters, which are view-local, stay as they are.
-fn apply_printing(
-    window: &PreferencesWindow,
-    snap: &PreferencesSnapshot,
+/// Whether the deleted id was the resin in use and no longer resolves.
+/// Deleting the person's copy of a resin that ships keeps it in use: the copy
+/// that ships still resolves it.
+fn default_resin_orphaned(
     catalog: &ProfileCatalog,
-    resin: &Rc<RefCell<ResinView>>,
-) {
-    // The gallery highlights, the calibration affordances, and the per-printer
-    // resin ordering all track the effective printer: the persisted choice, or
-    // the first-run soft default until the user picks one.
-    let effective_printer = catalog.effective_default_printer(snap.default_printer.as_ref());
-    let printer_index = effective_printer
-        .as_ref()
-        .and_then(|id| catalog.printer_index(id))
-        .map(|i| i as i32)
-        .unwrap_or(-1);
-    window.set_selected_printer_index(printer_index);
-    window.set_selected_printer_is_custom(
-        usize::try_from(printer_index)
-            .ok()
-            .and_then(|i| catalog.printers().get(i))
-            .is_some_and(|entry| entry.source == ProfileSource::User),
-    );
-
-    let resin_index = snap
-        .default_resin
-        .as_ref()
-        .and_then(|id| catalog.material_index(id))
-        .map(|i| i as i32)
-        .unwrap_or(-1);
-    window.set_selected_resin_index(resin_index);
-
-    {
-        let mut view = resin.borrow_mut();
-        view.rows = derive_resin_view(
-            catalog.materials(),
-            catalog.extensions(),
-            catalog.printers(),
-            effective_printer.as_ref(),
-            &snap.favourite_resins,
-        );
-        view.filter_data = build_resin_filter_data(catalog.materials());
-    }
-    push_visible_resins(window, &resin.borrow());
-}
-
-/// Pushes the rows the active brand tab and search text keep.
-fn push_visible_resins(window: &PreferencesWindow, view: &ResinView) {
-    let mask = visible_material_mask(
-        &view.filter_data,
-        tab_label(&view.tabs, view.current_tab),
-        &view.search_lower,
-    );
-    set_visible_resin_rows(window, &view.rows, &mask);
-}
-
-/// Pushes the labels of the 2 tab bars again, in the language in force.
-/// `catalog` must be the catalog that the tabs were built from, so that each
-/// tab keeps its index.
-fn push_tab_labels(
-    window: &PreferencesWindow,
-    catalog: &ProfileCatalog,
-    manufacturer_tabs: &RefCell<Vec<String>>,
-    resin: &RefCell<ResinView>,
-) {
-    *manufacturer_tabs.borrow_mut() = build_manufacturer_tabs(catalog);
-    window.set_manufacturer_tabs(string_model(&manufacturer_tabs.borrow()));
-    let mut view = resin.borrow_mut();
-    view.tabs = build_brand_tabs(catalog);
-    window.set_resin_brand_tabs(string_model(&view.tabs));
-}
-
-/// Returns the `(card index, thumbnail path)` pairs that need decoding. Indices
-/// match `build_card_data`'s one-to-one printer ordering.
-fn thumbnail_paths(catalog: &ProfileCatalog) -> Vec<(usize, PathBuf)> {
-    catalog
-        .printers()
-        .iter()
-        .enumerate()
-        .filter_map(|(i, entry)| entry.image_path.clone().map(|path| (i, path)))
-        .collect()
-}
-
-/// Decodes a thumbnail into an RGBA pixel buffer. It runs on a worker thread,
-/// so it returns a `SharedPixelBuffer`, which is `Send`. Returns `None` on any
-/// read or decode failure; the card then keeps its blank placeholder.
-fn decode_thumbnail(path: &Path) -> Option<SharedPixelBuffer<Rgba8Pixel>> {
-    let rgba = image::open(path)
-        .map_err(|err| {
-            eprintln!(
-                "warning: failed to load printer thumbnail {}: {err}",
-                path.display()
-            )
-        })
-        .ok()?
-        .into_rgba8();
-    let (width, height) = rgba.dimensions();
-    let mut buffer = SharedPixelBuffer::<Rgba8Pixel>::new(width, height);
-    buffer.make_mut_bytes().copy_from_slice(rgba.as_raw());
-    Some(buffer)
-}
-
-/// Decodes the printer thumbnails on a worker thread and drops them into the
-/// gallery once ready, so opening Preferences never blocks the UI thread. The
-/// decoded images land as in-place row updates on the visible model (see
-/// `apply_thumbnails_to_visible`), which keeps the gallery's scroll position;
-/// they still arrive as a single batch so the timer fires once.
-fn start_thumbnail_load(
-    timer: &Rc<Timer>,
-    window: &PreferencesWindow,
-    all_cards: Rc<RefCell<Vec<PrinterCardData>>>,
-    paths: Vec<(usize, PathBuf)>,
-) {
-    timer.stop();
-    if paths.is_empty() {
-        return;
-    }
-
-    let (sender, receiver) = mpsc::channel::<Vec<(usize, SharedPixelBuffer<Rgba8Pixel>)>>();
-    std::thread::spawn(move || {
-        let decoded = paths
-            .into_iter()
-            .filter_map(|(index, path)| decode_thumbnail(&path).map(|buffer| (index, buffer)))
-            .collect();
-        let _ = sender.send(decoded);
-    });
-
-    let window_weak = window.as_weak();
-    let timer_weak = Rc::downgrade(timer);
-    timer.start(TimerMode::Repeated, Duration::from_millis(30), move || {
-        let decoded = match receiver.try_recv() {
-            Ok(decoded) => decoded,
-            Err(mpsc::TryRecvError::Empty) => return,
-            Err(mpsc::TryRecvError::Disconnected) => {
-                // Worker vanished without sending; nothing to apply.
-                if let Some(timer) = timer_weak.upgrade() {
-                    timer.stop();
-                }
-                return;
-            }
-        };
-
-        if let Some(window) = window_weak.upgrade() {
-            let mut updated = BTreeSet::new();
-            {
-                let mut cards = all_cards.borrow_mut();
-                for (index, buffer) in decoded {
-                    if let Some(card) = cards.get_mut(index) {
-                        card.card.thumbnail = Image::from_rgba8(buffer);
-                        card.card.has_thumbnail = true;
-                        updated.insert(index as i32);
-                    }
-                }
-            }
-            apply_thumbnails_to_visible(&window.get_printer_cards(), &all_cards.borrow(), &updated);
-        }
-
-        if let Some(timer) = timer_weak.upgrade() {
-            timer.stop();
-        }
-    });
-}
-
-/// Derives the resin rows for the list. With a default printer, only the
-/// profiles whose block (the base profile's own or its extension's) matches it
-/// or generic. With none, every profile in 3 tiers: those with a generic block;
-/// then those carrying calibration data for some printer; then those with no
-/// calibration data at all. The catalog's `(brand, name)`
-/// order is kept within each tier. An extension renders as its own row right
-/// below its parent, sharing the parent's catalog index.
-fn derive_resin_view(
-    materials: &[MaterialCatalogEntry],
-    extensions: &[MaterialExtensionEntry],
-    printers: &[PrinterCatalogEntry],
-    default_printer: Option<&PrinterId>,
-    favourite_resins: &BTreeSet<MaterialId>,
-) -> Vec<ResinRow> {
-    let mut matched_rows = Vec::new();
-    let mut unmatched_rows = Vec::new();
-    let mut dataless_rows = Vec::new();
-    for (i, entry) in materials.iter().enumerate() {
-        let extension = extensions.iter().find(|ext| ext.id == entry.id);
-        // The red no-data marker reflects the whole resin: a base profile whose
-        // extension carries blocks is not data-less.
-        let union_empty = entry.calibrated_printers.is_empty()
-            && extension.is_none_or(|ext| ext.printers.is_empty());
-        let target = if has_active_matcher(entry, extension, default_printer) {
-            &mut matched_rows
-        } else if union_empty {
-            &mut dataless_rows
-        } else {
-            &mut unmatched_rows
-        };
-
-        let can_extend = has_uncovered_target(entry, extension, printers);
-        // Favourites are keyed by material id, so the base row and its
-        // extension row share the same star.
-        let is_favourite = favourite_resins.contains(&entry.id);
-        target.push(ResinRow {
-            name: SharedString::from(entry.name.as_str()),
-            brand: SharedString::from(entry.brand.as_str()),
-            family: SharedString::from(entry.family.as_str()),
-            pills: ModelRc::new(VecModel::from(row_pill_list(
-                entry,
-                extension,
-                printers,
-                default_printer,
-                false,
-            ))),
-            is_custom: entry.source == ProfileSource::User,
-            is_favourite,
-            is_extension: false,
-            can_extend,
-            id_index: i as i32,
-        });
-
-        if extension.is_some() {
-            target.push(ResinRow {
-                name: ctr!("PreferencesPage", "{} (extended)", entry.name),
-                brand: SharedString::from(entry.brand.as_str()),
-                family: SharedString::from(entry.family.as_str()),
-                pills: ModelRc::new(VecModel::from(row_pill_list(
-                    entry,
-                    extension,
-                    printers,
-                    default_printer,
-                    true,
-                ))),
-                is_custom: true,
-                is_favourite,
-                is_extension: true,
-                can_extend,
-                id_index: i as i32,
-            });
-        }
-    }
-    // With a printer chosen, only the resins set for it show (#627).
-    if default_printer.is_some() {
-        return matched_rows;
-    }
-    matched_rows.extend(unmatched_rows);
-    matched_rows.extend(dataless_rows);
-    matched_rows
-}
-
-/// Returns the unchunked pills of a row: the base profile's calibration tags
-/// (or the red no-data marker when base and extension are both empty), or, for
-/// an extension row, the extension's own tags.
-fn row_pill_list(
-    entry: &MaterialCatalogEntry,
-    extension: Option<&MaterialExtensionEntry>,
-    printers: &[PrinterCatalogEntry],
-    default_printer: Option<&PrinterId>,
-    is_extension_row: bool,
-) -> Vec<ResinPill> {
-    if is_extension_row {
-        return extension
-            .map(|ext| build_pills(&ext.printers, printers, default_printer))
-            .unwrap_or_default();
-    }
-    let union_empty =
-        entry.calibrated_printers.is_empty() && extension.is_none_or(|ext| ext.printers.is_empty());
-    if union_empty {
-        vec![no_data_pill(default_printer)]
-    } else {
-        build_pills(&entry.calibrated_printers, printers, default_printer)
-    }
-}
-
-/// Reports whether some printer in the catalog has no calibration block in
-/// either the base profile or its extension, i.e. whether the extend flow has a
-/// target to offer.
-fn has_uncovered_target(
-    entry: &MaterialCatalogEntry,
-    extension: Option<&MaterialExtensionEntry>,
-    printers: &[PrinterCatalogEntry],
+    default_resin: Option<&MaterialId>,
+    deleted: &MaterialId,
 ) -> bool {
-    printers.iter().any(|printer| {
-        let target = CalibrationTarget::from_printer(&printer.id);
-        !entry.calibrated_printers.contains(&target)
-            && extension.is_none_or(|ext| !ext.printers.contains(&target))
-    })
-}
-
-/// Returns the display label of a calibration tag: the printer's name, or its
-/// id when the printer is not in the catalog.
-fn printer_pill_label(printers: &[PrinterCatalogEntry], id: &PrinterId) -> SharedString {
-    printers
-        .iter()
-        .find(|printer| &printer.id == id)
-        .map(|printer| SharedString::from(printer.name.as_str()))
-        .unwrap_or_else(|| SharedString::from(id.as_str()))
-}
-
-/// Builds 1 pill per calibration block, ordered: the default printer's tag
-/// first, the generic tag next, the rest by label. Kinds follow the tag colors:
-/// green for the default printer's tag, yellow/orange for generic, gray
-/// otherwise; with no default printer everything is gray (the whole list
-/// renders dim).
-fn build_pills(
-    calibrated: &BTreeSet<CalibrationTarget>,
-    printers: &[PrinterCatalogEntry],
-    default_printer: Option<&PrinterId>,
-) -> Vec<ResinPill> {
-    let default_target = default_printer.map(CalibrationTarget::from_printer);
-    let mut default_pill = None;
-    let mut generic_pill = None;
-    let mut other_pills = Vec::new();
-    for target in calibrated {
-        let is_default = default_target.as_ref() == Some(target);
-        let kind = if default_printer.is_none() {
-            PillKind::Other
-        } else if is_default {
-            PillKind::OurPrinter
-        } else {
-            match target {
-                CalibrationTarget::Generic => PillKind::Generic,
-                CalibrationTarget::Printer(_) => PillKind::Other,
-            }
-        };
-        let label = match target {
-            CalibrationTarget::Generic => ctr!("PreferencesPage", "Generic"),
-            CalibrationTarget::Printer(id) => printer_pill_label(printers, id.as_printer_id()),
-        };
-        let pill = ResinPill { label, kind };
-        if is_default {
-            default_pill = Some(pill);
-        } else {
-            match target {
-                CalibrationTarget::Generic => generic_pill = Some(pill),
-                CalibrationTarget::Printer(_) => other_pills.push(pill),
-            }
-        }
-    }
-    other_pills.sort_by(|a, b| a.label.cmp(&b.label));
-    default_pill
-        .into_iter()
-        .chain(generic_pill)
-        .chain(other_pills)
-        .collect()
-}
-
-/// Returns the salient marker for a profile without any calibration data. It
-/// renders gray like everything else when no default printer is configured.
-fn no_data_pill(default_printer: Option<&PrinterId>) -> ResinPill {
-    ResinPill {
-        label: ctr!("PreferencesPage", "No calibration data"),
-        kind: if default_printer.is_some() {
-            PillKind::NoData
-        } else {
-            PillKind::Other
-        },
-    }
+    default_resin == Some(deleted) && catalog.material_index(deleted).is_none()
 }
 
 #[cfg(test)]
-mod derive_resin_view_tests {
-    use std::collections::BTreeSet;
-
-    use sc_print_primitives::MaterialId;
-
-    use super::*;
-    use crate::test_support::catalog_entries::named_printer_entry;
-
-    fn material(
-        id: &str,
-        brand: &str,
-        name: &str,
-        calibrated_for: &[&str],
-    ) -> MaterialCatalogEntry {
-        MaterialCatalogEntry {
-            id: MaterialId::new(id).unwrap(),
-            brand: brand.to_owned(),
-            name: name.to_owned(),
-            family: "other".to_owned(),
-            calibrated_printers: calibrated_for
-                .iter()
-                .map(|p| CalibrationTarget::from(PrinterId::new(p).unwrap()))
-                .collect::<BTreeSet<_>>(),
-            source: ProfileSource::Bundled,
-        }
-    }
-
-    fn extension(id: &str, printers: &[&str]) -> MaterialExtensionEntry {
-        MaterialExtensionEntry {
-            id: MaterialId::new(id).unwrap(),
-            printers: printers
-                .iter()
-                .map(|p| CalibrationTarget::from(PrinterId::new(p).unwrap()))
-                .collect(),
-        }
-    }
-
-    fn printer(id: &str) -> PrinterId {
-        PrinterId::new(id).unwrap()
-    }
-
-    /// Lists a row's pills as (label, kind) pairs for assertions.
-    fn row_pills(row: &ResinRow) -> Vec<(String, PillKind)> {
-        row.pills
-            .iter()
-            .map(|p| (p.label.to_string(), p.kind))
-            .collect()
-    }
-
-    #[test]
-    fn with_a_printer_only_the_resins_set_for_it_show() {
-        let materials = vec![
-            material("a-resin", "Alpha", "A", &[]),
-            material("b-resin", "Beta", "B", &["printer-a"]),
-            material("c-resin", "Gamma", "C", &[]),
-            material("d-resin", "Delta", "D", &["generic-machine"]),
-        ];
-        let rows = derive_resin_view(
-            &materials,
-            &[],
-            &[],
-            Some(&printer("printer-a")),
-            &BTreeSet::new(),
-        );
-        // Only the resins set for the printer (b: specific, d: generic
-        // fallback), in base order (#627).
-        let ids: Vec<i32> = rows.iter().map(|r| r.id_index).collect();
-        assert_eq!(ids, vec![1, 3]);
-    }
-
-    #[test]
-    fn dataless_resins_sink_below_unmatched_calibrated_ones() {
-        // With no printer chosen every resin shows; none has a generic block.
-        // Resins with some calibration data must
-        // still rank above the data-less ones, whatever the brand order says.
-        let materials = vec![
-            material("abs-like", "Default", "ABS-like", &[]),
-            material("standard", "Default", "Standard", &[]),
-            material("blu", "Siraya Tech", "Blu", &["saturn-4"]),
-            material("build", "Siraya Tech", "Build", &["saturn-4"]),
-        ];
-        let rows = derive_resin_view(&materials, &[], &[], None, &BTreeSet::new());
-        let ids: Vec<i32> = rows.iter().map(|r| r.id_index).collect();
-        assert_eq!(ids, vec![2, 3, 0, 1]);
-    }
-
-    #[test]
-    fn a_dataless_parent_with_a_calibrated_extension_is_not_dataless() {
-        // The extension's blocks count for the whole resin: the pair of rows
-        // ranks in the middle tier.
-        let materials = vec![
-            material("bare", "Alpha", "Bare", &[]),
-            material("empty", "Zeta", "Empty", &[]),
-        ];
-        let extensions = vec![extension("empty", &["printer-b"])];
-        let rows = derive_resin_view(&materials, &extensions, &[], None, &BTreeSet::new());
-        let ids: Vec<i32> = rows.iter().map(|r| r.id_index).collect();
-        // "empty" (+ its extension row) leads despite sorting after "bare" by
-        // brand.
-        assert_eq!(ids, vec![1, 1, 0]);
-        assert!(rows[1].is_extension);
-    }
-
-    #[test]
-    fn an_extension_match_pulls_the_parent_into_the_matched_group() {
-        let materials = vec![
-            material("a-resin", "Alpha", "A", &["printer-b"]),
-            material("z-resin", "Zeta", "Z", &["printer-b"]),
-        ];
-        let extensions = vec![extension("z-resin", &["printer-a"])];
-        let rows = derive_resin_view(
-            &materials,
-            &extensions,
-            &[],
-            Some(&printer("printer-a")),
-            &BTreeSet::new(),
-        );
-        // z-resin's extension covers our printer: parent + extension rows show;
-        // a-resin (not set for it) does not.
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].id_index, 1);
-        assert!(!rows[0].is_extension);
-        assert_eq!(rows[1].id_index, 1);
-        assert!(rows[1].is_extension);
-    }
-
-    #[test]
-    fn extension_rows_sit_below_their_parent_with_a_derived_name() {
-        let materials = vec![material("a-resin", "Alpha", "Standard", &["printer-a"])];
-        let extensions = vec![extension("a-resin", &["printer-b"])];
-        let printers = vec![
-            named_printer_entry("printer-a", "Printer A"),
-            named_printer_entry("printer-b", "Printer B"),
-        ];
-        let rows = derive_resin_view(
-            &materials,
-            &extensions,
-            &printers,
-            Some(&printer("printer-a")),
-            &BTreeSet::new(),
-        );
-        assert_eq!(rows.len(), 2);
-        let ext_row = &rows[1];
-        assert!(ext_row.is_extension);
-        assert!(ext_row.is_custom);
-        assert_eq!(ext_row.name.as_str(), "Standard (extended)");
-        assert_eq!(ext_row.brand.as_str(), "Alpha");
-        // The extension row carries its own pills only.
-        assert_eq!(
-            row_pills(ext_row),
-            vec![("Printer B".to_owned(), PillKind::Other)]
-        );
-    }
-
-    #[test]
-    fn pill_kinds_and_order_follow_the_default_printer_and_generic() {
-        let materials = vec![material(
-            "a-resin",
-            "Alpha",
-            "A",
-            &["printer-z", "printer-a", "generic-machine", "printer-b"],
-        )];
-        let printers = vec![
-            named_printer_entry("printer-a", "Printer A"),
-            named_printer_entry("printer-b", "Printer B"),
-            named_printer_entry("printer-z", "Printer Z"),
-            named_printer_entry("generic-machine", "Generic Machine"),
-        ];
-        let rows = derive_resin_view(
-            &materials,
-            &[],
-            &printers,
-            Some(&printer("printer-a")),
-            &BTreeSet::new(),
-        );
-        // Default printer first (green), generic next (yellow), the rest by
-        // label (gray).
-        assert_eq!(
-            row_pills(&rows[0]),
-            vec![
-                ("Printer A".to_owned(), PillKind::OurPrinter),
-                ("Generic".to_owned(), PillKind::Generic),
-                ("Printer B".to_owned(), PillKind::Other),
-                ("Printer Z".to_owned(), PillKind::Other),
-            ]
-        );
-    }
-
-    #[test]
-    fn the_generic_default_printer_gets_the_our_printer_kind() {
-        let materials = vec![material("a-resin", "Alpha", "A", &["generic-machine"])];
-        let printers = vec![named_printer_entry("generic-machine", "Generic Machine")];
-        let rows = derive_resin_view(
-            &materials,
-            &[],
-            &printers,
-            Some(&printer("generic-machine")),
-            &BTreeSet::new(),
-        );
-        assert_eq!(
-            row_pills(&rows[0]),
-            vec![("Generic".to_owned(), PillKind::OurPrinter)]
-        );
-    }
-
-    #[test]
-    fn a_pill_falls_back_to_the_id_when_the_printer_is_unknown() {
-        let materials = vec![material("a-resin", "Alpha", "A", &["gone-printer"])];
-        let rows = derive_resin_view(&materials, &[], &[], None, &BTreeSet::new());
-        assert_eq!(
-            row_pills(&rows[0]),
-            vec![("gone-printer".to_owned(), PillKind::Other)]
-        );
-    }
-
-    #[test]
-    fn zero_block_materials_get_the_no_data_pill() {
-        let materials = vec![material("a-resin", "Alpha", "A", &[])];
-        let rows = derive_resin_view(&materials, &[], &[], None, &BTreeSet::new());
-        let pills = row_pills(&rows[0]);
-        assert_eq!(pills.len(), 1);
-        // With no printer chosen every pill is dim; with one, a resin with no
-        // data does not show at all (#627).
-        assert_eq!(pills[0].0, "No calibration data");
-        assert_eq!(pills[0].1, PillKind::Other);
-    }
-
-    #[test]
-    fn a_covering_extension_suppresses_the_parents_no_data_pill() {
-        let materials = vec![material("a-resin", "Alpha", "A", &[])];
-        let extensions = vec![extension("a-resin", &["printer-b"])];
-        let rows = derive_resin_view(&materials, &extensions, &[], None, &BTreeSet::new());
-        // The resin has data (in the extension row); the parent row shows
-        // neither pills nor the red marker.
-        assert!(row_pills(&rows[0]).is_empty());
-        assert_eq!(row_pills(&rows[1]).len(), 1);
-    }
-
-    #[test]
-    fn without_a_default_printer_every_pill_is_dim() {
-        let materials = vec![
-            material("a-resin", "Alpha", "A", &["printer-a", "generic-machine"]),
-            material("b-resin", "Beta", "B", &[]),
-        ];
-        let rows = derive_resin_view(&materials, &[], &[], None, &BTreeSet::new());
-        for (_, kind) in rows.iter().flat_map(row_pills) {
-            assert_eq!(kind, PillKind::Other);
-        }
-    }
-
-    #[test]
-    fn custom_flag_reflects_the_source() {
-        let mut entry = material("a-resin", "Alpha", "A", &[]);
-        entry.source = ProfileSource::User;
-        let rows = derive_resin_view(&[entry], &[], &[], None, &BTreeSet::new());
-        assert!(rows[0].is_custom);
-        assert!(!rows[0].is_extension);
-    }
-
-    #[test]
-    fn can_extend_reflects_uncovered_targets() {
-        let materials = vec![material("a-resin", "Alpha", "A", &["printer-a"])];
-        let extensions = vec![extension("a-resin", &["printer-b"])];
-        let all_covered = vec![
-            named_printer_entry("printer-a", "Printer A"),
-            named_printer_entry("printer-b", "Printer B"),
-        ];
-        let rows = derive_resin_view(
-            &materials,
-            &extensions,
-            &all_covered,
-            Some(&printer("printer-a")),
-            &BTreeSet::new(),
-        );
-        // Base plus extension cover every catalog printer: nothing left to
-        // extend, on either row.
-        assert!(!rows[0].can_extend);
-        assert!(!rows[1].can_extend);
-
-        let with_uncovered = vec![
-            named_printer_entry("printer-a", "Printer A"),
-            named_printer_entry("printer-b", "Printer B"),
-            named_printer_entry("printer-c", "Printer C"),
-        ];
-        let rows = derive_resin_view(
-            &materials,
-            &extensions,
-            &with_uncovered,
-            Some(&printer("printer-a")),
-            &BTreeSet::new(),
-        );
-        assert!(rows[0].can_extend);
-        assert!(rows[1].can_extend);
-    }
-
-    #[test]
-    fn favourite_material_marks_both_its_base_and_extension_rows() {
-        let materials = vec![
-            material("fav-resin", "Alpha", "Fav", &[]),
-            material("plain-resin", "Beta", "Plain", &[]),
-        ];
-        let extensions = vec![extension("fav-resin", &["printer-a"])];
-        let printers = vec![named_printer_entry("printer-a", "A")];
-        let favourites: BTreeSet<MaterialId> = [MaterialId::new("fav-resin").unwrap()]
-            .into_iter()
-            .collect();
-
-        let rows = derive_resin_view(&materials, &extensions, &printers, None, &favourites);
-
-        // fav-resin is material index 0 and produces a base + an extension row,
-        // both favourite; plain-resin (index 1) is not.
-        assert_eq!(rows.iter().filter(|r| r.is_favourite).count(), 2);
-        assert!(
-            rows.iter()
-                .filter(|r| r.id_index == 0)
-                .all(|r| r.is_favourite)
-        );
-        assert!(
-            rows.iter()
-                .filter(|r| r.id_index == 1)
-                .all(|r| !r.is_favourite)
-        );
-    }
-}
-
-#[cfg(test)]
-mod build_card_data_tests {
-    use std::collections::BTreeSet;
-
-    use sc_print_primitives::PrinterId;
-
-    use super::*;
-    use crate::test_support::catalog_entries::named_printer_entry;
-
-    #[test]
-    fn is_favourite_is_set_from_the_favourite_set() {
-        let printers = vec![
-            named_printer_entry("printer-a", "printer-a"),
-            named_printer_entry("printer-b", "printer-b"),
-        ];
-        let favourites: BTreeSet<PrinterId> =
-            [PrinterId::new("printer-b").unwrap()].into_iter().collect();
-
-        let cards = build_card_data(&printers, &favourites);
-
-        assert_eq!(cards.len(), 2);
-        assert!(!cards[0].card.is_favourite, "printer-a is not a favourite");
-        assert!(cards[1].card.is_favourite, "printer-b is a favourite");
-    }
-
-    #[test]
-    fn no_favourites_leaves_every_card_unmarked() {
-        let printers = vec![named_printer_entry("printer-a", "printer-a")];
-        let cards = build_card_data(&printers, &BTreeSet::new());
-        assert!(!cards[0].card.is_favourite);
-    }
-}
-
-#[cfg(test)]
-mod delete_flow_tests {
-    use std::fs;
-
-    use sc_print_profiles::ProfileLibraries;
-
-    use super::*;
-
-    const MATERIAL_TOML: &str = "\
-[identity]
-id = \"brand-resin\"
-brand = \"Brand\"
-family = \"other\"
-name = \"Resin\"
-profile_version = \"1.0.0\"
-
-[intent]
-
-[defaults]
-";
-
-    fn material_id(id: &str) -> MaterialId {
-        MaterialId::new(id).unwrap()
-    }
-
-    fn write_material(root: &Path, id: &str) {
-        let materials = root.join("materials");
-        fs::create_dir_all(&materials).unwrap();
-        let toml = MATERIAL_TOML.replace("brand-resin", id);
-        fs::write(materials.join(format!("{id}.toml")), toml).unwrap();
-    }
-
-    #[test]
-    fn the_default_is_orphaned_when_nothing_resolves_the_deleted_id() {
-        let bundled = tempfile::tempdir().unwrap();
-        let catalog = ProfileCatalog::from_libraries(&ProfileLibraries::new(
-            None,
-            vec![bundled.path().to_owned()],
-        ));
-        let deleted = material_id("gone-resin");
-        assert!(default_resin_orphaned(&catalog, Some(&deleted), &deleted));
-    }
-
-    #[test]
-    fn the_default_survives_when_a_bundled_copy_still_resolves_the_id() {
-        // Deleting the user override of a bundled id: the bundled copy still
-        // resolves it after the catalog refresh.
-        let bundled = tempfile::tempdir().unwrap();
-        write_material(bundled.path(), "shared-resin");
-        let catalog = ProfileCatalog::from_libraries(&ProfileLibraries::new(
-            None,
-            vec![bundled.path().to_owned()],
-        ));
-        let deleted = material_id("shared-resin");
-        assert!(!default_resin_orphaned(&catalog, Some(&deleted), &deleted));
-    }
-
-    #[test]
-    fn an_unrelated_or_absent_default_is_never_unset() {
-        let bundled = tempfile::tempdir().unwrap();
-        let catalog = ProfileCatalog::from_libraries(&ProfileLibraries::new(
-            None,
-            vec![bundled.path().to_owned()],
-        ));
-        let deleted = material_id("gone-resin");
-        let other = material_id("other-resin");
-        assert!(!default_resin_orphaned(&catalog, Some(&other), &deleted));
-        assert!(!default_resin_orphaned(&catalog, None, &deleted));
-    }
-}
-
-#[cfg(test)]
-mod language_change_tests {
-    use super::*;
-    use crate::language::InstalledTranslations;
-    use crate::slint_ui::AboutWindow;
-    use crate::test_support::catalog_entries::printer_entry;
-    use crate::test_support::language_pick::pick_language;
-    use crate::test_support::slint_thread::on_fresh_slint_thread;
-    use crate::ui_language::UiLanguage;
-
-    /// A Preferences window over a catalog of 1 printer (manufacturer "Alpha")
-    /// and no resin, built after the UI language follows `bus`, as in the app.
-    fn following_window(bus: &Rc<PreferencesBus>) -> (UiLanguage, WiredPreferencesWindow) {
-        // In the app, the 1st main window is the 1st component of the thread.
-        let first = AboutWindow::new().expect("the headless platform creates components");
-        let ui_language = UiLanguage::follow(InstalledTranslations::proven_by(&first), bus);
-        let printer = PrinterId::new("listed-printer").expect("valid printer id");
-        let catalog = ProfileCatalog::from_entries(
-            vec![printer_entry(printer, "Alpha", [120.0, 68.0, 150.0])],
-            Vec::new(),
-        );
-        let wired = build_preferences_window(bus, Rc::new(RefCell::new(Rc::new(catalog))))
-            .expect("the headless platform creates the window");
-        (ui_language, wired)
-    }
-
-    fn sentinel() -> ModelRc<SharedString> {
-        ModelRc::new(VecModel::from(vec![SharedString::from("sentinel")]))
-    }
-
-    fn strings(model: ModelRc<SharedString>) -> Vec<String> {
-        model.iter().map(|text| text.to_string()).collect()
-    }
-
-    #[test]
-    fn a_language_change_pushes_the_tabs_again() {
-        let (manufacturers, brands, all) = on_fresh_slint_thread(|| {
-            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
-            let (_ui_language, wired) = following_window(&bus);
-            wired.window.set_manufacturer_tabs(sentinel());
-            wired.window.set_resin_brand_tabs(sentinel());
-            pick_language(&bus, "es");
-            (
-                strings(wired.window.get_manufacturer_tabs()),
-                strings(wired.window.get_resin_brand_tabs()),
-                ctr!("PreferencesPage", "All").to_string(),
-            )
-        });
-        assert_eq!(manufacturers, [all.clone(), "Alpha".to_owned()]);
-        assert_eq!(brands, [all]);
-    }
-
-    #[test]
-    fn a_language_change_keeps_the_active_tabs() {
-        let active = on_fresh_slint_thread(|| {
-            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
-            let (_ui_language, wired) = following_window(&bus);
-            wired.window.set_current_manufacturer_index(1);
-            pick_language(&bus, "es");
-            (
-                wired.window.get_current_manufacturer_index(),
-                wired.window.get_current_brand_index(),
-            )
-        });
-        assert_eq!(active, (1, 0));
-    }
-
-    #[test]
-    fn the_system_entry_follows_a_language_change() {
-        let (english, spanish, expected) = on_fresh_slint_thread(|| {
-            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
-            let (_ui_language, wired) = following_window(&bus);
-            let system_entry = || {
-                let options = wired.window.get_language_options();
-                options.row_data(0).expect("the System entry").to_string()
-            };
-            pick_language(&bus, "en");
-            let english = system_entry();
-            pick_language(&bus, "es");
-            let expected = ctr!("AppearancePreferences", "System").to_string();
-            (english, system_entry(), expected)
-        });
-        assert_eq!(english, "System");
-        assert_ne!(spanish, english);
-        assert_eq!(spanish, expected);
-    }
-
-    #[test]
-    fn a_language_change_pushes_the_resin_rows_again() {
-        let rows = on_fresh_slint_thread(|| {
-            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
-            let (_ui_language, wired) = following_window(&bus);
-            let sentinel_row = ResinRow {
-                name: SharedString::from("sentinel"),
-                ..ResinRow::default()
-            };
-            wired
-                .window
-                .set_resin_rows(ModelRc::new(VecModel::from(vec![sentinel_row])));
-            pick_language(&bus, "es");
-            wired.window.get_resin_rows().row_count()
-        });
-        assert_eq!(rows, 0);
-    }
-}
-
-#[cfg(test)]
-mod silenced_messages_tests {
-    use super::*;
-    use crate::preferences_bus::PreferencesSnapshot;
-    use crate::test_support::slint_thread::on_fresh_slint_thread;
-
-    #[test]
-    fn show_all_messages_again_clears_the_silenced_messages_and_the_count() {
-        let (before, after, left) = on_fresh_slint_thread(|| {
-            let bus = PreferencesBus::new(PreferencesSnapshot {
-                silenced_messages: ["repair.summary".to_owned(), "supports.generated".to_owned()]
-                    .into_iter()
-                    .collect(),
-                ..PreferencesSnapshot::for_tests()
-            });
-            let catalog = ProfileCatalog::from_entries(Vec::new(), Vec::new());
-            let wired = build_preferences_window(&bus, Rc::new(RefCell::new(Rc::new(catalog))))
-                .expect("the headless platform creates the window");
-            let before = wired.window.get_silenced_message_count();
-            wired.window.invoke_show_all_messages_again();
-            (
-                before,
-                wired.window.get_silenced_message_count(),
-                bus.snapshot().silenced_messages.len(),
-            )
-        });
-        assert_eq!((before, after, left), (2, 0, 0));
-    }
-}
-
-#[cfg(test)]
-mod diagnostic_log_tests {
-    use std::path::Path;
-
-    use super::*;
-    use crate::test_support::slint_thread::on_fresh_slint_thread;
-
-    /// What the Privacy page shows after a tick of the log, and whether the
-    /// log writes.
-    #[derive(Debug, PartialEq)]
-    struct Shown {
-        /// The log in the preferences: the box follows it.
-        on: bool,
-        writing: bool,
-        asking: bool,
-        error: String,
-    }
-
-    /// Ticks the log in a fresh window, with the log going into `logs`,
-    /// answers the question with `answer` (none leaves it open) and reads the
-    /// page. Restarts the shared trail, so the other tests that do wait.
-    fn tick_then(logs: &Path, answer: Option<MessageAnswer>) -> Shown {
-        let _serial = crate::breadcrumbs::serial();
-        on_fresh_slint_thread(move || {
-            crate::breadcrumbs::write_log_into(logs);
-            crate::breadcrumbs::start(env!("CARGO_PKG_VERSION"), crate::diagnostics::commit());
-            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
-            let window =
-                PreferencesWindow::new().expect("the headless platform creates components");
-            window.set_diagnostic_log(true);
-            diagnostic_log_toggled(&window, &bus, true);
-            if let Some(answer) = answer {
-                log_question_answered(&window, &bus, answer);
-            }
-            let shown = Shown {
-                on: bus.snapshot().diagnostic_log,
-                writing: crate::breadcrumbs::enabled(),
-                asking: window.get_log_question_open(),
-                error: window.get_diagnostic_log_error().to_string(),
-            };
-            // Closes the file, so the folder can go.
-            let _ = crate::breadcrumbs::set_enabled(false);
-            shown
-        })
-    }
-
-    fn off(asking: bool) -> Shown {
-        Shown {
-            on: false,
-            writing: false,
-            asking,
-            error: String::new(),
-        }
-    }
-
-    #[test]
-    fn ticking_the_log_only_asks() {
-        let logs = tempfile::tempdir().expect("a temporary folder");
-        assert_eq!(tick_then(logs.path(), None), off(true));
-    }
-
-    #[test]
-    fn the_log_starts_once_the_person_turns_it_on() {
-        let logs = tempfile::tempdir().expect("a temporary folder");
-        let shown = tick_then(logs.path(), Some(MessageAnswer::Confirm));
-        assert_eq!(
-            shown,
-            Shown {
-                on: true,
-                writing: true,
-                asking: false,
-                error: String::new(),
-            }
-        );
-        assert!(logs.path().join("session.log").is_file());
-    }
-
-    #[test]
-    fn cancel_escape_or_a_click_outside_leave_it_off() {
-        let logs = tempfile::tempdir().expect("a temporary folder");
-        assert_eq!(
-            tick_then(logs.path(), Some(MessageAnswer::Cancel)),
-            off(false)
-        );
-    }
-
-    /// The box stays clear and the page says why: a log that seems on but
-    /// writes nothing would fail the bug report it was turned on for.
-    #[test]
-    fn a_log_that_cannot_start_stays_off_and_says_why() {
-        let dir = tempfile::tempdir().expect("a temporary folder");
-        let not_a_folder = dir.path().join("logs");
-        std::fs::write(&not_a_folder, "").expect("a file where the logs folder should be");
-        let shown = tick_then(&not_a_folder, Some(MessageAnswer::Confirm));
-        assert!(!shown.on && !shown.writing && !shown.asking, "{shown:?}");
-        assert!(
-            shown
-                .error
-                .starts_with("The diagnostic log could not start: "),
-            "{shown:?}"
-        );
-    }
-
-    #[test]
-    fn unticking_stops_it_at_once() {
-        let logs = tempfile::tempdir().expect("a temporary folder");
-        let _serial = crate::breadcrumbs::serial();
-        let shown = on_fresh_slint_thread(|| {
-            crate::breadcrumbs::write_log_into(logs.path());
-            crate::breadcrumbs::start(env!("CARGO_PKG_VERSION"), crate::diagnostics::commit());
-            crate::breadcrumbs::set_enabled(true).expect("the log starts");
-            let mut snapshot = PreferencesSnapshot::for_tests();
-            snapshot.diagnostic_log = true;
-            let bus = PreferencesBus::new(snapshot);
-            let window =
-                PreferencesWindow::new().expect("the headless platform creates components");
-            diagnostic_log_toggled(&window, &bus, false);
-            Shown {
-                on: bus.snapshot().diagnostic_log,
-                writing: crate::breadcrumbs::enabled(),
-                asking: window.get_log_question_open(),
-                error: window.get_diagnostic_log_error().to_string(),
-            }
-        });
-        assert_eq!(shown, off(false));
-    }
-}
+mod tests;
