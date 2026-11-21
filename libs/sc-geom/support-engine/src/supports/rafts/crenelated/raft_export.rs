@@ -9,7 +9,7 @@ use super::geometry::line_raft_graph::{
 };
 use super::geometry::compute_raft_footprint::{inflate_model_plate_clearance, raft_band_top_mm};
 use super::geometry::generate_chamfered_beam::generate_chamfered_beam;
-use super::geometry::generate_raft_from_footprint::build_raft_footprint_meshes;
+use super::geometry::raft_meshes::build_raft_footprint_meshes;
 use super::geometry::generate_unioned_line_raft_mesh::{
     filter_line_raft_edges, generate_unioned_line_raft_mesh,
 };

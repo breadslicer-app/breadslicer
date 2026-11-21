@@ -25,7 +25,7 @@ use crate::supports::rafts::crenelated::geometry::compute_raft_footprint::{
     inflate_model_plate_clearance, raft_band_top_mm, raft_solid_height_mm, raft_wall_base_height_mm,
 };
 use crate::supports::rafts::crenelated::geometry::generate_chamfered_beam::generate_chamfered_beam;
-use crate::supports::rafts::crenelated::geometry::generate_raft_from_footprint::{
+use crate::supports::rafts::crenelated::geometry::raft_meshes::{
     build_raft_footprint_meshes, is_untrimmed_footprint,
 };
 use crate::supports::rafts::crenelated::geometry::generate_unioned_line_raft_mesh::{

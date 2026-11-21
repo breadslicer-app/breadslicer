@@ -18,7 +18,7 @@
 //!   edges there (T-junctions). Here the rings lose their collinear points
 //!   first, and a cap triangle spanning a vertex is split at it.
 
-use super::generate_raft_from_footprint::generate_chamfered_base_from_polygons;
+use super::raft_meshes::generate_chamfered_base_from_polygons;
 use super::polygon_set_2d::{
     PolygonWithHoles, difference_polygon_sets, offset_polygon_set, polygon_set_to_shapes,
 };

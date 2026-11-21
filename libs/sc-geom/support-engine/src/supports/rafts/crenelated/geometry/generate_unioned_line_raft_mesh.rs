@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use super::generate_raft_from_footprint::generate_chamfered_base_from_polygons;
+use super::raft_meshes::generate_chamfered_base_from_polygons;
 use super::polygon_set_2d::{
     PolygonWithHoles, polygon_set_contains, polygon_set_to_shapes, ring_to_polygon,
     segment_distance_mm, union_polygon_sets,
