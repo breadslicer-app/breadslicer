@@ -1,7 +1,7 @@
-//! SoulCrafted's interface to the hollowing engine.
+//! The hollowing engine's interface.
 //!
 //! [`Session`] is built once per mesh and voxel size, in the mesh's own frame
-//! (DragonFruit's model-local grid): moving or rotating the model does not
+//! (a model-local grid): moving or rotating the model does not
 //! invalidate it, only a new mesh, a new voxel size or a scale does (the
 //! caller expresses the mesh in a frame whose millimetres are physical; see
 //! `support-session`'s hollow adapter). A session then answers two
@@ -19,38 +19,28 @@
 //! compute it again. Drains are measured against it too: a drain that opens
 //! into the cavity on screen opens into the hollow's.
 //!
-//! Differences from DragonFruit's front end, all on purpose:
+//! How it hollows:
 //!
 //! - the wall is cut from each voxel's exact distance to the source's
 //!   triangles, measured within the wall plus [`WALL_BAND_MARGIN_VOXELS`] of
-//!   the surface; DragonFruit cuts it from a chamfer distance that runs up to
-//!   12.8 % long and starts half a voxel off the surface, so its wall comes
-//!   out thicker than asked on average and thinner in places;
+//!   the surface, so it is as thick as asked;
 //! - the cavity is the contour of that exact field, unsmoothed: over exact
 //!   distances the contour is already even, and smoothing only thickened
-//!   the wall (#266, #29). DragonFruit blurs the field and Taubin-smooths the
-//!   mesh, which moves it into the wall too, retries with less smoothing when
-//!   the result does not close, and without smoothing chamfers the voxels,
-//!   which thins the wall; none of that runs here;
-//! - DragonFruit's preview is a separate, unsmoothed surface, so its result
-//!   can differ from what the preview showed; here they are one cavity, and
+//!   the wall (#266, #29). The preview and the result are one cavity, and
 //!   its edges are contoured closed (no hairline cracks to repair);
 //! - the voxel size it actually used is reported ([`GridInfo`]), including when
-//!   the resolution bound changed it (DragonFruit clamps to 24..=192 silently);
+//!   the resolution bound changed it;
 //!   the upper bound is a setting ([`GridRequest::max_resolution`], 512 by
 //!   default) and so is the memory the grid may take
 //!   ([`GridRequest::max_memory_bytes`]): a model too large for both gets a
 //!   larger voxel, reported as such, instead of exhausting the RAM;
 //! - solid areas can be given as spheres or boxes in millimetres, which survive
-//!   a change of voxel size, besides DragonFruit's voxel indices;
+//!   a change of voxel size, besides voxel indices;
 //! - automatic drain depth measures the wall from the model's surface to
 //!   the cavity wall itself, along the axis and across the hole's whole
 //!   cross-section, with rays that cannot slip between two triangles, and
 //!   goes just past it: 0.2 mm past where the whole hole opens, never into
-//!   the cavity's far side (#315). DragonFruit takes the first two surfaces
-//!   the axis crosses on whatever preview mesh is shown, which runs to the
-//!   far side of the model when the axis misses the cavity or slips between
-//!   two triangles of the surface, and adds 1 mm;
+//!   the cavity's far side (#315);
 //! - a drain whose axis does not open into the cavity is not cut (#264): it
 //!   would drain nothing, and at the automatic depth it drills through the
 //!   model;
@@ -82,24 +72,27 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use rayon::prelude::*;
 
 use crate::bvh::Bvh;
+use crate::bvh::point_inside_mesh_parity;
+use crate::cavity::{CavitySpec, ExactCavity, exact_cavity};
 use crate::control::{Cancelled, Control, Stage};
 use crate::drain::{
     ConvexCutter, CutError, OverlappingShells, append, intersect_convex_closed,
     subtract_convex_closed, surfaces_cross,
 };
-use crate::hollowing::{
-    ExactCavity, GridSpec, HollowMode, HollowOptions, HollowSession, InfillMode,
-    MIN_VOXEL_RESOLUTION, merge_meshes, normalize_mesh_for_boolean,
-    normalize_mesh_for_boolean_with_weld, point_inside_mesh_parity, vec3_normalize,
-};
+use crate::grid::GridSpec;
+use crate::infill::InfillMode;
 use crate::mesh::{IndexedMesh, Vec3};
 use crate::solid::LassoRegion;
 use crate::topology::{EdgeManifoldDefects, edge_manifold_defects, is_edge_manifold};
+use crate::volume::Volume;
 use crate::wall::WallDistances;
 
-/// DragonFruit's default voxel size in its Hollow panel.
+/// The coarsest grid: voxels along the largest extent.
+const MIN_VOXEL_RESOLUTION: u16 = 24;
+
+/// The default voxel size.
 pub const DEFAULT_VOXEL_SIZE_MM: f32 = 0.65;
-/// DragonFruit's default wall.
+/// The default wall.
 pub const DEFAULT_WALL_THICKNESS_MM: f32 = 2.0;
 /// The finest grid a request may ask for along the model's largest extent.
 pub const RESOLUTION_LIMIT: u16 = 512;
@@ -111,7 +104,7 @@ pub const BYTES_PER_CELL: usize = 28;
 /// ([`GridRequest::max_memory_bytes`]): 1 GiB, about 38 M cells. A fixed
 /// figure, not one read from the free RAM, so a model hollows on the same
 /// grid on every machine and every run, the preview's and the hollow's. Any
-/// grid of up to 192 voxels per side (DragonFruit's bound) fits in it; a
+/// grid of up to 192 voxels per side fits in it; a
 /// 512-voxel cube would take 3.8 GB.
 pub const GRID_MEMORY_LIMIT_BYTES: usize = 1 << 30;
 /// How far past the wall, in voxels, distances are exact: the cavity wall is
@@ -124,7 +117,7 @@ pub const WALL_BAND_MARGIN_VOXELS: f32 = 2.0;
 pub struct GridRequest {
     /// Wanted voxel edge in millimetres.
     pub voxel_size_mm: f32,
-    /// Most voxels along the largest extent (DragonFruit: 192). Capped at
+    /// Most voxels along the largest extent (192 by default). Capped at
     /// [`RESOLUTION_LIMIT`].
     pub max_resolution: u16,
     /// Most memory the grid may take, at [`BYTES_PER_CELL`]: a grid larger
@@ -151,7 +144,7 @@ pub enum ResolutionBound {
     /// ([`GridRequest::max_memory_bytes`]): voxels are larger, the finest
     /// that fit. `wanted` is the resolution the voxel asked for.
     MemoryLimited { wanted: u32, limit_bytes: usize },
-    /// The request wanted fewer than DragonFruit's 24: voxels are smaller.
+    /// The request wanted fewer than 24: voxels are smaller.
     Refined { wanted: u32, min: u16 },
 }
 
@@ -207,7 +200,7 @@ pub enum HollowFill {
 /// Material the hollow must not remove.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SolidArea {
-    /// DragonFruit's form: linear indices of this session's grid.
+    /// Linear indices of this session's grid.
     Voxels(Vec<usize>),
     /// Every voxel whose center is within `radius_mm` of `center`.
     Sphere { center: [f32; 3], radius_mm: f32 },
@@ -244,7 +237,7 @@ impl Default for HollowSettings {
 pub enum DrainDepth {
     /// Just through the wall: until the whole hole opens into the cavity,
     /// plus [`DRAIN_PAST_WALL_MM`], and never into the cavity's far side
-    /// (#315). DragonFruit goes 1 mm past where the axis meets the wall.
+    /// (#315).
     Auto,
     Mm(f32),
 }
@@ -260,7 +253,7 @@ pub struct DrainHole {
     /// Second radius for an oval hole.
     pub radius_y_mm: Option<f32>,
     pub depth: DrainDepth,
-    /// How far the cutter starts outside the surface (DragonFruit: 3 mm).
+    /// How far the cutter starts outside the surface (3 mm by default).
     pub outside_mm: f32,
     /// A cone (#317): the radius at the drain's end, where the radii above
     /// are at the surface (on the axis, at `center`). `None` is a cylinder.
@@ -290,16 +283,14 @@ impl DrainHole {
 /// 0.1 mm, 0.05 mm all round.
 pub const DEFAULT_PLUG_CLEARANCE_MM: f32 = 0.1;
 
-/// DragonFruit's `HOLE_PUNCH_OUTSIDE_PROTRUSION_MM`.
+/// How far a drain's cutter starts outside the surface, so it opens cleanly.
 pub const DRAIN_OUTSIDE_PROTRUSION_MM: f32 = 3.0;
-/// How far an automatic drain goes past the cavity wall (#315; DragonFruit's
-/// `HOLE_PUNCH_DEPTH_OFFSET_FROM_SHELL_MM` is 1 mm, past its first hit
-/// only).
+/// How far an automatic drain goes past the cavity wall (#315).
 pub const DRAIN_PAST_WALL_MM: f32 = 0.2;
 /// How far short of the cavity's far side an automatic drain stops: it
 /// never reaches into the opposite wall (#264).
 const DRAIN_FAR_SIDE_CLEARANCE_MM: f32 = 0.1;
-/// DragonFruit's `HOLE_PUNCH_AUTO_DEPTH_RAY_START_OFFSET_MM`.
+/// How far outside the surface the rays that measure a drain start.
 pub(crate) const DRAIN_RAY_START_MM: f32 = 0.3;
 /// Where across the hole its rim is measured, as a fraction of its radius:
 /// just inside the prism's corners.
@@ -308,10 +299,10 @@ pub(crate) const DRAIN_RIM_SAMPLE: f32 = 0.99;
 /// the hole may meet the cavity wall and still be the same wall, sloping
 /// (up to about 63°): one deeper is beside the cavity, behind solid.
 pub(crate) const DRAIN_RIM_SLOPE: f32 = 2.0;
-/// DragonFruit's cap on any punch depth.
+/// The deepest any drain goes.
 const DRAIN_MAX_DEPTH_MM: f32 = 120.0;
-/// Hits along a drain axis closer than this are one surface (DragonFruit's
-/// tolerance for a ray through a shared edge or vertex).
+/// Hits along a drain axis closer than this are one surface (a ray through
+/// a shared edge or corner hits every triangle there).
 pub(crate) const DRAIN_SAME_SURFACE_MM: f32 = 0.05;
 
 /// What one drain did.
@@ -440,7 +431,7 @@ impl From<Cancelled> for HollowError {
 /// A voxelized mesh, ready for any number of previews and applies.
 #[derive(Debug)]
 pub struct Session {
-    inner: HollowSession,
+    inner: Volume,
     grid: GridInfo,
     source_volume_mm3: f64,
     /// Whether the source's parts overlapped and were joined into one solid
@@ -500,9 +491,7 @@ impl BuiltCavity {
     /// The cavity as the hollow carries it: the wall, and the infill beams.
     fn surface(&self) -> &IndexedMesh {
         match &self.exact.infill {
-            Some(infill) => self
-                .merged
-                .get_or_init(|| merge_meshes(&self.exact.wall, infill)),
+            Some(infill) => self.merged.get_or_init(|| self.exact.wall.joined(infill)),
             None => &self.exact.wall,
         }
     }
@@ -528,13 +517,13 @@ struct SourceShell {
 
 impl SourceShell {
     fn of(source: &IndexedMesh) -> Self {
-        let mut mesh = normalize_mesh_for_boolean(source.clone());
+        let mut mesh = source.welded(1e-6);
         let mut defects = edge_manifold_defects(&mesh);
         // The weld ladder, for hairline cracks: welding never repairs an
         // edge of more than two faces nor the winding.
         if defects.boundary > 0 && defects.overloaded == 0 && defects.same_direction == 0 {
             for weld_epsilon in [2e-6_f32, 5e-6_f32, 1e-5_f32] {
-                let candidate = normalize_mesh_for_boolean_with_weld(source.clone(), weld_epsilon);
+                let candidate = source.welded(weld_epsilon);
                 let candidate_defects = edge_manifold_defects(&candidate);
                 if candidate_defects.is_clean() {
                     (mesh, defects) = (candidate, candidate_defects);
@@ -591,7 +580,7 @@ impl Session {
         let diag = bbox.max.sub(bbox.min);
         let max_extent = diag.x.max(diag.y).max(diag.z).max(1e-3);
         let requested = request.voxel_size_mm;
-        // DragonFruit's `computeVoxelResolution`, with the bound reported.
+        // Voxels along the largest extent, with the bound reported.
         let wanted = (max_extent / requested.max(0.05)).round().max(1.0) as u32;
         let max = request
             .max_resolution
@@ -647,8 +636,7 @@ impl Session {
             });
         }
         let source_volume_mm3 = mesh.signed_volume();
-        let inner =
-            HollowSession::build(mesh, resolution, [0.0, 0.0, 0.0, 1.0], Some(voxel_mm), ctl)?;
+        let inner = Volume::build(mesh, voxel_mm, ctl)?;
         Ok(Self {
             grid: GridInfo::of(&inner.grid(), requested, resolution, bound),
             inner,
@@ -689,9 +677,12 @@ impl Session {
             settings.wall_thickness_mm + settings.min_cavity_width_mm.max(0.0) * 0.5,
             ctl,
         )?;
-        let cavity = Arc::new(BuiltCavity::new(
-            self.inner.exact_cavity(&options, &dist, ctl)?,
-        ));
+        let cavity = Arc::new(BuiltCavity::new(exact_cavity(
+            &self.inner,
+            &options,
+            &dist,
+            ctl,
+        )?));
         *self.cavity.lock().unwrap_or_else(PoisonError::into_inner) =
             Some((settings.clone(), cavity.clone()));
         Ok(cavity)
@@ -785,8 +776,8 @@ impl Session {
         &self.grid
     }
 
-    /// The DragonFruit session underneath (for its voxel queries).
-    pub fn inner(&self) -> &HollowSession {
+    /// The model's voxels (for their queries).
+    pub fn inner(&self) -> &Volume {
         &self.inner
     }
 
@@ -836,8 +827,8 @@ impl Session {
             .collect()
     }
 
-    /// DragonFruit options for `settings` on this session.
-    pub fn options(&self, settings: &HollowSettings) -> HollowOptions {
+    /// What the cavity of `settings` is cut for on this session.
+    pub(crate) fn options(&self, settings: &HollowSettings) -> CavitySpec {
         let mut blocked: Vec<usize> = settings
             .solid_areas
             .iter()
@@ -845,25 +836,19 @@ impl Session {
             .collect();
         blocked.sort_unstable();
         blocked.dedup();
-        let (mode, infill_mode, infill_cell_mm, infill_beam_radius_mm) = match settings.fill {
-            HollowFill::Cavity => (HollowMode::Cavity, InfillMode::Lattice, 4.2426, 0.35),
+        let infill = match settings.fill {
+            HollowFill::Cavity => None,
             HollowFill::Infill {
                 pattern,
                 cell_mm,
                 beam_radius_mm,
-            } => (HollowMode::Infill, pattern, cell_mm, beam_radius_mm),
+            } => Some((pattern, cell_mm, beam_radius_mm)),
         };
-        HollowOptions {
-            mode,
-            voxel_resolution: self.grid.resolution,
-            shell_thickness_mm: settings.wall_thickness_mm,
-            blocked_voxel_indices: blocked,
-            infill_mode,
-            infill_cell_mm,
-            infill_beam_radius_mm,
-            drain_holes: Vec::new(),
-            rotation_quat: [0.0, 0.0, 0.0, 1.0],
-            min_cavity_width_mm: settings.min_cavity_width_mm.max(0.0),
+        CavitySpec {
+            wall_mm: settings.wall_thickness_mm,
+            blocked,
+            infill,
+            min_width_mm: settings.min_cavity_width_mm.max(0.0),
             solid_regions: settings
                 .solid_areas
                 .iter()
@@ -1028,14 +1013,12 @@ impl Session {
         // the drains are cut from the source and the wall, then from each
         // beam on its own.
         let beams = cavity.infill.as_ref().filter(|_| !cutters.is_empty());
-        let mut mesh = merge_meshes(
-            shell.mesh.as_ref().unwrap_or(self.source_mesh()),
-            if beams.is_some() {
+        let mut mesh =
+            (shell.mesh.as_ref().unwrap_or(self.source_mesh())).joined(if beams.is_some() {
                 &cavity.wall
             } else {
                 &added
-            },
-        );
+            });
         // Each plug is what its drain takes out of the source and the wall
         // (the beams it clears are not part of it), from the uncut mesh.
         let mut plugs = Vec::new();
@@ -1144,12 +1127,9 @@ pub(crate) fn clear_channels(
 /// A drain's axis, normalized (straight down when it has no direction), and
 /// its center.
 pub(crate) fn drain_axis(hole: &DrainHole) -> (Vec3, Vec3) {
-    let axis = vec3_normalize(Vec3::new(
-        hole.direction[0],
-        hole.direction[1],
-        hole.direction[2],
-    ))
-    .unwrap_or(Vec3::new(0.0, 0.0, -1.0));
+    let axis = (Vec3::new(hole.direction[0], hole.direction[1], hole.direction[2]))
+        .normalized()
+        .unwrap_or(Vec3::new(0.0, 0.0, -1.0));
     (
         Vec3::new(hole.center[0], hole.center[1], hole.center[2]),
         axis,
@@ -1394,7 +1374,7 @@ fn drain_opening(
     segments: usize,
 ) -> Option<DrainOpening> {
     let (center, axis) = drain_axis(hole);
-    // From just outside the surface, as DragonFruit measures.
+    // From just outside the surface.
     let start = center.sub(axis.scale(DRAIN_RAY_START_MM));
     // Where a ray from `offset` (across the axis) enters and leaves the
     // cavity, from the start plane.
@@ -1465,8 +1445,14 @@ pub(crate) fn opening_across(
     } else {
         Vec3::new(0.0, 1.0, 0.0)
     };
-    let u = vec3_normalize(helper.cross(axis)).unwrap_or(Vec3::new(1.0, 0.0, 0.0));
-    let v = vec3_normalize(axis.cross(u)).unwrap_or(Vec3::new(0.0, 1.0, 0.0));
+    let u = helper
+        .cross(axis)
+        .normalized()
+        .unwrap_or(Vec3::new(1.0, 0.0, 0.0));
+    let v = axis
+        .cross(u)
+        .normalized()
+        .unwrap_or(Vec3::new(0.0, 1.0, 0.0));
     let across = |angle: f32, scale: f32| {
         u.scale(angle.cos() * radius_x * scale)
             .add(v.scale(angle.sin() * radius_y * scale))

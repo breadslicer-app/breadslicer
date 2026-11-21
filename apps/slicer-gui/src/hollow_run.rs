@@ -103,10 +103,9 @@ const PREVIEW_TICK: Duration = Duration::from_millis(40);
 const DRAIN_SIDES: u32 = 24;
 
 /// Every stage of the hollow engine, in the order it runs them.
-const STAGES: [Stage; 11] = [
+const STAGES: [Stage; 10] = [
     Stage::Voxelize,
     Stage::FloodFill,
-    Stage::ParityRefine,
     Stage::DistanceField,
     Stage::WallDistance,
     Stage::KeepMask,
@@ -134,7 +133,6 @@ fn stage_text(stage: Stage) -> slint::SharedString {
     match stage {
         Stage::Voxelize => ctr!("HollowRun", "Voxelizing surface"),
         Stage::FloodFill => ctr!("HollowRun", "Filling outside"),
-        Stage::ParityRefine => ctr!("HollowRun", "Restoring sealed voids"),
         Stage::DistanceField => ctr!("HollowRun", "Measuring wall distance"),
         Stage::WallDistance => ctr!("HollowRun", "Measuring exact wall distance"),
         Stage::KeepMask => ctr!("HollowRun", "Choosing wall voxels"),

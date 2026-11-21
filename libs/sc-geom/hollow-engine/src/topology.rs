@@ -1,116 +1,11 @@
-//! Edge topology over an [`IndexedMesh`]: adjacency, boundary edges,
-//! non-manifold edges and winding disagreements.
-//!
-//! Ported from DragonFruit `rust/dragonfruit-mesh-core/src/halfedge.rs` (the
-//! parts the hollowing engine reads), plus [`is_edge_manifold`], the check
-//! SoulCrafted's slicer applies before it slices.
+//! How the triangles of an [`IndexedMesh`] hang together: the edge defects
+//! the slicer refuses, and the pieces a mesh falls into.
 
-use ahash::{AHashMap, RandomState};
-use smallvec::SmallVec;
+use rayon::prelude::*;
 
 use crate::mesh::IndexedMesh;
 
-/// Fixed seeds, so every walk over `edges` runs in the same order in every
-/// process (DragonFruit's choice, kept for reproducible results).
-fn edge_hasher() -> RandomState {
-    RandomState::with_seeds(
-        0x9e37_79b9_7f4a_7c15,
-        0xbf58_476d_1ce4_e5b9,
-        0x94d0_49bb_1331_11eb,
-        0x2545_f491_4f6c_dd1d,
-    )
-}
-
-/// Canonical undirected edge key (sorted endpoints).
-pub type EdgeKey = (u32, u32);
-
-#[inline]
-pub fn edge_key(a: u32, b: u32) -> EdgeKey {
-    if a < b { (a, b) } else { (b, a) }
-}
-
-#[derive(Debug, Default, Clone)]
-pub struct EdgeInfo {
-    /// Faces incident to this edge.
-    pub faces: SmallVec<[u32; 2]>,
-    /// Directed samples `(from, to, face)`.
-    pub directed: SmallVec<[(u32, u32, u32); 2]>,
-}
-
-#[derive(Debug, Default)]
-pub struct Topology {
-    pub edges: AHashMap<EdgeKey, EdgeInfo>,
-}
-
-impl Topology {
-    pub fn build(mesh: &IndexedMesh) -> Self {
-        let mut edges: AHashMap<EdgeKey, EdgeInfo> =
-            AHashMap::with_capacity_and_hasher(mesh.triangles.len() * 2, edge_hasher());
-        for (fi, tri) in mesh.triangles.iter().enumerate() {
-            let fi = fi as u32;
-            let [a, b, c] = *tri;
-            for &(u, v) in &[(a, b), (b, c), (c, a)] {
-                let entry = edges.entry(edge_key(u, v)).or_default();
-                entry.faces.push(fi);
-                entry.directed.push((u, v, fi));
-            }
-        }
-        Self { edges }
-    }
-
-    /// Sorted, so two runs over the same mesh give the same list.
-    pub fn boundary_edges(&self) -> Vec<EdgeKey> {
-        let mut edges: Vec<EdgeKey> = self
-            .edges
-            .iter()
-            .filter(|(_, info)| info.faces.len() == 1)
-            .map(|(k, _)| *k)
-            .collect();
-        edges.sort_unstable();
-        edges
-    }
-
-    /// Edges whose faces cannot be paired by direction: some traverse it each
-    /// way, but not equally many (a fan with a face it cannot pair).
-    pub fn non_manifold_edges(&self) -> Vec<EdgeKey> {
-        let mut edges: Vec<EdgeKey> = self
-            .edges
-            .iter()
-            .filter(|(_, info)| {
-                let mut forward = 0usize;
-                let mut backward = 0usize;
-                for &(u, v, _) in &info.directed {
-                    if u < v {
-                        forward += 1;
-                    } else {
-                        backward += 1;
-                    }
-                }
-                forward > 0 && backward > 0 && forward != backward
-            })
-            .map(|(k, _)| *k)
-            .collect();
-        edges.sort_unstable();
-        edges
-    }
-
-    /// Edges whose two faces traverse them the same way.
-    pub fn inconsistent_edges(&self) -> usize {
-        self.edges
-            .values()
-            .filter(|info| {
-                if info.directed.len() != 2 {
-                    return false;
-                }
-                let (a0, b0, _) = info.directed[0];
-                let (a1, b1, _) = info.directed[1];
-                (a0, b0) == (a1, b1)
-            })
-            .count()
-    }
-}
-
-/// Counts of the edge defects SoulCrafted's slicer rejects.
+/// Counts of the edge defects the slicer rejects.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct EdgeManifoldDefects {
     /// Edges with a single face.
@@ -129,11 +24,10 @@ impl EdgeManifoldDefects {
     }
 }
 
-/// Every edge is shared by exactly two faces traversing it in opposite
-/// directions, and no face repeats a vertex: the precondition of
-/// SoulCrafted's slicer (`ValidatedFaces::validated_edge_manifold`).
+/// What stands between `mesh` and the slicer: every edge has to be shared by
+/// exactly two faces that run along it opposite ways, and no face may
+/// repeat a corner.
 pub fn edge_manifold_defects(mesh: &IndexedMesh) -> EdgeManifoldDefects {
-    use rayon::prelude::*;
     let mut defects = EdgeManifoldDefects {
         degenerate_faces: mesh
             .triangles
@@ -143,8 +37,8 @@ pub fn edge_manifold_defects(mesh: &IndexedMesh) -> EdgeManifoldDefects {
         ..Default::default()
     };
     // Every half-edge as `min << 33 | max << 1 | backward`, sorted: an edge's
-    // half-edges end up adjacent. A sort beats a hash map several times over
-    // on millions of edges, and runs in parallel.
+    // half-edges end up next to each other. A sort beats a hash map several
+    // times over on millions of edges, and runs in parallel.
     debug_assert!(mesh.positions.len() < 1 << 31);
     let mut half: Vec<u64> = mesh
         .triangles
@@ -153,28 +47,19 @@ pub fn edge_manifold_defects(mesh: &IndexedMesh) -> EdgeManifoldDefects {
         .flat_map_iter(|&[a, b, c]| {
             [(a, b), (b, c), (c, a)].map(|(u, v)| {
                 let (lo, hi) = if u < v { (u, v) } else { (v, u) };
-                ((lo as u64) << 33) | ((hi as u64) << 1) | u64::from(u > v)
+                (u64::from(lo) << 33) | (u64::from(hi) << 1) | u64::from(u > v)
             })
         })
         .collect();
     half.par_sort_unstable();
-    let mut i = 0;
-    while i < half.len() {
-        let edge = half[i] >> 1;
-        let mut j = i;
-        let mut backward = 0;
-        while j < half.len() && half[j] >> 1 == edge {
-            backward += (half[j] & 1) as usize;
-            j += 1;
-        }
-        let forward = (j - i) - backward;
-        match (forward, backward) {
+    for run in half.chunk_by(|a, b| a >> 1 == b >> 1) {
+        let backward = run.iter().filter(|h| *h & 1 == 1).count();
+        match (run.len() - backward, backward) {
             (1, 1) => {}
             (f, b) if f + b == 1 => defects.boundary += 1,
             (2, 0) | (0, 2) => defects.same_direction += 1,
             _ => defects.overloaded += 1,
         }
-        i = j;
     }
     defects
 }
@@ -184,68 +69,82 @@ pub fn is_edge_manifold(mesh: &IndexedMesh) -> bool {
     edge_manifold_defects(mesh).is_clean()
 }
 
-/// Components of `mesh` joined through shared edges, as one label per face,
-/// numbered `0..count` in order of each component's first face. Unlike
-/// [`face_shells`], faces that only share a vertex stay apart: two closed
-/// tubes welded at one point are two components.
-pub fn edge_components(mesh: &IndexedMesh) -> (Vec<u32>, usize) {
-    fn find(parent: &mut [u32], mut i: u32) -> u32 {
-        while parent[i as usize] != i {
-            parent[i as usize] = parent[parent[i as usize] as usize];
-            i = parent[i as usize];
+/// Disjoint sets over `0..n`, each pointing at the smallest member it joined.
+struct Groups(Vec<u32>);
+
+impl Groups {
+    fn new(n: usize) -> Self {
+        Self((0..n as u32).collect())
+    }
+
+    fn root(&mut self, mut i: u32) -> u32 {
+        while self.0[i as usize] != i {
+            let up = self.0[self.0[i as usize] as usize];
+            self.0[i as usize] = up;
+            i = up;
         }
         i
     }
-    let mut parent: Vec<u32> = (0..mesh.triangles.len() as u32).collect();
-    let mut first_face: AHashMap<EdgeKey, u32> =
-        AHashMap::with_capacity_and_hasher(mesh.triangles.len() * 2, edge_hasher());
-    for (f, tri) in mesh.triangles.iter().enumerate() {
-        let f = f as u32;
-        for (u, v) in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])] {
-            let other = *first_face.entry(edge_key(u, v)).or_insert(f);
-            let (a, b) = (find(&mut parent, f), find(&mut parent, other));
-            if a != b {
-                parent[a.max(b) as usize] = a.min(b);
-            }
+
+    fn join(&mut self, a: u32, b: u32) {
+        let (a, b) = (self.root(a), self.root(b));
+        if a != b {
+            self.0[a.max(b) as usize] = a.min(b);
         }
     }
-    let mut label_of_root: AHashMap<u32, u32> = AHashMap::new();
-    let mut labels = Vec::with_capacity(mesh.triangles.len());
-    for f in 0..mesh.triangles.len() as u32 {
-        let root = find(&mut parent, f);
-        let next = label_of_root.len() as u32;
-        labels.push(*label_of_root.entry(root).or_insert(next));
+
+    /// One label per member in `0..count`, numbered by first appearance in
+    /// `members`, and `count`.
+    fn labels(&mut self, members: impl Iterator<Item = u32>) -> (Vec<u32>, usize) {
+        let mut label = vec![u32::MAX; self.0.len()];
+        let mut count = 0u32;
+        let labels = members
+            .map(|m| {
+                let root = self.root(m) as usize;
+                if label[root] == u32::MAX {
+                    label[root] = count;
+                    count += 1;
+                }
+                label[root]
+            })
+            .collect();
+        (labels, count as usize)
     }
-    (labels, label_of_root.len())
 }
 
-/// Components (shells) of `mesh` joined through shared vertices, as one
-/// label per face, numbered `0..count` in order of each shell's first face.
+/// The pieces of `mesh` held together by shared edges, as a label per face
+/// numbered `0..count` in the order of each piece's first face. Unlike
+/// [`face_shells`], faces that only share a corner stay apart: two closed
+/// tubes welded at one point are two pieces.
+pub fn edge_components(mesh: &IndexedMesh) -> (Vec<u32>, usize) {
+    let mut edges: Vec<(u64, u32)> = mesh
+        .triangles
+        .iter()
+        .enumerate()
+        .flat_map(|(f, &[a, b, c])| {
+            [(a, b), (b, c), (c, a)].map(|(u, v)| {
+                let (lo, hi) = if u < v { (u, v) } else { (v, u) };
+                ((u64::from(lo) << 32) | u64::from(hi), f as u32)
+            })
+        })
+        .collect();
+    edges.par_sort_unstable();
+    let mut groups = Groups::new(mesh.triangles.len());
+    for run in edges.chunk_by(|a, b| a.0 == b.0) {
+        for pair in run.windows(2) {
+            groups.join(pair[0].1, pair[1].1);
+        }
+    }
+    groups.labels(0..mesh.triangles.len() as u32)
+}
+
+/// The shells of `mesh`, held together by shared corners, as a label per
+/// face numbered `0..count` in the order of each shell's first face.
 pub fn face_shells(mesh: &IndexedMesh) -> (Vec<u32>, usize) {
-    fn find(parent: &mut [u32], mut i: u32) -> u32 {
-        while parent[i as usize] != i {
-            parent[i as usize] = parent[parent[i as usize] as usize];
-            i = parent[i as usize];
-        }
-        i
+    let mut groups = Groups::new(mesh.positions.len());
+    for &[a, b, c] in &mesh.triangles {
+        groups.join(a, b);
+        groups.join(a, c);
     }
-    let mut parent: Vec<u32> = (0..mesh.positions.len() as u32).collect();
-    for tri in &mesh.triangles {
-        let r0 = find(&mut parent, tri[0]);
-        for &v in &tri[1..] {
-            let r = find(&mut parent, v);
-            if r != r0 {
-                parent[r as usize] = r0;
-            }
-        }
-    }
-    let mut label_of_root: AHashMap<u32, u32> = AHashMap::new();
-    let mut labels = Vec::with_capacity(mesh.triangles.len());
-    for tri in &mesh.triangles {
-        let root = find(&mut parent, tri[0]);
-        let next = label_of_root.len() as u32;
-        labels.push(*label_of_root.entry(root).or_insert(next));
-    }
-    let count = label_of_root.len();
-    (labels, count)
+    groups.labels(mesh.triangles.iter().map(|t| t[0]))
 }

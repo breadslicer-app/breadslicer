@@ -373,7 +373,6 @@ fn progress_reports_every_stage_in_order() {
         vec![
             Stage::Voxelize,
             Stage::FloodFill,
-            Stage::ParityRefine,
             Stage::DistanceField,
             Stage::WallDistance,
             Stage::KeepMask,
@@ -653,7 +652,7 @@ fn the_result_is_the_preview() {
                 let preview = session.preview(&settings, Control::none()).unwrap();
                 let applied = session.apply(&settings, &[], Control::none()).unwrap();
                 let shown = match &preview.infill {
-                    Some(infill) => merge_meshes(&preview.cavity, infill),
+                    Some(infill) => preview.cavity.joined(infill),
                     None => preview.cavity.clone(),
                 };
                 assert_eq!(applied.cavity, shown, "{case}");
@@ -1055,7 +1054,7 @@ fn assert_drain_open(
     } else {
         Vec3::new(0.0, 1.0, 0.0)
     };
-    let u = vec3_normalize(helper.cross(axis)).unwrap();
+    let u = helper.cross(axis).normalized().unwrap();
     let v = axis.cross(u);
     let mut checked = 0;
     for k in 0..7 {
@@ -1248,8 +1247,8 @@ fn drains_on_face_diagonals_open() {
                         } else {
                             Vec3::new(0.0, 1.0, 0.0)
                         };
-                        let u = vec3_normalize(helper.cross(axis)).unwrap();
-                        let v = vec3_normalize(axis.cross(u)).unwrap();
+                        let u = helper.cross(axis).normalized().unwrap();
+                        let v = axis.cross(u).normalized().unwrap();
                         let segments =
                             ((std::f32::consts::TAU * radius / 0.7).ceil() as usize).clamp(16, 80);
                         let corner = (random() * segments as f32) as usize % segments;
@@ -1263,7 +1262,7 @@ fn drains_on_face_diagonals_open() {
                     2 => on,
                     // A hair off it.
                     _ => {
-                        let along = vec3_normalize(b.sub(a)).unwrap();
+                        let along = b.sub(a).normalized().unwrap();
                         on.add(normal.cross(along).scale((random() - 0.5) * 2e-4))
                     }
                 };
@@ -1431,8 +1430,14 @@ fn an_auto_drain_opens_its_whole_hole_on_a_curve() {
         // On the facets, just inside the 20 mm sphere.
         let center = normal.scale(19.9);
         let tilt = if i % 2 == 0 { 0.0 } else { 0.5 };
-        let side = vec3_normalize(normal.cross(Vec3::new(0.3, 0.9, 0.1))).unwrap();
-        let axis = vec3_normalize(normal.scale(-1.0).add(side.scale(tilt))).unwrap();
+        let side = (normal.cross(Vec3::new(0.3, 0.9, 0.1)))
+            .normalized()
+            .unwrap();
+        let axis = normal
+            .scale(-1.0)
+            .add(side.scale(tilt))
+            .normalized()
+            .unwrap();
         for radius in [0.8, 2.5] {
             drains.push(DrainHole::new(center.to_array(), axis.to_array(), radius));
         }
@@ -1450,8 +1455,8 @@ fn an_auto_drain_opens_its_whole_hole_on_a_curve() {
         } else {
             Vec3::new(0.0, 1.0, 0.0)
         };
-        let u = vec3_normalize(helper.cross(axis)).unwrap();
-        let v = vec3_normalize(axis.cross(u)).unwrap();
+        let u = helper.cross(axis).normalized().unwrap();
+        let v = axis.cross(u).normalized().unwrap();
         // Inside the prism however a retry turned it: within the circle its
         // sides touch, just inside, and a ring halfway out.
         let inscribed = hole.radius_mm * (std::f32::consts::PI / report.segments as f32).cos();
@@ -1572,7 +1577,7 @@ fn members_of(infill: &IndexedMesh) -> Vec<(IndexedMesh, crate::mesh::Aabb)> {
         .filter(|f| !f.is_empty())
         .map(|f| {
             let mut member = IndexedMesh::new(infill.positions.clone(), f);
-            crate::hollowing::compact_unreferenced_vertices(&mut member);
+            member.drop_unused_corners();
             let bbox = member.bbox();
             (member, bbox)
         })
@@ -2077,7 +2082,7 @@ fn a_plug_is_the_drained_core_less_the_clearance() {
 fn a_plug_on_a_curve_follows_both_surfaces() {
     let session = sphere_session(0.65);
     let settings = HollowSettings::default();
-    let normal = vec3_normalize(Vec3::new(0.4, -0.3, 0.86)).unwrap();
+    let normal = Vec3::new(0.4, -0.3, 0.86).normalized().unwrap();
     let mut hole = DrainHole::new(
         normal.scale(19.9).to_array(),
         normal.scale(-1.0).to_array(),
@@ -2405,7 +2410,7 @@ fn a_minimum_width_keeps_a_wide_cavity_s_walls() {
 
 #[test]
 fn the_squared_distance_transform_is_exact() {
-    use crate::hollowing::squared_distance_transform_for_test as sdt;
+    use crate::distance::squared_distance_transform_for_test as sdt;
     let (nx, ny, nz) = (7usize, 5usize, 4usize);
     let sources = [(1usize, 1usize, 1usize), (5, 3, 2), (0, 4, 3)];
     let mut field = vec![f32::INFINITY; nx * ny * nz];

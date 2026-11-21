@@ -11,9 +11,9 @@ the source as their licenses require:
   https://codeberg.org/SoulCrafted/Slicer
 
 - DragonFruit (Open Resin Alliance and contributors): the support system,
-  ported under AGPL-3.0-or-later, and the hollowing engine, ported from its
-  MIT mesh crates. See libs/sc-geom/support-engine/NOTICE and
-  libs/sc-geom/hollow-engine/NOTICE. The bundled Anycubic and ELEGOO printer
+  ported under AGPL-3.0-or-later (see libs/sc-geom/support-engine/NOTICE);
+  the hollowing engine was first ported from its MIT mesh crates and has
+  since been rewritten (see libs/sc-geom/hollow-engine/NOTICE). The bundled Anycubic and ELEGOO printer
   profiles were first converted from its printer plugins, and their product
   images come from them; see assets/profiles/README.md and
   assets/profiles/images/README.md.

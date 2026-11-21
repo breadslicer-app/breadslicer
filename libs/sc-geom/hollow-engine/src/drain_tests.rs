@@ -160,28 +160,26 @@ fn the_cutter_mesh_is_closed_and_outward() {
     assert!((mesh.signed_volume() - expected).abs() < 1e-4);
 }
 
+/// A blind hole: a prism starting 2 mm above a 10 mm cube, 8 mm down,
+/// leaves a 6 mm hole of its section.
 #[test]
-fn dragonfruit_punch_specs_cut_like_its_manifold_path() {
-    use crate::punch::{HolePunchOptions, HolePunchSpec, punch_cylinders};
-    // Starts 2 mm above a 10 mm cube, 8 mm down: a 6 mm blind hole. DragonFruit
-    // cuts r = 2 with ceil(2π·2 / 0.7) = 18 segments.
-    let options = HolePunchOptions {
-        punches: vec![HolePunchSpec {
-            center_norm: [0.5, 0.5, 1.2],
-            radius_mm: 2.0,
-            radius_y_mm: None,
-            direction: Some([0.0, 0.0, -1.0]),
-            length_mm: Some(8.0),
-        }],
-    };
-    let out = punch_cylinders(cube(0.0, 10.0, false), &options).unwrap();
-    assert!(is_edge_manifold(&out.mesh));
-    assert_eq!(out.report.punch_count, 1);
+fn a_blind_prism_takes_its_section_times_its_depth() {
+    let cutter = ConvexCutter::prism(
+        Vec3::new(5.0, 5.0, 12.0),
+        Vec3::new(0.0, 0.0, -1.0),
+        2.0,
+        2.0,
+        8.0,
+        18,
+        0.0,
+    );
+    let out = subtract_convex(&cube(0.0, 10.0, false), &cutter).unwrap();
+    assert!(is_edge_manifold(&out));
     let expected = 1000.0 - prism_area(2.0, 18) * 6.0;
     assert!(
-        (out.mesh.signed_volume() - expected).abs() < 1e-3,
+        (out.signed_volume() - expected).abs() < 1e-3,
         "{}",
-        out.mesh.signed_volume()
+        out.signed_volume()
     );
 }
 

@@ -1,6 +1,6 @@
 use super::*;
 use crate::engine::{DrainDepth, GridRequest, HollowFill, HollowSettings, Session};
-use crate::hollowing::InfillMode;
+use crate::infill::InfillMode;
 use crate::shapes::{merged, tessellated_box};
 use crate::topology::{face_shells, is_edge_manifold};
 

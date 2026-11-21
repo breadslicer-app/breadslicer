@@ -1,43 +1,47 @@
-//! Native port of DragonFruit's voxel hollowing engine for the SoulCrafted
-//! Slicer, with SynrgStudio's model-local grid, parallel voxelization and
-//! surface-only preview, and an exact pure-Rust drain cut.
+//! Hollowing for Breadslicer: a model's cavity, its infill and its drains.
 //!
-//! - [`hollowing`]: DragonFruit's engine (`hollow_voxel`, `HollowSession`),
-//!   ported from `rust/dragonfruit-mesh-repair/src/hollowing.rs` with the same
-//!   arithmetic, so its outputs match DragonFruit's own build;
-//! - [`drain`]: closed mesh minus a convex prism, edge-manifold by
-//!   construction (DragonFruit uses manifold3d here);
-//! - [`punch`]: DragonFruit's `punch_cylinders` on that cut;
-//! - [`engine`]: SoulCrafted's interface: grid request with the effective
-//!   voxel reported, exact wall distance, preview and apply, solid areas,
-//!   drains, volumes;
-//! - [`mesh`], [`bvh`], [`topology`], [`smoothing`]: the parts of
-//!   DragonFruit's mesh core the engine uses.
+//! - [`volume`]: the model as voxels (inside by winding number along the
+//!   grid's lines) and how far each is from the surface;
+//! - the cavity: exact wall distances near the wall, the cubes carved, and
+//!   the wall as a closed contour, the same surface for the preview and the
+//!   result (#29);
+//! - [`infill`]: lattice or pillar beams across the cavity;
+//! - [`drain`]: a closed mesh minus a convex prism, edge-manifold by
+//!   construction; [`drill`]: drains into a model that is already hollow;
+//! - [`engine`]: the interface: grid request with the effective voxel
+//!   reported, preview and apply, solid areas, drains, volumes;
+//! - [`mesh`], [`bvh`], [`topology`]: the mesh, ray and nearest-surface
+//!   queries, and the edge checks the hollow uses.
 //!
-//! See `NOTICE` for origin and licensing.
+//! See `NOTICE` for licensing.
 
 mod air;
 pub mod bvh;
+mod cavity;
+mod contour;
 pub mod control;
+mod distance;
 pub mod drain;
 pub mod drill;
 pub mod engine;
-pub(crate) mod hollowing;
+pub mod grid;
+pub mod infill;
 pub mod mesh;
 pub mod overlap;
-pub mod punch;
 pub mod shapes;
 pub mod solid;
 pub mod topology;
+pub mod volume;
 mod wall;
 
 pub use control::{CancelToken, Cancelled, Control, Stage};
+pub use drill::{DrillTarget, Drilled, sealed_cavities};
 pub use engine::{
     DrainDepth, DrainHole, DrainPlug, DrainReport, GridInfo, GridRequest, HollowApplied,
     HollowError, HollowFill, HollowPreview, HollowSettings, HollowStats, ResolutionBound, Session,
     SolidArea,
 };
-pub use drill::{DrillTarget, Drilled, sealed_cavities};
-pub use hollowing::InfillMode;
+pub use infill::InfillMode;
 pub use mesh::{Aabb, IndexedMesh, Vec3};
 pub use solid::LassoRegion;
+pub use volume::Volume;

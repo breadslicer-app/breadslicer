@@ -1,9 +1,9 @@
-//! Closed test shapes, shared by the tests, the benchmark and the DragonFruit
-//! oracle (which builds the same shapes with the same arithmetic).
+//! Closed test shapes, shared by the tests and the benchmarks.
 
 use crate::mesh::{IndexedMesh, Vec3};
 
-/// DragonFruit's test icosphere (`test_icosphere` in its hollowing tests).
+/// A sphere of `radius`: an icosahedron with each triangle split in four
+/// `subdivisions` times, pushed out to the sphere.
 pub fn icosphere(radius: f32, subdivisions: u32) -> IndexedMesh {
     let t = (1.0 + 5.0f32.sqrt()) / 2.0;
     let mut verts: Vec<Vec3> = vec![
@@ -85,7 +85,7 @@ pub fn icosphere(radius: f32, subdivisions: u32) -> IndexedMesh {
     IndexedMesh::new(verts, faces)
 }
 
-/// DragonFruit's test cube `[min, max]³`, outward (or inward when `flip`).
+/// The cube `[min, max]³`, facing out (or in when `flip`).
 pub fn cube(min: f32, max: f32, flip: bool) -> IndexedMesh {
     let positions = vec![
         Vec3::new(min, min, min),

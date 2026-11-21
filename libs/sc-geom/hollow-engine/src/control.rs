@@ -1,29 +1,26 @@
 //! Cancellation and progress for the long stages of a hollow.
 //!
-//! DragonFruit runs its hollow to completion on a native worker; SoulCrafted
-//! runs it as a cancellable job, so every stage reports itself and every
+//! A hollow runs as a cancellable job: every stage reports itself and every
 //! long loop polls the token.
 
 pub use engine_base::{CancelToken, Cancelled};
 
 /// The stages a hollow passes through, in order. Session construction covers
-/// the first four, a preview or an apply the rest.
+/// the first three, a preview or an apply the rest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Stage {
-    /// Marking the voxels the surface passes through.
+    /// Finding where the grid's lines cross the surface.
     Voxelize,
-    /// Flood-filling the outside.
+    /// Deciding which voxels are inside.
     FloodFill,
-    /// Restoring sealed voids of the source with a parity test.
-    ParityRefine,
-    /// Two-pass chamfer distance to the surface.
+    /// How far each voxel is, roughly, from the surface.
     DistanceField,
     /// Exact distance to the surface near the wall (measured once per
     /// session and wall band, then reused).
     WallDistance,
     /// Deciding which voxels stay material.
     KeepMask,
-    /// Contouring (and smoothing) the cavity wall.
+    /// Contouring the cavity wall.
     CavitySurface,
     /// Building lattice or pillar beams.
     Infill,
@@ -40,7 +37,6 @@ impl Stage {
         match self {
             Stage::Voxelize => "Voxelizing surface",
             Stage::FloodFill => "Filling outside",
-            Stage::ParityRefine => "Restoring sealed voids",
             Stage::DistanceField => "Measuring wall distance",
             Stage::WallDistance => "Measuring exact wall distance",
             Stage::KeepMask => "Choosing wall voxels",
