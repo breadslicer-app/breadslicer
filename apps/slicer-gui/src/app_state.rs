@@ -2078,7 +2078,7 @@ fn support_page_url(page: crate::SupportPage) -> &'static str {
 
 /// Opens a web page in the default browser, detached: a failure leaves
 /// nothing to report.
-fn open_in_browser(url: &str) {
+pub(crate) fn open_in_browser(url: &str) {
     let opener = if cfg!(windows) {
         "explorer"
     } else if cfg!(target_os = "macos") {

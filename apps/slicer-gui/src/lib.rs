@@ -12,6 +12,7 @@
 //! are re-published as `pub`; the rest stay crate-private.
 
 mod aa_level;
+mod caliper;
 mod about_window;
 mod app_settings;
 mod app_state;
