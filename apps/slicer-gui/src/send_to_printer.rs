@@ -25,15 +25,15 @@ use std::time::{Duration, Instant};
 use futures_channel::oneshot;
 use sc_print_primitives::{MaterialId, PrinterId};
 use sc_printer_link::sdcp::{self, Printer, Refusal};
-use serde_json::{Value, json};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::MainWindow;
 use crate::i18n::ctr;
 use crate::network_profiles::{
-    OwnSettings, guess_printer, kept_for, mismatch_text, network_printers, printer_name,
-    resin_name, resins_for,
+    Known, OwnChoices, OwnSettings, guess_printer, kept_for, mismatch_text, own_choices,
+    printer_name,
 };
+use crate::preferences_bus::{PreferencesChange, Subscription};
 use crate::printer_camera::PrinterCamera;
 use crate::printer_wall::PrinterWall;
 use crate::slice_panel::SlicePanelBridge;
@@ -74,6 +74,9 @@ pub(crate) struct SendToPrinter {
     camera: PrinterCamera,
     /// Every printer's camera at once (#643).
     wall: PrinterWall,
+    /// Reads the printers again when Preferences or another window changes
+    /// them (#631).
+    bus_sub: RefCell<Option<Subscription>>,
 }
 
 impl SendToPrinter {
@@ -97,9 +100,21 @@ impl SendToPrinter {
             progress: slint::Timer::default(),
             camera: PrinterCamera::new(ui),
             wall: PrinterWall::new(ui),
+            bus_sub: RefCell::new(None),
         });
         this.order();
         this.show_printers();
+        {
+            let weak = Rc::downgrade(&this);
+            let sub = this.panel.bus().subscribe(move |_, change| {
+                if *change == PreferencesChange::NetworkPrinters
+                    && let Some(this) = weak.upgrade()
+                {
+                    this.reload();
+                }
+            });
+            *this.bus_sub.borrow_mut() = Some(sub);
+        }
         {
             let weak = Rc::downgrade(&this);
             this.panel.on_refreshed(Rc::new(move || {
@@ -329,13 +344,40 @@ impl SendToPrinter {
         self.show_own();
     }
 
-    /// Keeps the printers known and what was given them for the next run.
+    /// Keeps the printers known and what was given them for the next run,
+    /// and tells Preferences and the other windows.
     fn keep(&self) {
+        self.known().write();
+        self.panel
+            .bus()
+            .update(|_| PreferencesChange::NetworkPrinters);
+    }
+
+    /// The printers known and what was given them, as the card has them.
+    fn known(&self) -> Known {
         Known {
             printers: self.printers.borrow().clone(),
             own: self.own.borrow().clone(),
         }
-        .write();
+    }
+
+    /// Reads the printers again after Preferences or another window changed
+    /// them; nothing moves when the file says what the card has.
+    fn reload(&self) {
+        if !crate::network_profiles::printers_kept() {
+            return;
+        }
+        let known = Known::read();
+        if known == self.known() {
+            return;
+        }
+        let picked = self.picked();
+        *self.printers.borrow_mut() = known.printers;
+        *self.own.borrow_mut() = known.own;
+        self.order();
+        self.show_printers();
+        self.pick(picked.as_ref());
+        self.wall.show(&self.wall_printers());
     }
 
     /// The card's list: each printer by the name it is shown by and its
@@ -389,51 +431,16 @@ impl SendToPrinter {
         };
         let catalog = self.panel.catalog();
         let own = self.own_of(&printer.mainboard_id);
-        let guess = guess_printer(&printer.model, &catalog);
-        let its = own.printer.clone().or_else(|| guess.clone());
+        let OwnChoices {
+            printers: printer_ids,
+            printer_labels,
+            printer_at,
+            resins: resin_ids,
+            resin_labels,
+            resin_at,
+            its,
+        } = own_choices(&catalog, &printer.model, &own);
         let name = self.shown(&printer).name;
-
-        // The printer profiles: what its model names first, then the ones
-        // that take a print over the network.
-        let mut printer_ids = vec![None];
-        let mut printer_labels = vec![match &guess {
-            Some(guess) => ctr!(
-                "SendToPrinter",
-                "As it reports: {}",
-                printer_name(&catalog, guess)
-            ),
-            None => ctr!("SendToPrinter", "Not set"),
-        }];
-        for entry in network_printers(&catalog, its.as_ref()) {
-            printer_ids.push(Some(entry.id.clone()));
-            printer_labels.push(printer_name(&catalog, &entry.id).into());
-        }
-        let printer_at = own
-            .printer
-            .as_ref()
-            .and_then(|id| printer_ids.iter().position(|p| p.as_ref() == Some(id)))
-            .unwrap_or(0);
-
-        // The resins with settings for that profile.
-        let mut resin_ids: Vec<Option<MaterialId>> = vec![None];
-        let mut resin_labels = vec![ctr!("SendToPrinter", "No resin of its own")];
-        if let Some(its) = &its {
-            for entry in resins_for(&catalog, its) {
-                resin_ids.push(Some(entry.id.clone()));
-                resin_labels.push(resin_name(&catalog, &entry.id).into());
-            }
-        }
-        if let Some(resin) = &own.resin
-            && !resin_ids.iter().any(|r| r.as_ref() == Some(resin))
-        {
-            resin_ids.push(Some(resin.clone()));
-            resin_labels.push(resin_name(&catalog, resin).into());
-        }
-        let resin_at = own
-            .resin
-            .as_ref()
-            .and_then(|id| resin_ids.iter().position(|r| r.as_ref() == Some(id)))
-            .unwrap_or(0);
 
         let mut summary = vec![match &its {
             Some(its) => printer_name(&catalog, its),
@@ -1010,117 +1017,11 @@ struct Choices {
     resins: Vec<Option<MaterialId>>,
 }
 
-/// The printers seen on the network, the one used last first, and what was
-/// given them, kept in a file of the app's own.
-#[derive(Debug, Default, PartialEq)]
-struct Known {
-    printers: Vec<Printer>,
-    own: HashMap<String, OwnSettings>,
-}
-
-impl Known {
-    fn read() -> Self {
-        let Some(folder) = data_folder() else {
-            return Self::default();
-        };
-        if let Ok(text) = std::fs::read_to_string(folder.join(KNOWN_FILE))
-            && let Ok(value) = serde_json::from_str::<Value>(&text)
-        {
-            return Self::from_json(&value);
-        }
-        // The single printer kept before the list (#630).
-        let old = std::fs::read_to_string(folder.join("network-printer.json"))
-            .ok()
-            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-            .and_then(|value| printer_from_json(&value));
-        Self {
-            printers: old.into_iter().collect(),
-            own: HashMap::new(),
-        }
-    }
-
-    fn write(&self) {
-        let Some(folder) = data_folder() else {
-            return;
-        };
-        let _ = std::fs::create_dir_all(&folder);
-        if let Err(err) = std::fs::write(folder.join(KNOWN_FILE), self.to_json().to_string()) {
-            eprintln!("The network printers were not kept: {err}");
-        }
-    }
-
-    fn to_json(&self) -> Value {
-        let printers: Vec<Value> = self
-            .printers
-            .iter()
-            .map(|p| {
-                let mut value = printer_to_json(p);
-                if let Some(own) = self.own.get(&p.mainboard_id) {
-                    own.write_into(&mut value);
-                }
-                value
-            })
-            .collect();
-        json!({ "printers": printers })
-    }
-
-    fn from_json(value: &Value) -> Self {
-        let mut known = Self::default();
-        for entry in value
-            .get("printers")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
-            let Some(printer) = printer_from_json(entry) else {
-                continue;
-            };
-            let own = OwnSettings::read_from(entry);
-            if own.is_saved() {
-                known.own.insert(printer.mainboard_id.clone(), own);
-            }
-            known.printers.push(printer);
-        }
-        known
-    }
-}
-
-/// The file the network printers are kept in.
-const KNOWN_FILE: &str = "network-printers.json";
-
-/// The app's data folder; none in tests.
-fn data_folder() -> Option<PathBuf> {
-    if cfg!(test) {
-        return None;
-    }
-    Some(sc_app_paths::project_dirs()?.data_local_dir().to_path_buf())
-}
-
-fn printer_to_json(printer: &Printer) -> Value {
-    json!({
-        "protocol": "sdcp",
-        "ip": printer.ip.to_string(),
-        "mainboard_id": printer.mainboard_id,
-        "name": printer.name,
-        "model": printer.model,
-        "firmware": printer.firmware,
-    })
-}
-
-fn printer_from_json(value: &Value) -> Option<Printer> {
-    let text = |key: &str| value.get(key).and_then(Value::as_str).map(str::to_owned);
-    Some(Printer {
-        ip: text("ip")?.parse().ok()?,
-        mainboard_id: text("mainboard_id").filter(|id| !id.is_empty())?,
-        name: text("name").unwrap_or_default(),
-        model: text("model").unwrap_or_default(),
-        firmware: text("firmware").unwrap_or_default(),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::network_profiles::{printer_from_json, printer_to_json};
+    use serde_json::json;
 
     #[test]
     fn the_printers_known_read_back_with_their_names() {

@@ -10438,3 +10438,33 @@ msgstr "Una capa; mantenida, 5 por segundo"
 msgctxt "ShortcutsCard"
 msgid "Del"
 msgstr "Supr"
+
+#: ui/preferences/preferences-window.slint
+msgctxt "PreferencesMenu"
+msgid "Network printers"
+msgstr "Impresoras de red"
+
+#: ui/preferences/network-printers.slint
+msgctxt "PreferencesPage"
+msgid "Network printers"
+msgstr "Impresoras de red"
+
+#: ui/preferences/network-printers.slint
+msgctxt "NetworkPrinterPreferences"
+msgid "The printers Breadslicer has found on your network. Give each a name of your own, the printer profile it is, the resin it is kept for and a note; Send to printer lists the saved ones first."
+msgstr "Las impresoras que Breadslicer encontró en tu red. Dale a cada una un nombre tuyo, el perfil de impresora que es, la resina para la que la usás y una nota; Enviar muestra primero las guardadas."
+
+#: ui/preferences/network-printers.slint
+msgctxt "NetworkPrinterPreferences"
+msgid "None yet: printers show up here once Send to printer finds them."
+msgstr "Todavía ninguna: las impresoras aparecen acá cuando Enviar las encuentra."
+
+#: ui/preferences/network-printers.slint
+msgctxt "NetworkPrinterPreferences"
+msgid "Forget this printer"
+msgstr "Olvidar esta impresora"
+
+#: src/preferences_window/network_printers.rs
+msgctxt "NetworkPrinterPreferences"
+msgid "{}  ·  {}  ·  not saved yet"
+msgstr "{}  ·  {}  ·  sin guardar"

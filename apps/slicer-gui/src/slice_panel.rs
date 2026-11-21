@@ -286,6 +286,11 @@ impl SlicePanelBridge {
         *self.refreshed.borrow_mut() = Some(then);
     }
 
+    /// The app's preferences.
+    pub(crate) fn bus(&self) -> Rc<PreferencesBus> {
+        self.bus.clone()
+    }
+
     /// The profiles loaded.
     pub(crate) fn catalog(&self) -> Rc<ProfileCatalog> {
         self.catalog.borrow().clone()
@@ -532,6 +537,7 @@ impl PanelUpdate {
             | PreferencesChange::StartDialog
             | PreferencesChange::RecentFiles
             | PreferencesChange::ResinPrices
+            | PreferencesChange::NetworkPrinters
             | PreferencesChange::PrescanSupports
             | PreferencesChange::SmoothModels
             | PreferencesChange::FrameRate

@@ -155,7 +155,7 @@ fn the_pictures_of_the_app_are_written_when_asked() {
                 .window()
                 .set_size(slint::LogicalSize::new(900.0, 640.0));
             window.set_theme(crate::ThemePreference::Dark);
-            for page in 0..5 {
+            for page in 0..6 {
                 write(
                     window.window(),
                     &dir,

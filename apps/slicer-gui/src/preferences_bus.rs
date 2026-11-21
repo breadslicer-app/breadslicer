@@ -272,6 +272,8 @@ pub(crate) enum PreferencesChange {
     RecentFiles,
     /// A resin's price (#101).
     ResinPrices,
+    /// A network printer was saved, edited or forgotten (#631).
+    NetworkPrinters,
     /// A profile was saved, imported or deleted in a library. The snapshot is
     /// unchanged; what the profiles resolve to may not be.
     Profiles,
