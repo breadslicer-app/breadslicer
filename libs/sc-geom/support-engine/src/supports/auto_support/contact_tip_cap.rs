@@ -15,7 +15,7 @@ use super::types::CandidatePoint;
 use crate::supports::placement_logic::collision_avoidance::CollisionField;
 use crate::supports::settings::types::SupportSettings;
 use crate::supports::types::Vec3;
-use crate::three::math_utils::{js_max, js_min};
+use crate::geom::math_utils::{js_max, js_min};
 use crate::utils::math::round;
 
 /// Local free width (mm) at a contact, from the shared distance field.

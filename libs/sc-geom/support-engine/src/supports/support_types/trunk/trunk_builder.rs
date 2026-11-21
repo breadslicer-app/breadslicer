@@ -47,8 +47,8 @@ use crate::supports::types::{
     Joint, LimitationCode, Quaternion, Roots, Segment, SupportEntity, Transform, Trunk, Vec3,
     WarningCode,
 };
-use crate::three::Matrix4;
-use crate::three::math_utils::{js_max, js_min};
+use crate::geom::Matrix4;
+use crate::geom::math_utils::{js_max, js_min};
 
 const JOINT_CHAIN_Z_EPSILON: f64 = 0.0001;
 const BUILD_PLATE_Z_EPSILON_MM: f64 = 1e-6;

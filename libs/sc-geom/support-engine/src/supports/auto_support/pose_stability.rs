@@ -16,8 +16,8 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::supports::rafts::crenelated::geometry::convex_hull_2d::{Vec2, convex_hull_2d};
-use crate::three::Matrix4;
-use crate::three::math_utils::{js_atan2, js_cos, js_hypot, js_max, js_round, js_sin};
+use crate::geom::Matrix4;
+use crate::geom::math_utils::{js_atan2, js_cos, js_hypot, js_max, js_round, js_sin};
 use crate::volume_analysis::islands::voxel_footprint::number_key;
 
 /// Plate-contact band (mm) the bearing hull is measured over.

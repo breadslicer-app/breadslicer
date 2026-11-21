@@ -1,5 +1,9 @@
-//! three.js r181 `src/math/Vector2.js` (MIT), the subset the raft code calls.
-//! Value semantics, as `Vector3`.
+/*
+ * SPDX-FileCopyrightText: 2026 SynrgStudio
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
+//! A point or a direction in the plane, by value, as [`super::Vec3`].
 
 use serde::{Deserialize, Serialize};
 
@@ -16,7 +20,7 @@ impl Vector2 {
         Vector2 { x, y }
     }
 
-    /// `equals`: componentwise `===`.
+    /// Both components equal.
     #[inline]
     pub fn equals(self, v: Vector2) -> bool {
         self.x == v.x && self.y == v.y
@@ -57,7 +61,7 @@ impl Vector2 {
         self.x * self.x + self.y * self.y
     }
 
-    /// `divideScalar(this.length() || 1)`.
+    /// Unit length; a zero vector is returned as it is.
     #[inline]
     pub fn normalize(self) -> Self {
         let l = self.length();
@@ -75,7 +79,7 @@ impl Vector2 {
         self.distance_to_squared(v).sqrt()
     }
 
-    /// `new Vector2().lerpVectors(v1, v2, alpha)`.
+    /// The point `alpha` of the way from `v1` to `v2`.
     #[inline]
     pub fn lerp_vectors(v1: Vector2, v2: Vector2, alpha: f64) -> Self {
         Vector2::new(v1.x + (v2.x - v1.x) * alpha, v1.y + (v2.y - v1.y) * alpha)

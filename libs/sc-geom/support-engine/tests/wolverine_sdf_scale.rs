@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use support_engine::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
-use support_engine::three::Matrix4;
-use support_engine::three_mesh_bvh::MeshBvh;
+use support_engine::geom::Matrix4;
+use support_engine::bvh::MeshBvh;
 
 fn read_binary_stl(path: &std::path::Path) -> Option<Vec<[f32; 3]>> {
     let data = std::fs::read(path).ok()?;

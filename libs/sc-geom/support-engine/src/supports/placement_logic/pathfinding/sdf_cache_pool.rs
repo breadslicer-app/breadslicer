@@ -16,7 +16,7 @@
 use indexmap::IndexMap;
 
 use super::sdf_cache::SdfCache;
-use crate::three::Matrix4;
+use crate::geom::Matrix4;
 
 type DriftListener = Box<dyn FnMut(&str)>;
 

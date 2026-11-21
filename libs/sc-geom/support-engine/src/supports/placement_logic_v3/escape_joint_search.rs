@@ -42,7 +42,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::supports::placement_logic::collision_avoidance::CollisionField;
 use crate::supports::types::Vec3;
-use crate::three::math_utils::{js_atan2, js_cos, js_hypot, js_min, js_round, js_sin, js_tan};
+use crate::geom::math_utils::{js_atan2, js_cos, js_hypot, js_min, js_round, js_sin, js_tan};
 
 /// A horizontal direction or offset, `{ x, y }`.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

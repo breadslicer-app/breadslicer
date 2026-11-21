@@ -5,8 +5,8 @@
 
 use crate::supports::curves::bezier_utils::get_bezier_point_at_t;
 use crate::supports::types::{Knot, Segment, SegmentShape, Vec3};
-use crate::three::Ray;
-use crate::three::math_utils::{js_max, js_min};
+use crate::geom::Ray;
+use crate::geom::math_utils::{js_max, js_min};
 
 /// The closest point on a segment to a pointer ray, and its `t` along the segment.
 #[derive(Debug, Clone, Copy, PartialEq)]

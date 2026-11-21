@@ -7,11 +7,11 @@
 use std::collections::HashMap;
 
 use crate::supports::types::Vec3;
-use crate::three::Matrix4;
-use crate::three::Ray;
-use crate::three::math_utils::js_max;
-use crate::three::math_utils::js_min;
-use crate::three_mesh_bvh::{BvhMesh, MeshBvh, Side};
+use crate::geom::Matrix4;
+use crate::geom::Ray;
+use crate::geom::math_utils::js_max;
+use crate::geom::math_utils::js_min;
+use crate::bvh::{BvhMesh, MeshBvh, Side};
 
 /// One model as auto-bracing registers it: its BVH and transform. DragonFruit
 /// raycasts it double-sided whatever the model's own material.

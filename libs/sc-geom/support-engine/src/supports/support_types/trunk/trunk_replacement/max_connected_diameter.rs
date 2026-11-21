@@ -14,7 +14,7 @@ use crate::supports::support_primitives::knot::segment_endpoints::{
 };
 use crate::supports::support_type_registry::{SupportEntityValue, get_support_type_descriptor};
 use crate::supports::types::{Branch, Knot, Leaf, SupportState, Trunk, Vec3};
-use crate::three::math_utils::{js_max, js_min};
+use crate::geom::math_utils::{js_max, js_min};
 
 fn leaf_diameter(leaf: &Leaf) -> f64 {
     let p = &leaf.contact_cone.profile;

@@ -5,7 +5,7 @@
 //! not the cant a 1mm strut tolerates. This is only the measurement they share.
 
 use crate::supports::types::Segment;
-use crate::three::math_utils::js_hypot;
+use crate::geom::math_utils::js_hypot;
 
 /// |cos| of the first segment's deviation from vertical, 1 = perfectly vertical.
 pub fn shaft_vertical_cos(segments: &[Segment]) -> f64 {

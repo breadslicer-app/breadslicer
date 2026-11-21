@@ -33,9 +33,9 @@ use rayon::prelude::*;
 
 use super::column_clearance_map::{ColumnClearanceMap, ColumnVerdict};
 use crate::supports::placement_logic::collision_avoidance::CollisionField;
-use crate::three::math_utils::{js_max, js_min, js_round};
-use crate::three::{Box3, Matrix4, Vec3};
-use crate::three_mesh_bvh::MeshBvh;
+use crate::geom::math_utils::{js_max, js_min, js_round};
+use crate::geom::{Box3, Matrix4, Vec3};
+use crate::bvh::MeshBvh;
 
 /// Grid cell size in mm the pool builds with. Smaller = more precise but more lookups.
 const DEFAULT_CELL_SIZE_MM: f64 = 0.5;

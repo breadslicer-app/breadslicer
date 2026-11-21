@@ -10,11 +10,11 @@ use super::polygon_set_2d::{
     segment_distance_mm, union_polygon_sets,
 };
 use super::small::inset_convex_polygon;
-use crate::clipper::ClipperError;
-use crate::three::Vector2;
-use crate::three::buffer_geometry::BufferGeometry;
-use crate::three::extrude_geometry::{ExtrudeOptions, extrude_geometry};
-use crate::three::math_utils::js_max;
+use crate::supports::rafts::crenelated::geometry::polygon_set_2d::PolygonError;
+use crate::geom::Vector2;
+use crate::geom::buffer_geometry::BufferGeometry;
+use crate::geom::extrude_geometry::{ExtrudeOptions, extrude_geometry};
+use crate::geom::math_utils::js_max;
 
 /// How many sides the round joint at each end of a beam has.
 const JOINT_SIDES: usize = 24;
@@ -229,7 +229,7 @@ pub fn generate_unioned_line_raft_mesh(
     height_mm: f64,
     border_profile: Option<&[Vector2]>,
     chamfer_angle_deg: Option<f64>,
-) -> Result<BufferGeometry, ClipperError> {
+) -> Result<BufferGeometry, PolygonError> {
     let width = js_max(0.001, width_mm);
     let height = js_max(0.001, height_mm);
     let mut subjects: Vec<PolygonWithHoles> = Vec::new();

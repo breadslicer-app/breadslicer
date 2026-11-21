@@ -4,7 +4,7 @@
 //! and the math type.
 
 use crate::supports::types::Vec3;
-use crate::three::math_utils::{js_max, js_min};
+use crate::geom::math_utils::{js_max, js_min};
 
 /// Calculates cubic Bezier control points to maintain C1 continuity (tangent matching).
 ///

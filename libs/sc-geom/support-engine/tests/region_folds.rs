@@ -24,8 +24,8 @@ use support_engine::supports::auto_support::zone_candidates::{
 use support_engine::supports::auto_support::zone_rules::{OverhangRule, SupportSize, ZoneRules};
 use support_engine::supports::model_mesh::ModelMesh;
 use support_engine::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
-use support_engine::three::Matrix4;
-use support_engine::three_mesh_bvh::{BvhMesh, MeshBvh, Side};
+use support_engine::geom::Matrix4;
+use support_engine::bvh::{BvhMesh, MeshBvh, Side};
 use support_engine::volume_analysis::islands::types::DetectedIsland;
 use support_engine::volume_analysis::islands::use_islands::overhang_region_to_island;
 
@@ -119,20 +119,18 @@ fn regions(triangles: &[[f32; 3]], bvh: Option<&MeshBvh>) -> Vec<DetectedIsland>
 }
 
 #[test]
-fn a_face_of_the_tree_knows_its_triangle_of_the_soup() {
-    // The far box first: the tree's build sorts it after the near one.
+fn a_face_of_the_tree_is_its_triangle_of_the_soup() {
+    // The far box first: the tree keeps every triangle's number anyway.
     let mut triangles = closed_box([100.0, 0.0, 5.0], [110.0, 10.0, 7.0]);
     triangles.extend(closed_box([0.0, 0.0, 5.0], [10.0, 10.0, 7.0]));
     let bvh = MeshBvh::new(triangles.clone(), None);
     let faces = bvh.faces_of_soup().expect("built from a soup");
     assert_eq!(faces.len(), 24);
-    let mut moved = 0;
     for (triangle, &face) in faces.iter().enumerate() {
-        moved += usize::from(face as usize != triangle);
+        assert_eq!(face as usize, triangle);
         let corners = bvh.face(face as usize).map(|i| bvh.positions()[i as usize]);
         assert_eq!(corners, [0, 1, 2].map(|k| triangles[triangle * 3 + k]));
     }
-    assert!(moved > 0, "the build left every triangle where it was");
 
     // A geometry with its own index does not say.
     let index = (0..triangles.len() as u32).collect();
@@ -149,15 +147,15 @@ fn a_region_is_sampled_on_its_own_faces() {
         bvh: &bvh,
         matrix_world: &matrix,
     };
-    // As the scan numbers them, the far box's underside is two faces of the
-    // near box to the tree: the sampler finds nothing under the far box.
+    // The scan and the tree number the triangles alike: the far box's
+    // underside is found as the scan names it.
     let unsorted = regions(&triangles, None);
     let far = unsorted
         .iter()
         .find(|island| island.contact.x > 50.0)
         .expect("the far box's underside");
     let mut sampler = SurfaceSampler::triangle(far, Some(rays)).expect("its triangles");
-    assert_eq!(sampler.at(far.contact.x, 5.0), None);
+    assert!(sampler.at(far.contact.x, 5.0).is_some());
 
     let islands = regions(&triangles, Some(&bvh));
     assert_eq!(islands.len(), 2, "one underside each");

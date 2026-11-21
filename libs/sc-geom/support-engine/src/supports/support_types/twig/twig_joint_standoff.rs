@@ -3,7 +3,7 @@
 use crate::supports::support_primitives::contact_cone::types::ContactDiskProfile;
 use crate::supports::support_primitives::contact_disk::contact_disk_utils::calculate_disk_thickness;
 use crate::supports::types::Vec3;
-use crate::three::math_utils::js_max;
+use crate::geom::math_utils::js_max;
 
 // Small extra distance between the joint sphere's surface and the disk's
 // contact face — keeps the joint visually separate from the disk and prevents

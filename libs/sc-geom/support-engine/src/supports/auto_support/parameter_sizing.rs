@@ -20,7 +20,7 @@ use super::settings::{SizingBand, SizingPreset};
 use super::types::CandidatePoint;
 use super::zone_rules::ZoneRules;
 use crate::supports::settings::types::SupportSettings;
-use crate::three::math_utils::{js_log, js_max, js_min, js_pow};
+use crate::geom::math_utils::{js_log, js_max, js_min, js_pow};
 use crate::utils::math::{clamp, round};
 
 /// Per-support sizing overrides; `None` keeps the settings value.

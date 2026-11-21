@@ -6,7 +6,7 @@
 //! Note: This default is now 80, but callers should usually provide the user setting.
 
 use crate::supports::types::Vec3;
-use crate::three::math_utils::{js_acos, js_cos, js_max, js_min, js_sin};
+use crate::geom::math_utils::{js_acos, js_cos, js_max, js_min, js_sin};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ShaftClampResult {

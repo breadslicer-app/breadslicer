@@ -1,6 +1,6 @@
 //! DragonFruit `src/supports/SupportPrimitives/Shaft/shaftTaperGeometry.ts`.
 
-use crate::three::math_utils::{clamp, lerp};
+use crate::geom::math_utils::{clamp, lerp};
 
 /// The width of a tapering shaft at each point of the polyline drawing it, so a
 /// curve's pieces share the taper rather than each carrying all of it.

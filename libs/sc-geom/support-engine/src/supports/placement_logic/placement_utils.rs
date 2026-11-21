@@ -2,8 +2,8 @@
 //! contact normal. (`findClosestMeshToPoint` picks between scene meshes and is
 //! the GUI's.)
 
-use crate::three::{Matrix4, Vec3};
-use crate::three_mesh_bvh::Intersection;
+use crate::geom::{Matrix4, Vec3};
+use crate::bvh::Intersection;
 
 /// three's `Triangle.getBarycoord`: `(1 - u - v, v, u)`, or zero for a
 /// degenerate triangle.

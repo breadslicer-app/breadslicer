@@ -20,7 +20,7 @@ use crate::supports::support_primitives::contact_cone::types::{
 };
 use crate::supports::support_primitives::contact_disk::contact_disk_utils::calculate_disk_thickness;
 use crate::supports::types::{Joint, LimitationCode, Segment, Stick, SupportEntity, Vec3};
-use crate::three::math_utils::{js_hypot, js_max, js_min};
+use crate::geom::math_utils::{js_hypot, js_max, js_min};
 
 #[derive(Clone, Copy, Debug)]
 pub struct StickBuildInput<'a> {

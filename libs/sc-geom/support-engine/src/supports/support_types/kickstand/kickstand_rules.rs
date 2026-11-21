@@ -3,7 +3,7 @@
 use crate::supports::support_type_registry::{
     KICKSTAND_HOST_TYPES, SupportTypeId, is_kickstand_host_type,
 };
-use crate::three::math_utils::clamp;
+use crate::geom::math_utils::clamp;
 
 /// DragonFruit's default `min_t` is 0.
 pub fn clamp_kickstand_host_t(t: f64, min_t: f64) -> f64 {

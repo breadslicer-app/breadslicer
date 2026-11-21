@@ -11,7 +11,7 @@ use super::defaults::*;
 use super::types::{RoutingAlgorithm, SupportSettings};
 use crate::supports::auto_bracing::settings::normalize_auto_bracing_settings;
 use crate::supports::auto_support::settings::normalize_auto_support_settings;
-use crate::three::math_utils::{js_max, js_min};
+use crate::geom::math_utils::{js_max, js_min};
 
 /// Clamp a field to its `SUPPORT_PROFILE_LIMITS` range; non-finite falls back.
 fn clamp_to_range(value: Option<f64>, fallback: f64, range: FieldLimit) -> f64 {

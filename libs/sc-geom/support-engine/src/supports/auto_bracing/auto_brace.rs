@@ -47,7 +47,7 @@ use crate::supports::types::{
     Brace, BraceDebugSection, Knot, Segment, SupportCollections, SupportEntity, SupportGeneratedBy,
     SupportState, Vec3,
 };
-use crate::three::math_utils::{clamp, js_atan2, js_max, js_min};
+use crate::geom::math_utils::{clamp, js_atan2, js_max, js_min};
 use crate::utils::collation::js_locale_compare;
 
 const EPS: f64 = 0.000001;

@@ -5,8 +5,8 @@
 use std::collections::HashMap;
 
 use super::polygon_set_2d::{PolygonWithHoles, orient_ring};
-use crate::three::Vector2;
-use crate::three::math_utils::{js_hypot, js_max, js_min};
+use crate::geom::Vector2;
+use crate::geom::math_utils::{js_hypot, js_max, js_min};
 
 const TARGET_CELLS_ACROSS: f64 = 1024.0;
 const MIN_CELL_MM: f64 = 0.05;

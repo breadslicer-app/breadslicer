@@ -8,8 +8,8 @@ use support_engine::supports::auto_support::zone_candidates::is_enclosed;
 use support_engine::supports::model_mesh::ModelMesh;
 use support_engine::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
 use support_engine::supports::types::Vec3;
-use support_engine::three::Matrix4;
-use support_engine::three_mesh_bvh::{BvhMesh, MeshBvh, Side};
+use support_engine::geom::Matrix4;
+use support_engine::bvh::{BvhMesh, MeshBvh, Side};
 
 /// The 12 triangles of the box from `lo` to `hi`, looking out, or in when
 /// `inward` (a cavity's wall).

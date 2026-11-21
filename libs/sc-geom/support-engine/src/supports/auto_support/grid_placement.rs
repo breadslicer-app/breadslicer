@@ -15,9 +15,9 @@ use super::settings::AutoSupportSettings;
 use super::support_blockers::is_support_blocked_contact;
 use super::types::{AutoSupportMesh, CandidatePoint, CandidateSource, js_compare};
 use crate::supports::settings::types::SupportSettings;
-use crate::three::math_utils::{js_atan2, js_hypot, js_max, js_min, js_pow, js_round, js_to_fixed};
-use crate::three::{Matrix3, Ray, Vec3};
-use crate::three_mesh_bvh::{BvhMesh, Side};
+use crate::geom::math_utils::{js_atan2, js_hypot, js_max, js_min, js_pow, js_round, js_to_fixed};
+use crate::geom::{Matrix3, Ray, Vec3};
+use crate::bvh::{BvhMesh, Side};
 use crate::volume_analysis::islands::types::{DetectedIsland, IslandSource, Vec3Loop};
 use crate::volume_analysis::islands::voxel_footprint::{FootprintPoint, cell_key_bits};
 

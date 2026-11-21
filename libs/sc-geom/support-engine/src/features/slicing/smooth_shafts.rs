@@ -14,9 +14,9 @@
 
 use super::support_world_triangles::{TriangleSink, append_geometry_triangles};
 use crate::supports::types::Vec3;
-use crate::three::Matrix4;
-use crate::three::math_utils::js_max;
-use crate::three::primitive_geometry::sphere_geometry;
+use crate::geom::Matrix4;
+use crate::geom::math_utils::js_max;
+use crate::geom::primitive_geometry::sphere_geometry;
 
 /// The bicone's proportions.
 #[derive(Debug, Clone, Copy, PartialEq)]

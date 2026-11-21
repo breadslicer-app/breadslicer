@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 
 use indexmap::{IndexMap, IndexSet};
 
-use crate::three::math_utils::{clamp, js_max, js_sin};
+use crate::geom::math_utils::{clamp, js_max, js_sin};
 use crate::volume_analysis::islands::voxel_footprint::number_key;
 
 #[derive(Debug, Clone, Copy, PartialEq)]

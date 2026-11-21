@@ -15,10 +15,10 @@ use super::geometry::generate_unioned_line_raft_mesh::{
 };
 use super::geometry::model_plate_footprint::{PlateFootprintSource, collect_model_plate_footprint};
 use super::raft_types::{RaftBottomMode, SupportBaseCircle};
-use crate::clipper::ClipperError;
-use crate::three::buffer_geometry::BufferGeometry;
-use crate::three::math_utils::js_max;
-use crate::three::{Vec3, Vector2};
+use crate::supports::rafts::crenelated::geometry::polygon_set_2d::PolygonError;
+use crate::geom::buffer_geometry::BufferGeometry;
+use crate::geom::math_utils::js_max;
+use crate::geom::{Vec3, Vector2};
 
 /// A support root as the raft reads it.
 #[derive(Debug, Clone, PartialEq)]
@@ -49,7 +49,7 @@ pub fn build_export_rafts(
     scoped_model_ids: Option<&HashSet<String>>,
     settings: &RaftSettingsStore,
     models: &[PlateFootprintSource],
-) -> Result<Vec<RaftGroup>, ClipperError> {
+) -> Result<Vec<RaftGroup>, PolygonError> {
     if settings.global.bottom_mode == RaftBottomMode::Off {
         return Ok(Vec::new());
     }

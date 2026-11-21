@@ -7,7 +7,7 @@
 use std::f64::consts::PI;
 
 use crate::supports::types::Vec3;
-use crate::three::math_utils::{js_atan2, js_max, js_min};
+use crate::geom::math_utils::{js_atan2, js_max, js_min};
 
 pub fn distance_xy(a: Vec3, b: Vec3) -> f64 {
     let dx = a.x - b.x;

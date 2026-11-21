@@ -2,7 +2,7 @@
 
 use std::f64::consts::PI;
 
-use crate::three::math_utils::js_min;
+use crate::geom::math_utils::js_min;
 
 /// An axis angle folded into `[0, π)`.
 pub fn normalize_axis_angle_rad(angle_rad: f64) -> f64 {

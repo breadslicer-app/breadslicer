@@ -15,7 +15,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::smooth_shafts::{ChainPoint, ShaftStyle, append_smooth_chain};
-use crate::clipper::ClipperError;
+use crate::supports::rafts::crenelated::geometry::polygon_set_2d::PolygonError;
 use crate::supports::constants::JOINT_DIAMETER_OFFSET_MM;
 use crate::supports::curves::bezier_utils::get_bezier_point_at_t;
 use crate::supports::rafts::crenelated::geometry::build_line_raft_edge_pairs::{
@@ -55,10 +55,10 @@ use crate::supports::support_type_registry::{
 use crate::supports::types::{
     BezierCurve, ContactDisk, Joint, Knot, Roots, Segment, SegmentShape, SupportCollections, Vec3,
 };
-use crate::three::buffer_geometry::BufferGeometry;
-use crate::three::math_utils::js_max;
-use crate::three::primitive_geometry::{cylinder_geometry, sphere_geometry};
-use crate::three::{Matrix4, Quaternion, Vector2};
+use crate::geom::buffer_geometry::BufferGeometry;
+use crate::geom::math_utils::js_max;
+use crate::geom::primitive_geometry::{cylinder_geometry, sphere_geometry};
+use crate::geom::{Matrix4, Quaternion, Vector2};
 
 /// The detail level the scene's size picks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -746,7 +746,7 @@ fn entities_of(state: &SupportCollections, key: SupportCollectionKey) -> Vec<Ent
 /// supportTipShrinkPercent, plateClearanceModels)`.
 pub fn build_support_and_raft_world_triangles(
     input: &SupportSliceInput<'_>,
-) -> Result<Vec<f32>, ClipperError> {
+) -> Result<Vec<f32>, PolygonError> {
     build_support_and_raft_world_parts(input).map(|sink| sink.floats)
 }
 
@@ -787,7 +787,7 @@ pub fn raft_and_feet_top_mm(state: &SupportCollections, raft: &RaftSettings) -> 
 /// closed pieces (SoulCrafted's: the slicer needs each piece welded apart).
 pub fn build_support_and_raft_world_parts(
     input: &SupportSliceInput<'_>,
-) -> Result<TriangleSink, ClipperError> {
+) -> Result<TriangleSink, PolygonError> {
     let visible = input.visible_model_ids;
     let mut sink = TriangleSink::default();
     if visible.is_empty() {
@@ -1115,7 +1115,7 @@ fn on_the_plate(sink: &mut TriangleSink) {
 pub fn plate_raft_parts(
     circles: &[SupportBaseCircle],
     raft: &RaftSettings,
-) -> Result<TriangleSink, ClipperError> {
+) -> Result<TriangleSink, PolygonError> {
     let mut sink = TriangleSink::default();
     if raft.bottom_mode == RaftBottomMode::Off || circles.is_empty() {
         return Ok(sink);
@@ -1131,7 +1131,7 @@ fn append_slice_rafts(
     input: &SupportSliceInput<'_>,
     visible_root_ids: &HashSet<&str>,
     root_model_key: &HashMap<&str, &str>,
-) -> Result<(), ClipperError> {
+) -> Result<(), PolygonError> {
     let raft = input.raft;
     if raft.bottom_mode == RaftBottomMode::Off {
         return Ok(());
@@ -1194,7 +1194,7 @@ fn append_raft_of(
     raft: &RaftSettings,
     clearance: &[PolygonWithHoles],
     clearance_cut: &[PolygonWithHoles],
-) -> Result<(), ClipperError> {
+) -> Result<(), PolygonError> {
     {
         let parts = build_raft_footprint_meshes(circles, raft, Some(clearance))?;
         if parts.base_mesh.is_none() && parts.footprint.is_empty() {

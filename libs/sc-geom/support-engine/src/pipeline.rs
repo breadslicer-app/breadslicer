@@ -24,7 +24,7 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::clipper::ClipperError;
+use crate::supports::rafts::crenelated::geometry::polygon_set_2d::PolygonError;
 use crate::features::slicing::smooth_shafts::ShaftStyle;
 use crate::features::slicing::support_world_triangles::{
     SupportSliceInput, TipDrawing, TriangleSink, build_support_and_raft_world_parts,
@@ -55,9 +55,9 @@ use crate::supports::rafts::crenelated::raft_export::{
 use crate::supports::rafts::crenelated::raft_types::RaftBottomMode;
 use crate::supports::settings::types::SupportSettings;
 use crate::supports::types::SupportState;
-use crate::three::buffer_geometry::BufferGeometry;
-use crate::three::{Matrix4, Vec3};
-use crate::three_mesh_bvh::{BvhMesh, MeshBvh, Side};
+use crate::geom::buffer_geometry::BufferGeometry;
+use crate::geom::{Matrix4, Vec3};
+use crate::bvh::{BvhMesh, MeshBvh, Side};
 use crate::volume_analysis::islands::types::{DetectedIsland, IslandSource};
 use crate::volume_analysis::islands::use_islands::{
     DerivedIslands, IslandPanelSettings, derive_islands, overhang_region_to_island,
@@ -189,7 +189,7 @@ pub use engine_base::CancelToken;
 pub enum PipelineError {
     Cancelled,
     /// The raft's Clipper threw (in DragonFruit the export aborts).
-    Clipper(ClipperError),
+    Clipper(PolygonError),
 }
 
 impl std::fmt::Display for PipelineError {
@@ -203,8 +203,8 @@ impl std::fmt::Display for PipelineError {
 
 impl std::error::Error for PipelineError {}
 
-impl From<ClipperError> for PipelineError {
-    fn from(e: ClipperError) -> Self {
+impl From<PolygonError> for PipelineError {
+    fn from(e: PolygonError) -> Self {
         PipelineError::Clipper(e)
     }
 }
@@ -857,7 +857,7 @@ pub fn support_soup(
     state: &SupportState,
     models: &[ModelInput],
     settings: &PipelineSettings,
-) -> Result<TriangleSink, ClipperError> {
+) -> Result<TriangleSink, PolygonError> {
     let visible: HashSet<String> = models
         .iter()
         .filter(|m| m.visible)
@@ -893,7 +893,7 @@ pub fn build_rafts(
     state: &SupportState,
     models: &[ModelInput],
     store: &RaftSettingsStore,
-) -> Result<Vec<RaftGroup>, ClipperError> {
+) -> Result<Vec<RaftGroup>, PolygonError> {
     let roots: Vec<RaftRoot> = state
         .collections
         .roots

@@ -15,7 +15,7 @@ use crate::supports::support_type_registry::{
 };
 use crate::supports::support_types::trunk::trunk_replacement::max_connected_diameter::member_diameter_of;
 use crate::supports::types::{SupportState, Vec3};
-use crate::three::math_utils::{js_atan2, js_hypot, js_max, js_min, js_to_fixed};
+use crate::geom::math_utils::{js_atan2, js_hypot, js_max, js_min, js_to_fixed};
 
 /// Per-placed-entity entry in the Forest Report ledger.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

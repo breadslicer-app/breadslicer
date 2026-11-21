@@ -29,9 +29,9 @@ use support_engine::supports::rafts::crenelated::raft_types::{
     DEFAULT_RAFT_SETTINGS, RaftBottomMode, RaftSettings,
 };
 use support_engine::supports::types::SupportState;
-use support_engine::three::buffer_geometry::BufferGeometry;
-use support_engine::three::{Matrix4, Vec3};
-use support_engine::three_mesh_bvh::{MeshBvh, Side};
+use support_engine::geom::buffer_geometry::BufferGeometry;
+use support_engine::geom::{Matrix4, Vec3};
+use support_engine::bvh::{MeshBvh, Side};
 use support_engine::volume_analysis::islands::use_islands::derive_islands;
 
 fn meshes() -> Value {

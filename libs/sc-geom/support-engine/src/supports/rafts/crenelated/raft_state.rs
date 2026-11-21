@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use super::raft_types::{DEFAULT_RAFT_SETTINGS, RaftBottomMode, RaftSettings};
-use crate::three::math_utils::{js_max, js_min};
+use crate::geom::math_utils::{js_max, js_min};
 
 const FOOTPRINT_BORDER_MARGIN_MAX_MM: f64 = 0.05;
 

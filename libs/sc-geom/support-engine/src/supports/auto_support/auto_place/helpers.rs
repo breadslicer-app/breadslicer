@@ -30,9 +30,9 @@ use crate::supports::support_types::branch::branch_builder::{
     BranchBuildInput, BranchBuildResult, build_branch_data,
 };
 use crate::supports::types::{Branch, Knot, Segment, SupportState, Trunk, Vec3};
-use crate::three::math_utils::{js_atan2, js_cos, js_hypot, js_max, js_min, js_sin};
-use crate::three::{Matrix4, Ray};
-use crate::three_mesh_bvh::{BvhMesh, Intersection, MeshBvh, Side};
+use crate::geom::math_utils::{js_atan2, js_cos, js_hypot, js_max, js_min, js_sin};
+use crate::geom::{Matrix4, Ray};
+use crate::bvh::{BvhMesh, Intersection, MeshBvh, Side};
 
 /// The model mesh as the plan reads it: DragonFruit's `THREE.Mesh`.
 #[derive(Clone, Copy, Debug)]
@@ -1385,9 +1385,9 @@ pub fn validate_and_cull_orphans(
                 let where_ = entity.contact_cone.as_ref().map_or(String::new(), |c| {
                     format!(
                         " @ ({}, {}, Z{})",
-                        crate::three::math_utils::js_to_fixed(c.pos.x, 1),
-                        crate::three::math_utils::js_to_fixed(c.pos.y, 1),
-                        crate::three::math_utils::js_to_fixed(c.pos.z, 1)
+                        crate::geom::math_utils::js_to_fixed(c.pos.x, 1),
+                        crate::geom::math_utils::js_to_fixed(c.pos.y, 1),
+                        crate::geom::math_utils::js_to_fixed(c.pos.z, 1)
                     )
                 });
                 let type_name = get_support_type_descriptor(host_type_id).singular;
@@ -1414,7 +1414,7 @@ pub fn validate_and_cull_orphans(
         .iter()
         .map(|h| h.host_id)
         .collect();
-    let fixed1 = |v: f64| crate::three::math_utils::js_to_fixed(v, 1);
+    let fixed1 = |v: f64| crate::geom::math_utils::js_to_fixed(v, 1);
     let check_attachment = |kind: SupportTypeId,
                             member: &MemberView<'_>,
                             orphans: &mut Vec<OrphanInfo>|
@@ -1523,7 +1523,7 @@ pub fn validate_and_cull_orphans(
                 Some(&knot.id),
                 format!(
                     "drift {}mm from shaft",
-                    crate::three::math_utils::js_to_fixed(drift2.sqrt(), 2)
+                    crate::geom::math_utils::js_to_fixed(drift2.sqrt(), 2)
                 ),
             );
             return false;

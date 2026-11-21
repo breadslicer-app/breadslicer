@@ -11,9 +11,9 @@ use super::polygon_set_2d::{
     PolygonWithHoles, difference_polygon_sets, ring_to_polygon, union_polygon_sets,
 };
 use super::small::compute_footprint;
-use crate::clipper::ClipperError;
+use crate::supports::rafts::crenelated::geometry::polygon_set_2d::PolygonError;
 use crate::supports::rafts::crenelated::raft_types::SupportBaseCircle;
-use crate::three::Vector2;
+use crate::geom::Vector2;
 
 /// How far a hole keeps from a support's base circle, and from the raft's
 /// edge, as a share of the hole's diameter.
@@ -39,7 +39,7 @@ fn circle_ring(x: f64, y: f64, r: f64) -> Vec<Vector2> {
 pub fn pads(
     circles: &[SupportBaseCircle],
     margin_mm: f64,
-) -> Result<Vec<PolygonWithHoles>, ClipperError> {
+) -> Result<Vec<PolygonWithHoles>, PolygonError> {
     let pads: Vec<PolygonWithHoles> = circles
         .iter()
         .map(|c| {
@@ -140,7 +140,7 @@ pub fn perforated(
     circles: &[SupportBaseCircle],
     diameter_mm: f64,
     edge_mm: f64,
-) -> Result<Vec<PolygonWithHoles>, ClipperError> {
+) -> Result<Vec<PolygonWithHoles>, PolygonError> {
     let holes: Vec<PolygonWithHoles> = hole_centres(footprint, circles, diameter_mm, edge_mm)
         .into_iter()
         .map(|(x, y)| ring_to_polygon(circle_ring(x, y, diameter_mm / 2.0)))
@@ -167,7 +167,7 @@ const MAX_PEEL_TABS: usize = 4;
 /// corner (a round one) gets a tab off each end of its longer side.
 pub fn with_peel_tabs(
     footprint: &[PolygonWithHoles],
-) -> Result<Vec<PolygonWithHoles>, ClipperError> {
+) -> Result<Vec<PolygonWithHoles>, PolygonError> {
     let points: Vec<Vector2> = footprint
         .iter()
         .flat_map(|p| p.outer.iter().copied())

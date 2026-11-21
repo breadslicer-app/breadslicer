@@ -20,9 +20,9 @@ use crate::supports::support_type_registry::{
     get_support_type_descriptor, select_type_for_placement,
 };
 use crate::supports::types::Vec3;
-use crate::three::math_utils::{js_cos, js_sin};
-use crate::three::{Matrix3, Ray};
-use crate::three_mesh_bvh::Side;
+use crate::geom::math_utils::{js_cos, js_sin};
+use crate::geom::{Matrix3, Ray};
+use crate::bvh::Side;
 
 /// The auto pass's tier sizing for the bridge.
 #[derive(Debug, Clone, Copy, PartialEq)]

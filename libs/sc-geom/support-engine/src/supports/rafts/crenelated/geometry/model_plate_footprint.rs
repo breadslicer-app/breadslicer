@@ -10,9 +10,9 @@
 
 use super::polygon_raster_2d::rasterize_polygons_to_region;
 use super::polygon_set_2d::{PolygonWithHoles, union_polygon_sets};
-use crate::clipper::ClipperError;
-use crate::three::buffer_geometry::BufferGeometry;
-use crate::three::{Matrix4, Quaternion, Vec3, Vector2};
+use crate::supports::rafts::crenelated::geometry::polygon_set_2d::PolygonError;
+use crate::geom::buffer_geometry::BufferGeometry;
+use crate::geom::{Matrix4, Quaternion, Vec3, Vector2};
 
 pub const MODEL_PLATE_CLEARANCE_MM: f64 = 1.0;
 
@@ -131,7 +131,7 @@ fn get_bottom_index(geometry: &BufferGeometry, required_top_mm: f64) -> Option<V
     if !min_z.is_finite() {
         return None;
     }
-    let top_mm = crate::three::math_utils::js_max(BOTTOM_WINDOW_MM, required_top_mm - min_z);
+    let top_mm = crate::geom::math_utils::js_max(BOTTOM_WINDOW_MM, required_top_mm - min_z);
     let limit = min_z + top_mm;
     let mut collected = Vec::new();
     for triangle in 0..triangle_count(geometry) {
@@ -279,7 +279,7 @@ fn local_shadow_polygons(
 pub fn collect_model_plate_footprint(
     sources: &[PlateFootprintSource],
     band_top_mm: f64,
-) -> Result<Vec<PolygonWithHoles>, ClipperError> {
+) -> Result<Vec<PolygonWithHoles>, PolygonError> {
     if !band_top_mm.is_finite() || band_top_mm <= 0.0 {
         return Ok(Vec::new());
     }
@@ -304,8 +304,8 @@ pub fn collect_model_plate_footprint(
             let scale_z = t.scale.z;
             let za = (0.0 - t.position.z) / scale_z;
             let zb = (band_top_mm - t.position.z) / scale_z;
-            let lo = crate::three::math_utils::js_min(za, zb);
-            let hi = crate::three::math_utils::js_max(za, zb);
+            let lo = crate::geom::math_utils::js_min(za, zb);
+            let hi = crate::geom::math_utils::js_max(za, zb);
             local_shadow_polygons(geometry, center, lo, hi)
                 .into_iter()
                 .map(|poly| PolygonWithHoles {

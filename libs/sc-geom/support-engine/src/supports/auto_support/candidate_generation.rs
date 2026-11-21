@@ -16,7 +16,7 @@ use super::support_blockers::is_support_blocked_contact;
 use super::types::{AutoSupportMesh, CandidatePoint, CandidateSource, js_compare};
 use crate::supports::settings::types::SupportSettings;
 use crate::supports::types::Vec3;
-use crate::three::math_utils::{js_max, js_min, js_round};
+use crate::geom::math_utils::{js_max, js_min, js_round};
 use crate::volume_analysis::islands::types::{DetectedIsland, IslandClass, IslandSource};
 
 /// Convert detected islands into auto-support candidate points: filtered,

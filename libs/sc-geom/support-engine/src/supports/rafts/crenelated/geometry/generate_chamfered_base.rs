@@ -3,9 +3,9 @@
 
 use super::super::raft_types::RaftSettings;
 use super::small::inset_convex_polygon;
-use crate::three::Vector2;
-use crate::three::buffer_geometry::BufferGeometry;
-use crate::three::math_utils::{js_max, js_min, js_tan};
+use crate::geom::Vector2;
+use crate::geom::buffer_geometry::BufferGeometry;
+use crate::geom::math_utils::{js_max, js_min, js_tan};
 
 pub fn generate_chamfered_base(profile: &[Vector2], settings: &RaftSettings) -> BufferGeometry {
     if profile.len() < 3 {

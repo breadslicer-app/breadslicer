@@ -51,7 +51,7 @@ pub const MAX_LEAF_SPAN_BEFORE_BRANCH_MM: f64 = 6.0;
 const INFLUENCE_RADIUS_KNOTS: [(f64, f64); 4] = [(0.0, 3.0), (3.9, 4.0), (15.0, 5.0), (40.0, 6.0)];
 
 pub fn influence_radius_mm(diff_z_mm: f64) -> f64 {
-    let z = crate::three::math_utils::js_max(0.0, diff_z_mm);
+    let z = crate::geom::math_utils::js_max(0.0, diff_z_mm);
     let knots = &INFLUENCE_RADIUS_KNOTS;
     if z <= knots[0].0 {
         return knots[0].1;

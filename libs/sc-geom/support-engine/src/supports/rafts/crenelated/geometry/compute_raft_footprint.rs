@@ -12,8 +12,8 @@ use super::polygon_set_2d::{
     grid_segment_blocked, offset_polygon_set, polygon_set_contains, ring_to_polygon,
 };
 use super::small::compute_footprint;
-use crate::clipper::ClipperError;
-use crate::three::math_utils::{js_max, js_min, js_tan};
+use crate::supports::rafts::crenelated::geometry::polygon_set_2d::PolygonError;
+use crate::geom::math_utils::{js_max, js_min, js_tan};
 
 /// Material height of the raft body: beam height in line mode, plate
 /// thickness otherwise.
@@ -63,7 +63,7 @@ pub fn raft_wall_base_height_mm(raft: &RaftSettings) -> f64 {
 /// clearance.
 pub fn inflate_model_plate_clearance(
     clearance: &[PolygonWithHoles],
-) -> Result<Vec<PolygonWithHoles>, ClipperError> {
+) -> Result<Vec<PolygonWithHoles>, PolygonError> {
     if clearance.is_empty() {
         return Ok(Vec::new());
     }
@@ -133,7 +133,7 @@ pub fn compute_raft_footprint_polygons(
     raft: &RaftSettings,
     clearance: Option<&[PolygonWithHoles]>,
     samples_per_circle: Option<f64>,
-) -> Result<Vec<PolygonWithHoles>, ClipperError> {
+) -> Result<Vec<PolygonWithHoles>, PolygonError> {
     if circles.is_empty() {
         return Ok(Vec::new());
     }

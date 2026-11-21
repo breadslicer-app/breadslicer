@@ -4,8 +4,8 @@
 
 use super::super::raft_types::SupportBaseCircle;
 use super::convex_hull_2d::convex_hull_2d;
-use crate::three::Vector2;
-use crate::three::math_utils::{js_cos, js_max, js_sin};
+use crate::geom::Vector2;
+use crate::geom::math_utils::{js_cos, js_max, js_sin};
 
 /// `signedArea2d`: shoelace area, positive counter-clockwise.
 pub fn signed_area_2d(poly: &[Vector2]) -> f64 {

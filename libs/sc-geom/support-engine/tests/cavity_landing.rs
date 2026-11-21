@@ -13,8 +13,8 @@ use support_engine::supports::support_types::trunk::cavity_bridge::{
     BridgeAttempt, BridgeRefusal, attempt_cavity_bridge,
 };
 use support_engine::supports::types::Vec3;
-use support_engine::three::Matrix4;
-use support_engine::three_mesh_bvh::{BvhMesh, MeshBvh, Side};
+use support_engine::geom::Matrix4;
+use support_engine::bvh::{BvhMesh, MeshBvh, Side};
 
 /// The two triangles of a quad, counter-clockwise from where it looks.
 fn quad(corners: [[f32; 3]; 4]) -> Vec<[f32; 3]> {

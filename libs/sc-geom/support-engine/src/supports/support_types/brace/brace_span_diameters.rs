@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use crate::supports::constants::JOINT_DIAMETER_OFFSET_MM;
 use crate::supports::types::BraceProfile;
-use crate::three::math_utils::{js_max, js_min};
+use crate::geom::math_utils::{js_max, js_min};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
