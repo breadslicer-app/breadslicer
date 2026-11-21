@@ -10468,3 +10468,22 @@ msgstr "Olvidar esta impresora"
 msgctxt "NetworkPrinterPreferences"
 msgid "{}  ·  {}  ·  not saved yet"
 msgstr "{}  ·  {}  ·  sin guardar"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "We recommend repairing with Caliper"
+msgstr "Recomendamos reparar con Caliper"
+
+#: src/repair_run.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "{}: repaired with Caliper {} in {} s"
+msgstr "{}: reparado con Caliper {} en {} s"
+
+#: src/repair_run.rs
+#, rust-format
+msgctxt "RepairDialog"
+msgid "Caliper repaired {n} object."
+msgid_plural "Caliper repaired {n} objects."
+msgstr[0] "Caliper reparó {n} objeto."
+msgstr[1] "Caliper reparó {n} objetos."

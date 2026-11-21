@@ -1157,6 +1157,32 @@ component RepairControls inherits VerticalLayout {
             }
         }
     }
+    // Caliper, a separate repair program, is not installed: say so, and its
+    // page opens on a click. Breadslicer never downloads it.
+    if CaliperLink.missing && !root.repairing: HorizontalLayout {
+        alignment: start;
+        link := Text {
+            text: @tr("Inspector" => "We recommend repairing with Caliper");
+            font-size: Theme.font-sm;
+            color: link-touch.has-hover ? Theme.text : Theme.text-muted;
+            accessible-role: button;
+            accessible-label: self.text;
+            accessible-action-default => {
+                CaliperLink.open-page();
+            }
+            link-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    CaliperLink.open-page();
+                }
+            }
+        }
+        Text {
+            text: " ↗";
+            font-size: Theme.font-sm;
+            color: Theme.text-faint;
+        }
+    }
     if root.marks-available && !root.repairing: CheckBox {
         text: @tr("Inspector" => "Show what is left on the model");
         checked: root.marks-shown;
@@ -1164,6 +1190,13 @@ component RepairControls inherits VerticalLayout {
             root.marks-toggled(self.checked);
         }
     }
+}
+
+// Repair through Caliper (#279): whether it is missing on this computer,
+// and opening its page. Rust sets it; every repair button reads it.
+export global CaliperLink {
+    in property <bool> missing;
+    callback open-page();
 }
 
 // One colour of the overhang map, with what it means.

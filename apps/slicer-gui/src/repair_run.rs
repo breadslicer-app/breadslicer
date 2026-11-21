@@ -143,6 +143,66 @@ struct CompletedRepair {
     /// The support sets on the models it mended, made over on their new
     /// meshes when every support still touches them (#477).
     mended_sets: Vec<MendedSet>,
+    /// The meshes Caliper repaired (#279), with its version and its time.
+    caliper: Vec<CaliperNote>,
+}
+
+/// One mesh Caliper repaired before Breadslicer's own repair ran.
+#[derive(Clone, Debug)]
+struct CaliperNote {
+    target: MeshTarget,
+    version: String,
+    seconds: f64,
+}
+
+/// Hands every mesh of `targets` that cannot be sliced to Caliper, when it is
+/// installed, and puts back the meshes it repaired so they slice. Whatever it
+/// could not repair is left for Breadslicer's own repair, which runs next.
+fn repair_through_caliper(
+    scene: &mut Scene,
+    targets: &[MeshTarget],
+    watch: &dyn SceneRepairWatch,
+) -> Result<Vec<CaliperNote>, RepairCancelled> {
+    let Some(caliper) = crate::caliper::lookup() else {
+        return Ok(Vec::new());
+    };
+    let mut notes = Vec::new();
+    for &target in targets {
+        if watch.cancelled() {
+            return Err(RepairCancelled);
+        }
+        let Some(mesh) = scene.target_mesh(target) else {
+            continue;
+        };
+        if mesh.faces().is_empty() || mesh.is_sliceable() {
+            continue;
+        }
+        match caliper.repair(mesh, &|| watch.cancelled()) {
+            crate::caliper::Outcome::Repaired { mut mesh, seconds } if mesh.is_sliceable() => {
+                // Its name and what it is stay; Caliper writes geometry only.
+                mesh.set_meta(scene.target_mesh(target).and_then(|m| m.meta().clone()));
+                if let Some(slot) = scene.target_mesh_mut(target) {
+                    *slot = mesh;
+                }
+                notes.push(CaliperNote {
+                    target,
+                    version: caliper.version.clone(),
+                    seconds,
+                });
+            }
+            crate::caliper::Outcome::Cancelled => return Err(RepairCancelled),
+            crate::caliper::Outcome::Repaired { .. } => {
+                crate::breadcrumbs::note(
+                    "caliper: its mesh still did not slice; repairing it here",
+                );
+            }
+            crate::caliper::Outcome::AlreadyClean => {}
+            crate::caliper::Outcome::Failed(why) => {
+                crate::breadcrumbs::note(&format!("caliper: {why}; repairing it here"));
+            }
+        }
+    }
+    Ok(notes)
 }
 
 /// What the worker deposits: the run, a cancelled run, or a panic.
@@ -268,7 +328,24 @@ impl RepairRun {
             });
         }
         ui.set_repair_marks_shown(true);
+        ui.global::<crate::CaliperLink>()
+            .on_open_page(|| crate::app_state::open_in_browser(crate::caliper::PAGE));
+        run.follow_caliper();
         run
+    }
+
+    /// Looks Caliper up off the window's thread and says on the repair cards
+    /// whether it is missing (#279).
+    fn follow_caliper(&self) {
+        let ui = self.ui.clone();
+        std::thread::spawn(move || {
+            let missing = cfg!(windows) && crate::caliper::lookup().is_none();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui.upgrade() {
+                    ui.global::<crate::CaliperLink>().set_missing(missing);
+                }
+            });
+        });
     }
 
     /// Handles a Repair press: gate, clone, capture, spawn. The button gates
@@ -290,6 +367,7 @@ impl RepairRun {
             return;
         };
         self.launch(&ui, scene, targets, names, None);
+        self.follow_caliper();
     }
 
     /// Repairs the meshes of `leaves`, the objects a slice refused (#407),
@@ -544,8 +622,53 @@ impl RepairRun {
                 // tips are made again on their own, keeping the edits made by
                 // hand (#526): no card stops for them.
                 let CompletedRepair {
-                    outcomes, elapsed, ..
+                    outcomes,
+                    elapsed,
+                    caliper,
+                    ..
                 } = completed;
+                let caliper_lines: Vec<String> = caliper
+                    .iter()
+                    .filter_map(|note| {
+                        let at = outcomes.iter().position(|o| o.target == note.target)?;
+                        Some(
+                            ctr!(
+                                "RepairDialog",
+                                "{}: repaired with Caliper {} in {} s",
+                                names.get(at).cloned().unwrap_or_default(),
+                                note.version,
+                                format!("{:.1}", note.seconds)
+                            )
+                            .to_string(),
+                        )
+                    })
+                    .collect();
+                let with_caliper = {
+                    let caliper_lines = caliper_lines.clone();
+                    move |message: String| {
+                        if caliper_lines.is_empty() {
+                            message
+                        } else {
+                            format!(
+                                "{} {}",
+                                ctr!(
+                                    "RepairDialog",
+                                    "Caliper repaired {n} object.",
+                                    "Caliper repaired {n} objects.",
+                                    caliper_lines.len()
+                                ),
+                                message
+                            )
+                        }
+                    }
+                };
+                let caliper_details = move |details: String| {
+                    if caliper_lines.is_empty() {
+                        details
+                    } else {
+                        format!("{}\n\n{}", caliper_lines.join("\n"), details)
+                    }
+                };
                 // Never behind a notice someone may have turned off.
                 if let Some(note) = lost_paint.clone() {
                     self.dialogs.show_info(move || InfoTexts {
@@ -563,17 +686,19 @@ impl RepairRun {
                             message: ctr!(
                                 "RepairDialog",
                                 "Repair couldn't fix everything, so slicing didn't start again. {}",
-                                summary_message(&outcomes, &names)
+                                with_caliper(summary_message(&outcomes, &names))
                             ),
-                            details: details_text(&outcomes, &names, elapsed).into(),
+                            details: caliper_details(details_text(&outcomes, &names, elapsed))
+                                .into(),
                         });
                     }
                     for_slice => {
                         self.dialogs
                             .show_notice(MessageKey::MeshRepairSummary, move || InfoTexts {
                                 heading: ctr!("RepairDialog", "Mesh repair"),
-                                message: summary_message(&outcomes, &names).into(),
-                                details: details_text(&outcomes, &names, elapsed).into(),
+                                message: with_caliper(summary_message(&outcomes, &names)).into(),
+                                details: caliper_details(details_text(&outcomes, &names, elapsed))
+                                    .into(),
                             });
                         if let Some(ForSlice { back_to, reslice }) = for_slice {
                             self.ctrl.set_section(back_to);
@@ -807,6 +932,7 @@ fn run_repair_watched(
         .iter()
         .filter_map(|&target| Some((target, target_arc(&scene, target)?)))
         .collect();
+    let caliper = repair_through_caliper(&mut scene, targets, watch)?;
     let outcomes = scene.repair_targets_watched(targets, RepairPasses::default_repair(), watch)?;
     let replacements = before
         .into_iter()
@@ -846,6 +972,7 @@ fn run_repair_watched(
         marks,
         elapsed: start.elapsed(),
         mended_sets,
+        caliper,
     })
 }
 
