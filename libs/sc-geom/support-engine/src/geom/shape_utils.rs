@@ -19,10 +19,6 @@ pub fn area(contour: &[Vector2]) -> f64 {
     a * 0.5
 }
 
-pub fn is_clock_wise(pts: &[Vector2]) -> bool {
-    area(pts) < 0.0
-}
-
 /// `removeDupEndPts`: drops a closing point equal to the first, in place.
 fn remove_dup_end_pts(points: &mut Vec<Vector2>) {
     let l = points.len();

@@ -65,32 +65,6 @@ impl Vec3 {
         self.x.is_finite() && self.y.is_finite() && self.z.is_finite()
     }
 
-    /// Rotate this vector by a unit quaternion `[x, y, z, w]`.
-    /// The quaternion must be normalized (unit length).
-    /// Uses the standard formula: `v' = v + 2·qw·(qv×v) + 2·(qv×(qv×v))`
-    /// where `qv = (qx, qy, qz)` is the vector part of the quaternion.
-    #[inline]
-    pub fn rotate_by_quat(self, q: [f32; 4]) -> Self {
-        let [qx, qy, qz, qw] = q;
-        // cross(qv, v)
-        let c1_x = qy * self.z - qz * self.y;
-        let c1_y = qz * self.x - qx * self.z;
-        let c1_z = qx * self.y - qy * self.x;
-        // t = 2 * cross(qv, v)
-        let t_x = c1_x * 2.0;
-        let t_y = c1_y * 2.0;
-        let t_z = c1_z * 2.0;
-        // cross(qv, t)
-        let c2_x = qy * t_z - qz * t_y;
-        let c2_y = qz * t_x - qx * t_z;
-        let c2_z = qx * t_y - qy * t_x;
-        // v' = v + qw * t + cross(qv, t)
-        Self::new(
-            self.x + qw * t_x + c2_x,
-            self.y + qw * t_y + c2_y,
-            self.z + qw * t_z + c2_z,
-        )
-    }
 }
 
 /// Axis-aligned bounding box.
@@ -254,22 +228,6 @@ impl IndexedMesh {
             self.positions[t[1] as usize],
             self.positions[t[2] as usize],
         ]
-    }
-
-    pub fn tri_area(&self, face: u32) -> f32 {
-        let [a, b, c] = self.tri_positions(face);
-        b.sub(a).cross(c.sub(a)).length() * 0.5
-    }
-
-    pub fn tri_normal(&self, face: u32) -> Vec3 {
-        let [a, b, c] = self.tri_positions(face);
-        let n = b.sub(a).cross(c.sub(a));
-        let len = n.length();
-        if len > 0.0 {
-            n.scale(1.0 / len)
-        } else {
-            Vec3::ZERO
-        }
     }
 
     /// Signed volume via divergence theorem. Positive = outward-oriented
