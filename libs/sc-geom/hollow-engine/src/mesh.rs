@@ -12,6 +12,9 @@ pub struct Vec3 {
     pub z: f32,
 }
 
+// `add` and `sub` by name as well as by operator: the drain cut and its
+// tests read as chains of them.
+#[allow(clippy::should_implement_trait)]
 impl Vec3 {
     pub const ZERO: Self = Self::new(0.0, 0.0, 0.0);
 

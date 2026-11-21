@@ -181,14 +181,14 @@ fn crossings(mesh: &IndexedMesh, grid: &GridSpec) -> Vec<Crossing> {
                     let c = [centre(gx, x0), centre(gy, y0)];
                     let mut weights = [0.0f64; 3];
                     let mut inside = true;
-                    for k in 0..3 {
+                    for (k, weight) in weights.iter_mut().enumerate() {
                         let (u, w) = (corner((k + 1) % 3), corner((k + 2) % 3));
                         let side = edge_side(c, u, w);
                         if side < 0.0 || (side == 0.0 && !owns_edge(u.1, w.1)) {
                             inside = false;
                             break;
                         }
-                        weights[k] = side;
+                        *weight = side;
                     }
                     if !inside {
                         continue;

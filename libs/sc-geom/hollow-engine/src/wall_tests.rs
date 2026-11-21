@@ -74,10 +74,7 @@ fn every_voxel_within_the_band_is_exact() {
         let grid = session.grid();
         let solid = session.solid_mask();
         let mut exact = 0;
-        for i in 0..grid.cell_count() {
-            if !solid[i] {
-                continue;
-            }
+        for (i, _) in solid.iter().enumerate().filter(|(_, s)| **s) {
             let (x, y, z) = grid.coords(i);
             let truth = brute_distance(&mesh, grid.center_world(x, y, z)) / voxel;
             let got = walls.dist[i];

@@ -2301,7 +2301,6 @@ dependencies = [
  "manifold-rust",
  "rayon",
  "serde_json",
- "smallvec",
 ]
 
 [[package]]
