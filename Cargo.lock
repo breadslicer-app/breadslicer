@@ -6450,6 +6450,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smallvec",
+ "surface-analysis",
 ]
 
 [[package]]
@@ -6491,6 +6492,14 @@ dependencies = [
  "serde",
  "serde_json",
  "support-engine",
+]
+
+[[package]]
+name = "surface-analysis"
+version = "0.1.0"
+dependencies = [
+ "rayon",
+ "serde",
 ]
 
 [[package]]
