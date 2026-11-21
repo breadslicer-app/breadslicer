@@ -18,15 +18,7 @@ src/three/ transliterates the subset of three.js r181 math the support code
 calls (Vector3, Quaternion, Matrix4, Box3, Line3, Ray, Triangle, MathUtils),
 keeping three.js operation order so floating-point results match DragonFruit.
 
-src/three_mesh_bvh/ transliterates the parts of three-mesh-bvh 0.8.3 that
-DragonFruit's support code relies on (MeshBVH build with the default CENTER
-strategy, shapecast and closestPointToPoint).
-
-  three-mesh-bvh, MIT License, Copyright (c) 2018 Garrett Johnson
-  https://github.com/gkjohnson/three-mesh-bvh
-
-The MIT License text below applies to three.js and to three-mesh-bvh (each
-under its own copyright line above).
+The MIT License text below applies to three.js.
 
   three.js, The MIT License, Copyright (c) 2010-2025 three.js authors
   https://github.com/mrdoob/three.js

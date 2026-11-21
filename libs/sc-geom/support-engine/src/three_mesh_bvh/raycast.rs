@@ -1,17 +1,15 @@
-//! three-mesh-bvh 0.8.3 `src/core/cast/{raycast,raycastFirst}.generated.js`,
-//! `src/core/utils/intersectUtils.js` (`intersectRay`),
-//! `src/utils/ThreeRayIntersectUtilities.js` (`intersectTri`) and the
-//! `acceleratedRaycast` mesh override (`src/utils/ExtensionUtilities.js`),
-//! with three.js r181 `Raycaster.intersectObject`'s distance sort.
-//!
-//! Hits carry what DragonFruit reads: distance, point, the face's vertex
-//! indices and geometric normal, and the face index. Vertex-normal and uv
-//! interpolation are not ported: no support code reads them.
+/*
+ * SPDX-FileCopyrightText: 2026 SynrgStudio
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
 
-use super::{MeshBvh, Node, NodeKind};
+//! Rays against the tree: every hit, or the nearest.
+
+use super::{MeshBvh, NodeKind};
 use crate::three::{Matrix4, Ray, Triangle, Vec3};
 
-/// The material side a raycast tests against.
+/// Which faces a ray hits: the ones it meets from their front, from their
+/// back, or both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Side {
     Front,
@@ -19,7 +17,7 @@ pub enum Side {
     Double,
 }
 
-/// `intersection.face`.
+/// The face a hit lies on: its vertices and its geometric normal.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Face {
     pub a: u32,
@@ -28,107 +26,55 @@ pub struct Face {
     pub normal: Vec3,
 }
 
-/// A three.js raycast intersection, as three-mesh-bvh builds it.
+/// Where a ray meets a face.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Intersection {
     pub distance: f64,
     pub point: Vec3,
     pub face: Face,
-    /// The triangle, in the BVH's reordered order.
+    /// The triangle's number in the geometry.
     pub face_index: usize,
 }
 
-/// `intersectRay`: does the ray cross a node's box within `[near, far]`?
-fn intersect_ray(node: &Node, ray: &Ray, near: f64, far: f64) -> bool {
-    let b = &node.bounds;
-    let (mut tmin, mut tmax);
-    let (tymin, tymax, tzmin, tzmax);
-
-    let invdirx = 1.0 / ray.direction.x;
-    let invdiry = 1.0 / ray.direction.y;
-    let invdirz = 1.0 / ray.direction.z;
-
-    let (ox, oy, oz) = (ray.origin.x, ray.origin.y, ray.origin.z);
-
-    let (minx, maxx) = (f64::from(b[0]), f64::from(b[3]));
-    let (miny, maxy) = (f64::from(b[1]), f64::from(b[4]));
-    let (minz, maxz) = (f64::from(b[2]), f64::from(b[5]));
-
-    if invdirx >= 0.0 {
-        tmin = (minx - ox) * invdirx;
-        tmax = (maxx - ox) * invdirx;
-    } else {
-        tmin = (maxx - ox) * invdirx;
-        tmax = (minx - ox) * invdirx;
+/// Whether the ray crosses the box within `[near, far]` of its origin.
+fn crosses_box(bounds: &[f32; 6], ray: &Ray, near: f64, far: f64) -> bool {
+    let origin = [ray.origin.x, ray.origin.y, ray.origin.z];
+    let direction = [ray.direction.x, ray.direction.y, ray.direction.z];
+    let (mut enter, mut leave) = (f64::NEG_INFINITY, f64::INFINITY);
+    for k in 0..3 {
+        let inv = 1.0 / direction[k];
+        let (lo, hi) = (f64::from(bounds[k]), f64::from(bounds[k + 3]));
+        let (mut t0, mut t1) = ((lo - origin[k]) * inv, (hi - origin[k]) * inv);
+        if inv < 0.0 {
+            std::mem::swap(&mut t0, &mut t1);
+        }
+        // A ray along a face of the box gives NaN: it does not narrow.
+        if t0 > enter {
+            enter = t0;
+        }
+        if t1 < leave {
+            leave = t1;
+        }
+        if enter > leave {
+            return false;
+        }
     }
-
-    if invdiry >= 0.0 {
-        tymin = (miny - oy) * invdiry;
-        tymax = (maxy - oy) * invdiry;
-    } else {
-        tymin = (maxy - oy) * invdiry;
-        tymax = (miny - oy) * invdiry;
-    }
-
-    if (tmin > tymax) || (tymin > tmax) {
-        return false;
-    }
-
-    if tymin > tmin || tmin.is_nan() {
-        tmin = tymin;
-    }
-
-    if tymax < tmax || tmax.is_nan() {
-        tmax = tymax;
-    }
-
-    if invdirz >= 0.0 {
-        tzmin = (minz - oz) * invdirz;
-        tzmax = (maxz - oz) * invdirz;
-    } else {
-        tzmin = (maxz - oz) * invdirz;
-        tzmax = (minz - oz) * invdirz;
-    }
-
-    if (tmin > tzmax) || (tzmin > tmax) {
-        return false;
-    }
-
-    if tzmin > tmin || tmin.is_nan() {
-        tmin = tzmin;
-    }
-
-    if tzmax < tmax || tmax.is_nan() {
-        tmax = tzmax;
-    }
-
-    //return point closest to the ray (positive side)
-    tmin <= far && tmax >= near
+    enter <= far && leave >= near
 }
 
 impl MeshBvh {
-    /// `intersectTri` (`checkBufferGeometryIntersection` / `checkIntersection`).
-    fn intersect_tri(
-        &self,
-        side: Side,
-        ray: &Ray,
-        tri: usize,
-        near: f64,
-        far: f64,
-    ) -> Option<Intersection> {
+    /// The hit of `ray` on triangle `tri`, within `[near, far]`.
+    fn hit(&self, side: Side, ray: &Ray, tri: usize, near: f64, far: f64) -> Option<Intersection> {
         let [a, b, c] = self.face(tri);
         let (va, vb, vc) = (self.vertex(a), self.vertex(b), self.vertex(c));
-
         let point = match side {
             Side::Back => ray.intersect_triangle(vc, vb, va, true),
             _ => ray.intersect_triangle(va, vb, vc, side != Side::Double),
         }?;
-
         let distance = ray.origin.distance_to(point);
         if distance < near || distance > far {
             return None;
         }
-
         Some(Intersection {
             distance,
             point,
@@ -142,20 +88,8 @@ impl MeshBvh {
         })
     }
 
-    fn leaf_range(node: &Node) -> Option<std::ops::Range<usize>> {
-        match node.kind {
-            NodeKind::Leaf { offset, count } => {
-                Some(offset as usize..offset as usize + count as usize)
-            }
-            NodeKind::Inner { .. } => None,
-        }
-    }
-
-    /// `_raycast`: every hit, in traversal order.
-    #[allow(clippy::too_many_arguments)]
-    fn raycast_node(
+    fn all_hits(
         &self,
-        nodes: &[Node],
         index: usize,
         side: Side,
         ray: &Ray,
@@ -163,117 +97,74 @@ impl MeshBvh {
         far: f64,
         out: &mut Vec<Intersection>,
     ) {
-        let node = &nodes[index];
-        if let Some(range) = Self::leaf_range(node) {
-            for tri in range {
-                if let Some(hit) = self.intersect_tri(side, ray, tri, near, far) {
-                    out.push(hit);
+        match self.nodes[index].kind {
+            NodeKind::Leaf { offset, count } => {
+                out.extend(
+                    self.leaf(offset, count)
+                        .filter_map(|t| self.hit(side, ray, t, near, far)),
+                );
+            }
+            NodeKind::Inner { right, .. } => {
+                for child in [index + 1, right] {
+                    if crosses_box(&self.nodes[child].bounds, ray, near, far) {
+                        self.all_hits(child, side, ray, near, far, out);
+                    }
                 }
             }
-            return;
-        }
-        let NodeKind::Inner { right, .. } = node.kind else {
-            unreachable!()
-        };
-        let left = index + 1;
-        if intersect_ray(&nodes[left], ray, near, far) {
-            self.raycast_node(nodes, left, side, ray, near, far, out);
-        }
-        if intersect_ray(&nodes[right], ray, near, far) {
-            self.raycast_node(nodes, right, side, ray, near, far, out);
         }
     }
 
-    /// `bvh.raycast(ray, side, near, far)`: every hit, in traversal order
-    /// (local space, local distances).
+    /// Every hit of `ray` within `[near, far]`, in no set order.
     pub fn raycast(&self, ray: &Ray, side: Side, near: f64, far: f64) -> Vec<Intersection> {
         let mut out = Vec::new();
-        for root in &self.roots {
-            self.raycast_node(root, 0, side, ray, near, far, &mut out);
+        if let Some(root) = self.nodes.first()
+            && crosses_box(&root.bounds, ray, near, far)
+        {
+            self.all_hits(0, side, ray, near, far, &mut out);
         }
         out
     }
 
-    /// `_raycastFirst`.
-    fn raycast_first_node(
+    /// The nearest hit below node `index`, no farther than `far`.
+    fn first_hit(
         &self,
-        nodes: &[Node],
         index: usize,
         side: Side,
         ray: &Ray,
         near: f64,
         far: f64,
     ) -> Option<Intersection> {
-        let node = &nodes[index];
-        if let Some(range) = Self::leaf_range(node) {
-            // intersectClosestTri
-            let mut dist = f64::INFINITY;
-            let mut res = None;
-            for tri in range {
-                if let Some(hit) = self.intersect_tri(side, ray, tri, near, far)
-                    && hit.distance < dist
-                {
-                    dist = hit.distance;
-                    res = Some(hit);
+        let node = &self.nodes[index];
+        match node.kind {
+            NodeKind::Leaf { offset, count } => self
+                .leaf(offset, count)
+                .filter_map(|t| self.hit(side, ray, t, near, far))
+                .min_by(|a, b| a.distance.total_cmp(&b.distance)),
+            NodeKind::Inner { right, split_axis } => {
+                // The child the ray meets first along the split axis first.
+                let along =
+                    [ray.direction.x, ray.direction.y, ray.direction.z][split_axis as usize];
+                let (first, second) = if along >= 0.0 {
+                    (index + 1, right)
+                } else {
+                    (right, index + 1)
+                };
+                let mut best: Option<Intersection> = None;
+                for child in [first, second] {
+                    let reach = best.map_or(far, |b| b.distance);
+                    if crosses_box(&self.nodes[child].bounds, ray, near, reach)
+                        && let Some(hit) = self.first_hit(child, side, ray, near, reach)
+                        && best.is_none_or(|b| hit.distance < b.distance)
+                    {
+                        best = Some(hit);
+                    }
                 }
+                best
             }
-            return res;
-        }
-
-        let NodeKind::Inner { right, split_axis } = node.kind else {
-            unreachable!()
-        };
-        // consider the position of the split plane with respect to the oncoming ray; whichever direction
-        // the ray is coming from, look for an intersection among that side of the tree first
-        let axis = split_axis as usize;
-        let ray_dir = [ray.direction.x, ray.direction.y, ray.direction.z][axis];
-        let left_to_right = ray_dir >= 0.0;
-
-        // c1 is the child to check first
-        let (c1, c2) = if left_to_right {
-            (index + 1, right)
-        } else {
-            (right, index + 1)
-        };
-
-        let c1_result = if intersect_ray(&nodes[c1], ray, near, far) {
-            self.raycast_first_node(nodes, c1, side, ray, near, far)
-        } else {
-            None
-        };
-
-        // if we got an intersection in the first node and it's closer than the second node's bounding
-        // box, we don't need to consider the second node because it couldn't possibly be a better result
-        if let Some(hit) = &c1_result {
-            // check if the point is within the second bounds
-            // "point" is in the local frame of the bvh
-            let point = [hit.point.x, hit.point.y, hit.point.z][axis];
-            let is_outside = if left_to_right {
-                point <= f64::from(nodes[c2].bounds[axis]) // min bounding data
-            } else {
-                point >= f64::from(nodes[c2].bounds[axis + 3]) // max bounding data
-            };
-
-            if is_outside {
-                return c1_result;
-            }
-        }
-
-        // either there was no intersection in the first node, or there could still be a closer
-        // intersection in the second, so check the second node and then take the better of the two
-        let c2_result = if intersect_ray(&nodes[c2], ray, near, far) {
-            self.raycast_first_node(nodes, c2, side, ray, near, far)
-        } else {
-            None
-        };
-
-        match (c1_result, c2_result) {
-            (Some(a), Some(b)) => Some(if a.distance <= b.distance { a } else { b }),
-            (a, b) => a.or(b),
         }
     }
 
-    /// `bvh.raycastFirst(ray, side, near, far)` (local space, local distance).
+    /// The nearest hit of `ray` within `[near, far]`.
     pub fn raycast_first(
         &self,
         ray: &Ray,
@@ -281,20 +172,15 @@ impl MeshBvh {
         near: f64,
         far: f64,
     ) -> Option<Intersection> {
-        let mut closest: Option<Intersection> = None;
-        for root in &self.roots {
-            let result = self.raycast_first_node(root, 0, side, ray, near, far);
-            if let Some(result) = result
-                && closest.is_none_or(|c| result.distance < c.distance)
-            {
-                closest = Some(result);
-            }
+        let root = self.nodes.first()?;
+        if !crosses_box(&root.bounds, ray, near, far) {
+            return None;
         }
-        closest
+        self.first_hit(0, side, ray, near, far)
     }
 }
 
-/// A `THREE.Mesh` carrying a BVH: its geometry's tree and its world matrix.
+/// A mesh placed in the world: its tree and its world matrix.
 #[derive(Debug, Clone, Copy)]
 pub struct BvhMesh<'a> {
     pub bvh: &'a MeshBvh,
@@ -302,10 +188,8 @@ pub struct BvhMesh<'a> {
 }
 
 impl BvhMesh<'_> {
-    /// `raycaster.intersectObject(mesh, false)` with `acceleratedRaycast` and
-    /// the given material side: every hit in world space, sorted by distance
-    /// (a stable sort, as `Array.prototype.sort`). `raycaster.firstHitOnly` is
-    /// three-mesh-bvh's switch to `raycastFirst`.
+    /// The hits of a world-space ray, in world space, nearest first; only the
+    /// nearest with `first_hit_only`. `near` and `far` are world distances.
     pub fn intersect_object(
         &self,
         ray: &Ray,
@@ -314,24 +198,18 @@ impl BvhMesh<'_> {
         far: f64,
         first_hit_only: bool,
     ) -> Vec<Intersection> {
-        let tmp_inverse_matrix = self.matrix_world.invert();
-        let local_ray = ray.apply_matrix4(&tmp_inverse_matrix);
-
-        let world_scale = Vec3::from_matrix_scale(self.matrix_world);
-        let direction = local_ray.direction.multiply(world_scale);
-
-        let scale_factor = direction.length();
-        let local_near = near / scale_factor;
-        let local_far = far / scale_factor;
-
-        // convertRaycastIntersect
+        let local_ray = ray.apply_matrix4(&self.matrix_world.invert());
+        let scale = local_ray
+            .direction
+            .multiply(Vec3::from_matrix_scale(self.matrix_world))
+            .length();
+        let (local_near, local_far) = (near / scale, far / scale);
         let to_world = |mut hit: Intersection| {
             hit.point = hit.point.apply_matrix4(self.matrix_world);
             hit.distance = hit.point.distance_to(ray.origin);
             hit
         };
-
-        let mut intersects: Vec<Intersection> = if first_hit_only {
+        let mut hits: Vec<Intersection> = if first_hit_only {
             self.bvh
                 .raycast_first(&local_ray, side, local_near, local_far)
                 .map(to_world)
@@ -344,13 +222,12 @@ impl BvhMesh<'_> {
                 .map(to_world)
                 .collect()
         };
-
-        // ascSort: a.distance - b.distance
-        intersects.sort_by(|a, b| {
-            (a.distance - b.distance)
-                .partial_cmp(&0.0)
-                .unwrap_or(std::cmp::Ordering::Equal)
+        // Equal distances keep the order of the faces in the geometry.
+        hits.sort_by(|a, b| {
+            a.distance
+                .total_cmp(&b.distance)
+                .then(a.face_index.cmp(&b.face_index))
         });
-        intersects
+        hits
     }
 }

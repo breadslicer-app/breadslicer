@@ -1,11 +1,15 @@
-//! three-mesh-bvh 0.8.3 `src/core/build/{buildTree,computeBoundsUtils,splitUtils,sortUtils.generated}.js`.
-//!
-//! Only the `CENTER` strategy is ported: it is the library default and the only
-//! one DragonFruit builds with (`accelerateGeometry` passes no options).
+/*
+ * SPDX-FileCopyrightText: 2026 SynrgStudio
+ * SPDX-License-Identifier: AGPL-3.0-or-later
+ */
+
+//! Building the tree: each node splits its triangles where a binned
+//! surface-area heuristic says a ray or a ball pays least to look into the
+//! two halves, along the longest axis of their centres.
 
 use super::{Node, NodeKind};
 
-/// The build options DragonFruit uses (three-mesh-bvh `DEFAULT_OPTIONS`).
+/// How deep the tree may go and how many triangles a leaf may hold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MeshBvhOptions {
     pub max_depth: u32,
@@ -15,397 +19,203 @@ pub struct MeshBvhOptions {
 impl Default for MeshBvhOptions {
     fn default() -> Self {
         MeshBvhOptions {
-            max_depth: 40,
-            max_leaf_tris: 10,
+            max_depth: 48,
+            max_leaf_tris: 8,
         }
     }
 }
 
-/// EPSILON for computing floating point error during build
-const FLOAT32_EPSILON: f64 = 5.960_464_477_539_063e-8; // Math.pow( 2, - 24 )
+/// Bins the heuristic sorts centres into.
+const BINS: usize = 16;
 
-/// The tree being built, before packing.
-enum BuildNode {
-    Leaf {
-        bounds: [f32; 6],
-        offset: usize,
-        count: usize,
-    },
-    Inner {
-        bounds: [f32; 6],
-        split_axis: u32,
-        left: Box<BuildNode>,
-        right: Box<BuildNode>,
-    },
-}
+/// What looking into a box costs against testing one triangle.
+const TRAVERSAL_COST: f64 = 1.0;
 
-/// `buildPackedTree`: one root per group range; a geometry with no groups and
-/// the default draw range has one, over every triangle.
-pub(super) fn build_packed_tree(
-    positions: &[[f32; 3]],
-    index: &mut [u32],
-    options: MeshBvhOptions,
-) -> Vec<Vec<Node>> {
-    let tri_count = index.len() / 3;
-    let mut triangle_bounds = compute_triangle_bounds(positions, index);
-    if tri_count == 0 {
-        return Vec::new();
-    }
-    let root = build_tree(&mut triangle_bounds, index, 0, tri_count, options);
-    let mut packed = Vec::new();
-    populate_buffer(&root, &mut packed);
-    vec![packed]
-}
+type Bounds = [f32; 6];
 
-/// precomputes the bounding box for each triangle; required for quickly calculating tree splits.
-/// result is an array of size tris.length * 6 where triangle i maps to a
-/// [x_center, x_delta, y_center, y_delta, z_center, z_delta] tuple starting at index i * 6,
-/// representing the center and half-extent in each dimension of triangle i
-fn compute_triangle_bounds(positions: &[[f32; 3]], index: &[u32]) -> Vec<f32> {
-    let tri_count = index.len() / 3;
-    let mut triangle_bounds = vec![0.0_f32; tri_count * 6];
-    for tri in 0..tri_count {
-        let tri3 = tri * 3;
-        let tri6 = tri * 6;
-        let ai = index[tri3] as usize;
-        let bi = index[tri3 + 1] as usize;
-        let ci = index[tri3 + 2] as usize;
+const EMPTY: Bounds = [
+    f32::INFINITY,
+    f32::INFINITY,
+    f32::INFINITY,
+    f32::NEG_INFINITY,
+    f32::NEG_INFINITY,
+    f32::NEG_INFINITY,
+];
 
-        let (pa, pb, pc) = (positions[ai], positions[bi], positions[ci]);
-        for el in 0..3 {
-            let a = f64::from(pa[el]);
-            let b = f64::from(pb[el]);
-            let c = f64::from(pc[el]);
-
-            let mut min = a;
-            if b < min {
-                min = b;
-            }
-            if c < min {
-                min = c;
-            }
-
-            let mut max = a;
-            if b > max {
-                max = b;
-            }
-            if c > max {
-                max = c;
-            }
-
-            // Increase the bounds size by float32 epsilon to avoid precision errors when
-            // converting to 32 bit float. Scale the epsilon by the size of the numbers being
-            // worked with.
-            let half_extents = (max - min) / 2.0;
-            let el2 = el * 2;
-            triangle_bounds[tri6 + el2] = (min + half_extents) as f32;
-            triangle_bounds[tri6 + el2 + 1] =
-                (half_extents + (min.abs() + half_extents) * FLOAT32_EPSILON) as f32;
-        }
-    }
-    triangle_bounds
-}
-
-/// computes the union of the bounds of all of the given triangles and puts the resulting box in "target".
-/// A bounding box is computed for the centroids of the triangles, as well, and placed in "centroidTarget".
-fn get_bounds(triangle_bounds: &[f32], offset: usize, count: usize) -> ([f32; 6], [f32; 6]) {
-    let (mut minx, mut miny, mut minz) = (f64::INFINITY, f64::INFINITY, f64::INFINITY);
-    let (mut maxx, mut maxy, mut maxz) = (f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
-    let (mut cminx, mut cminy, mut cminz) = (f64::INFINITY, f64::INFINITY, f64::INFINITY);
-    let (mut cmaxx, mut cmaxy, mut cmaxz) =
-        (f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
-
-    let mut i = offset * 6;
-    let end = (offset + count) * 6;
-    while i < end {
-        let cx = f64::from(triangle_bounds[i]);
-        let hx = f64::from(triangle_bounds[i + 1]);
-        let lx = cx - hx;
-        let rx = cx + hx;
-        if lx < minx {
-            minx = lx;
-        }
-        if rx > maxx {
-            maxx = rx;
-        }
-        if cx < cminx {
-            cminx = cx;
-        }
-        if cx > cmaxx {
-            cmaxx = cx;
-        }
-
-        let cy = f64::from(triangle_bounds[i + 2]);
-        let hy = f64::from(triangle_bounds[i + 3]);
-        let ly = cy - hy;
-        let ry = cy + hy;
-        if ly < miny {
-            miny = ly;
-        }
-        if ry > maxy {
-            maxy = ry;
-        }
-        if cy < cminy {
-            cminy = cy;
-        }
-        if cy > cmaxy {
-            cmaxy = cy;
-        }
-
-        let cz = f64::from(triangle_bounds[i + 4]);
-        let hz = f64::from(triangle_bounds[i + 5]);
-        let lz = cz - hz;
-        let rz = cz + hz;
-        if lz < minz {
-            minz = lz;
-        }
-        if rz > maxz {
-            maxz = rz;
-        }
-        if cz < cminz {
-            cminz = cz;
-        }
-        if cz > cmaxz {
-            cmaxz = cz;
-        }
-
-        i += 6;
-    }
-
-    // Both targets are Float32Arrays.
-    (
-        [
-            minx as f32,
-            miny as f32,
-            minz as f32,
-            maxx as f32,
-            maxy as f32,
-            maxz as f32,
-        ],
-        [
-            cminx as f32,
-            cminy as f32,
-            cminz as f32,
-            cmaxx as f32,
-            cmaxy as f32,
-            cmaxz as f32,
-        ],
-    )
-}
-
-/// `getLongestEdgeIndex`: -1 only when every extent is NaN.
-fn get_longest_edge_index(bounds: &[f32; 6]) -> i32 {
-    let mut split_dim_idx = -1;
-    let mut split_dist = f64::NEG_INFINITY;
-    for i in 0..3 {
-        let dist = f64::from(bounds[i + 3]) - f64::from(bounds[i]);
-        if dist > split_dist {
-            split_dist = dist;
-            split_dim_idx = i as i32;
-        }
-    }
-    split_dim_idx
-}
-
-/// `getOptimalSplit` for `CENTER`: the longest centroid axis, at its middle.
-fn get_optimal_split(centroid_bounding_data: &[f32; 6]) -> (i32, f64) {
-    let axis = get_longest_edge_index(centroid_bounding_data);
-    let mut pos = 0.0;
-    if axis != -1 {
-        let a = axis as usize;
-        pos =
-            (f64::from(centroid_bounding_data[a]) + f64::from(centroid_bounding_data[a + 3])) / 2.0;
-    }
-    (axis, pos)
-}
-
-/// reorders `tris` such that for `count` elements after `offset`, elements on the left side of the split
-/// will be on the left and elements on the right side of the split will be on the right. returns the index
-/// of the first element on the right side, or offset + count if there are no elements on the right side.
-fn partition(
-    index: &mut [u32],
-    triangle_bounds: &mut [f32],
-    offset: usize,
-    count: usize,
-    axis: usize,
-    pos: f64,
-) -> usize {
-    // Signed: `right` may step to offset - 1, which is -1 at offset 0.
-    let mut left = offset as isize;
-    let mut right = (offset + count) as isize - 1;
-    let axis_offset = axis * 2;
-
-    // hoare partitioning, see e.g. https://en.wikipedia.org/wiki/Quicksort#Hoare_partition_scheme
-    loop {
-        while left <= right && f64::from(triangle_bounds[left as usize * 6 + axis_offset]) < pos {
-            left += 1;
-        }
-
-        // if a triangle center lies on the partition plane it is considered to be on the right side
-        while left <= right && f64::from(triangle_bounds[right as usize * 6 + axis_offset]) >= pos {
-            right -= 1;
-        }
-
-        if left < right {
-            // we need to swap all of the information associated with the triangles at index
-            // left and right; that's the verts in the geometry index, the bounds,
-            // and perhaps the SAH planes
-            let (l, r) = (left as usize, right as usize);
-            for i in 0..3 {
-                index.swap(l * 3 + i, r * 3 + i);
-            }
-
-            // swap bounds
-            for i in 0..6 {
-                triangle_bounds.swap(l * 6 + i, r * 6 + i);
-            }
-
-            left += 1;
-            right -= 1;
-        } else {
-            return left as usize;
-        }
+#[inline]
+fn grow(into: &mut Bounds, by: &Bounds) {
+    for k in 0..3 {
+        into[k] = into[k].min(by[k]);
+        into[k + 3] = into[k + 3].max(by[k + 3]);
     }
 }
 
-fn build_tree(
-    triangle_bounds: &mut [f32],
-    index: &mut [u32],
-    offset: usize,
-    count: usize,
-    options: MeshBvhOptions,
-) -> BuildNode {
-    let (bounds, centroid) = get_bounds(triangle_bounds, offset, count);
-    split_node(
-        triangle_bounds,
-        index,
-        bounds,
-        offset,
-        count,
-        &centroid,
-        0,
-        options,
-    )
+#[inline]
+fn area(b: &Bounds) -> f64 {
+    if b[0] > b[3] {
+        return 0.0;
+    }
+    let [dx, dy, dz] = [0, 1, 2].map(|k| f64::from(b[k + 3] - b[k]));
+    2.0 * (dx * dy + dy * dz + dz * dx)
 }
 
-// either recursively splits the given node, creating left and right subtrees for it, or makes it a leaf node,
-// recording the offset and count of its triangles and writing them into the reordered geometry index.
-#[allow(clippy::too_many_arguments)]
-fn split_node(
-    triangle_bounds: &mut [f32],
-    index: &mut [u32],
-    bounds: [f32; 6],
-    offset: usize,
-    count: usize,
-    centroid_bounding_data: &[f32; 6],
+#[inline]
+fn centre(b: &Bounds, axis: usize) -> f64 {
+    (f64::from(b[axis]) + f64::from(b[axis + 3])) * 0.5
+}
+
+/// The triangles in tree order and the nodes, the root first.
+pub(super) fn build(triangles: &[Bounds], options: MeshBvhOptions) -> (Vec<u32>, Vec<Node>) {
+    let mut order: Vec<u32> = (0..triangles.len() as u32).collect();
+    let mut nodes = Vec::with_capacity(triangles.len().div_ceil(options.max_leaf_tris) * 2);
+    if !triangles.is_empty() {
+        split(
+            triangles,
+            &mut order,
+            0,
+            triangles.len(),
+            0,
+            options,
+            &mut nodes,
+        );
+    }
+    (order, nodes)
+}
+
+/// Adds the node of `order[start..end]` and its subtree to `nodes`.
+fn split(
+    triangles: &[Bounds],
+    order: &mut [u32],
+    start: usize,
+    end: usize,
     depth: u32,
     options: MeshBvhOptions,
-) -> BuildNode {
-    // early out if we've met our capacity
-    if count <= options.max_leaf_tris || depth >= options.max_depth {
-        return BuildNode::Leaf {
-            bounds,
-            offset,
-            count,
-        };
+    nodes: &mut Vec<Node>,
+) {
+    let mut bounds = EMPTY;
+    let mut centres = EMPTY;
+    for &t in &order[start..end] {
+        let b = &triangles[t as usize];
+        grow(&mut bounds, b);
+        let c = [0, 1, 2].map(|k| centre(b, k) as f32);
+        grow(&mut centres, &[c[0], c[1], c[2], c[0], c[1], c[2]]);
     }
-
-    // Find where to split the volume
-    let (axis, pos) = get_optimal_split(centroid_bounding_data);
-    if axis == -1 {
-        return BuildNode::Leaf {
-            bounds,
-            offset,
-            count,
-        };
-    }
-
-    let split_offset = partition(index, triangle_bounds, offset, count, axis as usize, pos);
-
-    // create the two new child nodes
-    if split_offset == offset || split_offset == offset + count {
-        return BuildNode::Leaf {
-            bounds,
-            offset,
-            count,
-        };
-    }
-
-    // create the left child and compute its bounding box
-    let lstart = offset;
-    let lcount = split_offset - offset;
-    let (left_bounds, left_centroid) = get_bounds(triangle_bounds, lstart, lcount);
-    let left = split_node(
-        triangle_bounds,
-        index,
-        left_bounds,
-        lstart,
-        lcount,
-        &left_centroid,
-        depth + 1,
-        options,
-    );
-
-    // repeat for right
-    let rstart = split_offset;
-    let rcount = count - lcount;
-    let (right_bounds, right_centroid) = get_bounds(triangle_bounds, rstart, rcount);
-    let right = split_node(
-        triangle_bounds,
-        index,
-        right_bounds,
-        rstart,
-        rcount,
-        &right_centroid,
-        depth + 1,
-        options,
-    );
-
-    BuildNode::Inner {
+    let me = nodes.len();
+    let count = end - start;
+    let leaf = Node {
         bounds,
-        split_axis: axis as u32,
-        left: Box::new(left),
-        right: Box::new(right),
+        kind: NodeKind::Leaf {
+            offset: start as u32,
+            count: count as u32,
+        },
+    };
+    nodes.push(leaf);
+    if count <= options.max_leaf_tris || depth >= options.max_depth {
+        return;
     }
+    let Some((axis, cut)) = best_cut(triangles, &order[start..end], &bounds, &centres) else {
+        return;
+    };
+    // Partition: centres below the cut first.
+    let slice = &mut order[start..end];
+    let mut left = 0;
+    for i in 0..slice.len() {
+        if centre(&triangles[slice[i] as usize], axis) < cut {
+            slice.swap(i, left);
+            left += 1;
+        }
+    }
+    if left == 0 || left == slice.len() {
+        // All centres on one side (many equal centres): split the middle.
+        left = slice.len() / 2;
+    }
+    let mid = start + left;
+    split(triangles, order, start, mid, depth + 1, options, nodes);
+    let right = nodes.len();
+    split(triangles, order, mid, end, depth + 1, options, nodes);
+    nodes[me].kind = NodeKind::Inner {
+        right,
+        split_axis: axis as u32,
+    };
 }
 
-/// `populateBuffer`: depth first, left subtree before the right one, so a left
-/// child always follows its parent.
-fn populate_buffer(node: &BuildNode, out: &mut Vec<Node>) {
-    match node {
-        BuildNode::Leaf {
-            bounds,
-            offset,
-            count,
-        } => out.push(Node {
-            bounds: *bounds,
-            kind: NodeKind::Leaf {
-                offset: u32::try_from(*offset).expect("MeshBVH: triangle offset past 32 bits"),
-                // A Uint16Array element: a leaf past 65535 triangles wraps, as in three-mesh-bvh.
-                count: (*count & 0xFFFF) as u16,
-            },
-        }),
-        BuildNode::Inner {
-            bounds,
-            split_axis,
-            left,
-            right,
-        } => {
-            let at = out.len();
-            out.push(Node {
-                bounds: *bounds,
-                kind: NodeKind::Leaf {
-                    offset: 0,
-                    count: 0,
-                },
-            });
-            populate_buffer(left, out);
-            let right_at = out.len();
-            out[at].kind = NodeKind::Inner {
-                right: right_at,
-                split_axis: *split_axis,
-            };
-            populate_buffer(right, out);
+/// The axis and the centre coordinate to split at, or `None` when keeping the
+/// triangles in one leaf costs less.
+fn best_cut(
+    triangles: &[Bounds],
+    order: &[u32],
+    bounds: &Bounds,
+    centres: &Bounds,
+) -> Option<(usize, f64)> {
+    let leaf_cost = order.len() as f64;
+    let parent_area = area(bounds).max(f64::MIN_POSITIVE);
+    let mut best: Option<(f64, usize, f64)> = None;
+    for axis in 0..3 {
+        let (lo, hi) = (f64::from(centres[axis]), f64::from(centres[axis + 3]));
+        let extent = hi - lo;
+        if !(extent > 0.0) {
+            continue;
         }
+        let mut bins = [(EMPTY, 0usize); BINS];
+        for &t in order {
+            let b = &triangles[t as usize];
+            let k = (((centre(b, axis) - lo) / extent) * BINS as f64) as usize;
+            let bin = &mut bins[k.min(BINS - 1)];
+            grow(&mut bin.0, b);
+            bin.1 += 1;
+        }
+        // Sweep from the right, then from the left.
+        let mut right_area = [0.0; BINS];
+        let mut right_count = [0usize; BINS];
+        let (mut acc, mut n) = (EMPTY, 0);
+        for k in (1..BINS).rev() {
+            grow(&mut acc, &bins[k].0);
+            n += bins[k].1;
+            right_area[k] = area(&acc);
+            right_count[k] = n;
+        }
+        let (mut acc, mut n) = (EMPTY, 0);
+        for k in 1..BINS {
+            grow(&mut acc, &bins[k - 1].0);
+            n += bins[k - 1].1;
+            if n == 0 || right_count[k] == 0 {
+                continue;
+            }
+            let cost = TRAVERSAL_COST
+                + (area(&acc) * n as f64 + right_area[k] * right_count[k] as f64) / parent_area;
+            if best.is_none_or(|(c, _, _)| cost < c) {
+                best = Some((cost, axis, lo + extent * k as f64 / BINS as f64));
+            }
+        }
+    }
+    best.filter(|&(cost, _, _)| cost < leaf_cost)
+        .map(|(_, axis, cut)| (axis, cut))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_triangle_lands_in_one_leaf() {
+        let triangles: Vec<Bounds> = (0..1000)
+            .map(|i| {
+                let x = (i % 10) as f32;
+                let y = ((i / 10) % 10) as f32;
+                let z = (i / 100) as f32;
+                [x, y, z, x + 0.5, y + 0.5, z + 0.5]
+            })
+            .collect();
+        let (order, nodes) = build(&triangles, MeshBvhOptions::default());
+        let mut seen = vec![0; triangles.len()];
+        for node in &nodes {
+            if let NodeKind::Leaf { offset, count } = node.kind {
+                assert!(count as usize <= 8);
+                for &t in &order[offset as usize..(offset + count) as usize] {
+                    seen[t as usize] += 1;
+                }
+            }
+        }
+        assert!(seen.iter().all(|&s| s == 1));
     }
 }
