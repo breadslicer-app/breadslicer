@@ -1106,7 +1106,21 @@ pub fn build_support_and_raft_world_parts(
     if input.draw_rafts {
         append_slice_rafts(&mut sink, input, &visible_root_ids, &root_model_key)?;
     }
+    on_the_plate(&mut sink);
     Ok(sink)
+}
+
+/// Nothing of the supports below the plate (SoulCrafted): the ring at the
+/// low end of a slanted tube that starts on the plate (a brace, a
+/// kickstand) dips under it by a fraction of its radius, which nothing can
+/// print and which the view flags as out of the volume. Those corners stand
+/// on the plate instead.
+fn on_the_plate(sink: &mut TriangleSink) {
+    for z in sink.floats.iter_mut().skip(2).step_by(3) {
+        if *z < 0.0 {
+            *z = 0.0;
+        }
+    }
 }
 
 /// One raft under every root of `circles` (SoulCrafted, #556): the raft of

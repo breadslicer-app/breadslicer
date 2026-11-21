@@ -506,8 +506,9 @@ fn fs_overlay(in: VsOut) -> @location(0) vec4<f32> {
         // Supports the Select tool picked (#567): the selection's amber.
         color = vec4<f32>(1.00, 0.68, 0.28, 0.85);
     } else if (in.tint == 13u) {
-        // The Measure tool (#652): a light cyan, unlit, over everything.
-        return vec4<f32>(0.38, 0.86, 1.00, 0.95);
+        // The Measure tool (#652): the theme's indicator, as the gizmo's
+        // readouts and the plate's rulers (#654), unlit, over everything.
+        return vec4<f32>(0.91, 0.925, 0.937, 0.95);
     } else if (in.tint == 12u) {
         // The island the camera went to (#538, #542): a lighter magenta.
         color = vec4<f32>(1.00, 0.62, 0.98, 0.95);

@@ -2057,8 +2057,7 @@ export component HollowInspector inherits VerticalLayout {
         if root.drain-count > 0: HorizontalLayout {
             spacing: 6px;
             ScButton {
-                text: "◀";
-                width: 30px;
+                icon: Icons.chevron-left;
                 enabled: !root.running;
                 clicked => {
                     root.drain-step(-1);
@@ -2075,8 +2074,7 @@ export component HollowInspector inherits VerticalLayout {
                 horizontal-alignment: center;
             }
             ScButton {
-                text: "▶";
-                width: 30px;
+                icon: Icons.chevron-right;
                 enabled: !root.running;
                 clicked => {
                     root.drain-step(1);

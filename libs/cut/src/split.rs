@@ -28,6 +28,11 @@ pub struct Cut {
     /// Whether the cut was done again with Manifold, ours not coming out
     /// closed.
     pub by_fallback: bool,
+    /// For a stroke cut: the cutting surface where it lies inside the model
+    /// (its positions and triangles, in the mesh's frame), to show where
+    /// the cut goes before it is made. Empty for a plane cut, whose section
+    /// shows it.
+    pub cap: (Vec<[f32; 3]>, Vec<u32>),
 }
 
 /// Which side of the plane a triangle of the result lies on.
@@ -135,6 +140,7 @@ impl Section {
             pieces,
             joined_by,
             by_fallback: false,
+            cap: Default::default(),
         })
     }
 

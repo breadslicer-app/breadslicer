@@ -1700,8 +1700,9 @@ fn line_dots(row: &[[f32; 3]]) -> Option<crate::mesh_render::Overlay> {
         indices: Vec::new(),
         tint: OverlayTint::Picked,
     };
+    // Round, like the tip of a support (#661).
     for &p in row {
-        crate::repair_marks::push_bar(&mut piece, p, p, 0.3);
+        crate::measure::push_ball(&mut piece, p, 0.3);
     }
     Some(Arc::from(vec![Arc::new(piece)]))
 }
@@ -4770,9 +4771,22 @@ impl DfSupportRun {
         self.regenerating.borrow().is_some() || self.document.supports_wanted().is_some()
     }
 
-    /// Generates supports for every model of the scene with `options`, then
-    /// and there, as a finished run puts them in: what other modules' tests
-    /// start from.
+    /// Supports for every model of the document, made and pasted as a run
+    /// ends, with no question in the way: for tests of other tools that
+    /// need a supported model.
+    #[cfg(test)]
+    pub(crate) fn generate_now_for_test(&self) {
+        let graph = self
+            .document
+            .with_scene(|spatial| spatial.graph().clone())
+            .expect("a scene");
+        let outcome = start_df_supports(&graph, DfSupportRequest::default())
+            .expect("a run starts")
+            .join();
+        *self.started_on.borrow_mut() = Some(self.document.scene_revision());
+        self.finish(outcome);
+    }
+
     /// The Generate button with `options` in the tab, waited for: the lift of
     /// the models on the plate (#389) and what follows (#606) as pressed.
     #[cfg(test)]
@@ -5211,7 +5225,7 @@ impl DfSupportRun {
     }
 
     /// The support mesh this driver pasted: its leaf and current mesh.
-    fn support_leaf(&self) -> Option<(NodeId, Arc<sc_mesh_core::IndexedMesh>)> {
+    pub(crate) fn support_leaf(&self) -> Option<(NodeId, Arc<sc_mesh_core::IndexedMesh>)> {
         self.document.with_scene(support_leaf).flatten()
     }
 
@@ -6413,10 +6427,13 @@ impl DfSupportRun {
         self.place_row(ui, row);
     }
 
-    /// Places a support at each of `row`, one edit, as Add places one.
+    /// Places a support at each of `row`, one edit, as Add places one, but
+    /// sized by the preset of the supports they join (the Auto preset picked
+    /// for a model with none yet), never by a hand size.
     fn place_row(self: &Rc<Self>, ui: &MainWindow, row: Vec<[f32; 3]>) {
         crate::breadcrumbs::note(&format!("supports: line of {}", row.len()));
-        let (tool, how) = self.click_tool(ui, 1, false);
+        let (tool, _) = self.click_tool(ui, 1, false);
+        let how = AddOptions::default();
         if self.pending_click.borrow().is_some() {
             self.queued_clicks
                 .borrow_mut()
@@ -14019,6 +14036,12 @@ mod hand_edit_tests {
             ctrl.set_camera_for_test(camera_at([20.0, 25.0, 9.0], 0.3, -0.7, 50.0));
             window.set_support_tool(6);
             run.on_tool_changed();
+            // A hand size with a fat trunk, picked: the row still takes the
+            // preset's sizes.
+            for size in &mut run.hand.borrow_mut().rules.sizes {
+                size.trunk_diameter_mm = 3.26;
+            }
+            window.set_support_tip_size(2);
 
             run.on_tool_click_with([12.0, 25.0, 9.0], false);
             assert!(
@@ -14036,10 +14059,26 @@ mod hand_edit_tests {
             let session = in_force_session(&run).expect("the row started a set");
             let tips: Vec<[f64; 3]> = session.tips().into_iter().map(|t| t.1).collect();
             assert_eq!(tips.len(), 9, "{tips:?}");
+            for (id, _) in session.tips() {
+                let shape = session.shape_of(&id).expect("each support has a shape");
+                assert!(
+                    shape.trunk_diameter_mm < 3.0,
+                    "{id} took the hand size: {shape:?}"
+                );
+            }
             for tip in &tips {
                 assert!((tip[1] - 25.0).abs() < 0.3, "on the line: {tip:?}");
                 assert!((tip[2] - 9.0).abs() < 0.3, "on the underside: {tip:?}");
             }
+            // Nothing of it below the plate: the low end of a slanted brace
+            // stands on it.
+            let (support, _) = run.support_leaf().expect("the row's supports");
+            let lowest = world_mesh(&document, support)
+                .vertices()
+                .iter()
+                .map(|v| v.as_array()[2])
+                .fold(f32::INFINITY, f32::min);
+            assert!(lowest > -1e-4, "the row's supports reach below the plate: {lowest}");
             assert!(document.undo().unwrap());
             assert!(run.support_leaf().is_none(), "one undo takes the row out");
         });

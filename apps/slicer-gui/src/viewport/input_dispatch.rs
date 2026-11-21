@@ -85,6 +85,9 @@ pub(super) struct InputDispatch {
     pub(super) modal_revision: Cell<Option<crate::scene_document::SceneRevision>>,
     /// The leaves `G` moves when several are selected (#13); `None` for one.
     pub(super) modal_group: RefCell<Option<Rc<super::group_move::GroupMove>>>,
+    /// Set when a drag starts on one model of a group with the group not
+    /// picked: that model moves alone (#657). The controller says so.
+    pub(super) lone_member_drag: Cell<bool>,
     /// Logical-pixel position at which the left button was last
     /// pressed. `Some` between `on_pointer_down` and `on_pointer_up`;
     /// `on_pointer_up` reads it to disambiguate click from drag.
@@ -126,6 +129,7 @@ impl InputDispatch {
             modal: Cell::new(None),
             modal_revision: Cell::new(None),
             modal_group: RefCell::new(None),
+            lone_member_drag: Cell::new(false),
             input_state: InputState::new(),
             gizmo_fsm: GizmoFsm::new(),
             kbd_drive: KeyboardDriveState::new(),
@@ -433,6 +437,10 @@ impl InputDispatch {
         if !group.contains(&pending.node_id) {
             document.set_selection(Selection::One(LeafId(pending.node_id)));
             group = vec![pending.node_id];
+            // A member of a group dragged with nothing picked moves alone.
+            if document.group_of(pending.node_id).is_some() {
+                self.lone_member_drag.set(true);
+            }
         }
         // Alt drags a copy (#552): made in place, the original stays.
         let mut node_id = pending.node_id;

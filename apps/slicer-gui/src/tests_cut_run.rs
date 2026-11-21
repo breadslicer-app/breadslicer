@@ -600,3 +600,55 @@ fn a_real_presupported_model_cut() {
         assert!(bodies() < before, "some supports held the piece cut off");
     });
 }
+
+/// #659: the pieces of a model with Breadslicer supports wait for supports
+/// of their own in the cut's undo step, as a tilt's model does (#153);
+/// Undo brings the model back with its supports and nothing waits.
+#[test]
+fn cutting_a_supported_model_asks_supports_for_its_pieces() {
+    on_fresh_slint_thread(|| {
+        let window = MainWindow::new().expect("the headless platform creates a main window");
+        let ctrl = Rc::new(ViewportController::new_for_test());
+        let document = ctrl.document();
+        let mut graph = Scene::new();
+        let leaf = graph
+            .add_leaf(
+                None,
+                Transform3D::Affine(AffineTransform3D::from_translation([10.0, 0.0, 18.0])),
+                LeafPayload::Mesh(Arc::new(cube())),
+            )
+            .unwrap();
+        graph.add_root(leaf).unwrap();
+        document.install_graph(graph, PathBuf::from("cube.stl"));
+        let bus = crate::preferences_bus::PreferencesBus::new(
+            crate::preferences_bus::PreferencesSnapshot::for_tests(),
+        );
+        let supports = crate::df_support_run::DfSupportRun::install(
+            &window,
+            bus,
+            document.clone(),
+            ctrl.dialogs(),
+            ctrl.clone(),
+        );
+        supports.generate_now_for_test();
+        assert!(supports.support_leaf().is_some(), "the cube has supports");
+        document.set_selection(Selection::One(LeafId(leaf)));
+        let run = CutRun::install(&window, document.clone(), ctrl.dialogs(), ctrl);
+        let f = Fixture {
+            window,
+            document,
+            run,
+            leaf,
+        };
+        opened(&f);
+        f.run.apply();
+        let (_, wanted) = f
+            .document
+            .supports_wanted()
+            .expect("the pieces wait for supports");
+        assert_eq!(wanted.ids().len(), 2, "both pieces");
+        assert!(f.document.undo().unwrap());
+        assert!(f.document.supports_wanted().is_none(), "nothing waits");
+        assert!(supports.support_leaf().is_some(), "its supports are back");
+    });
+}

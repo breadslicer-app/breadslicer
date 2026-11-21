@@ -156,6 +156,9 @@ pub(crate) struct ViewportController {
     repair_marks: crate::repair_marks::MarksLayer,
     /// The Measure tool (#652).
     measure: crate::measure::Measure,
+    /// The models in the scene the last time it changed shape: when one of
+    /// them goes, the tools close (#655).
+    tool_models: RefCell<Vec<sc_scene::NodeId>>,
     /// The scene's overlay with the measure's marks over it, and what it
     /// was made of.
     measured: RefCell<
@@ -167,6 +170,18 @@ pub(crate) struct ViewportController {
     >,
     /// Lay on face (#15): the next click on a model lays it on that face.
     lay_face: Cell<bool>,
+    /// The flat face under the cursor while Lay on face is armed (#656):
+    /// its model, its triangles (sorted) and their marks.
+    lay_hover: RefCell<Option<LayHover>>,
+    /// The scene's overlay with the hovered face over it, and what it was
+    /// made of.
+    lay_joined: RefCell<
+        Option<(
+            Option<crate::mesh_render::Overlay>,
+            crate::mesh_render::Overlay,
+            crate::mesh_render::Overlay,
+        )>,
+    >,
     /// The overhang map's box, and the self-support angle it paints by.
     overhang_map_on: Cell<bool>,
     /// The Supports tab's box (#492): whether the rafts fade out with the
@@ -290,6 +305,22 @@ enum TabTool {
 /// the model behind them shows through.
 const SUPPORT_TRANSLUCENT_FADE: f32 = 0.7;
 
+/// The flat face Lay on face would lay on the plate, lit under the cursor
+/// (#656).
+struct LayHover {
+    leaf: sc_scene::NodeId,
+    faces: Vec<usize>,
+    marks: crate::mesh_render::Overlay,
+}
+
+/// What the status bar says while one model of a group is dragged alone (#657).
+fn lone_member_text() -> slint::SharedString {
+    ctr!(
+        "Workspace",
+        "Moving this model alone, out of its group. Click it first to move the whole group."
+    )
+}
+
 impl ViewportController {
     pub(crate) fn new(
         ui: &MainWindow,
@@ -340,8 +371,11 @@ impl ViewportController {
             hint_marks: RefCell::new(None),
             repair_marks: Default::default(),
             measure: Default::default(),
+            tool_models: RefCell::new(Vec::new()),
             measured: RefCell::new(None),
             lay_face: Cell::new(false),
+            lay_hover: RefCell::new(None),
+            lay_joined: RefCell::new(None),
             overhang_map_on: Cell::new(false),
             last_estimate: Cell::new(None),
             estimate_listener: RefCell::new(Vec::new()),
@@ -421,8 +455,11 @@ impl ViewportController {
             hint_marks: RefCell::new(None),
             repair_marks: Default::default(),
             measure: Default::default(),
+            tool_models: RefCell::new(Vec::new()),
             measured: RefCell::new(None),
             lay_face: Cell::new(false),
+            lay_hover: RefCell::new(None),
+            lay_joined: RefCell::new(None),
             overhang_map_on: Cell::new(false),
             last_estimate: Cell::new(None),
             estimate_listener: RefCell::new(Vec::new()),
@@ -712,6 +749,12 @@ impl ViewportController {
         ) {
             self.paint_owed.set(true);
         }
+        if matches!(
+            event,
+            SceneEvent::Installed | SceneEvent::Cleared | SceneEvent::Restructured
+        ) {
+            self.close_tools_if_models_went(!matches!(event, SceneEvent::Restructured));
+        }
         match event {
             SceneEvent::Installed => {
                 self.on_scene_installed();
@@ -775,6 +818,47 @@ impl ViewportController {
             }
             SceneEvent::DirtyChanged => self.mirror_dirty_state_to_ui(),
         }
+    }
+
+    /// Closes every tool and clears what it drew (#655) when a model the
+    /// scene had is gone, or (`new_scene`) when another scene came in or the
+    /// scene was cleared. A model added alone keeps the tools open. The
+    /// window closes them after this event, outside the document listener.
+    fn close_tools_if_models_went(&self, new_scene: bool) {
+        let now: Vec<sc_scene::NodeId> = self
+            .session
+            .document()
+            .with_scene(|spatial| {
+                let scene = spatial.graph();
+                spatial
+                    .leaf_ids()
+                    .iter()
+                    .copied()
+                    .filter(|&id| {
+                        scene
+                            .leaf_mesh_arc(id)
+                            .is_some_and(|mesh| !sc_geom::df_supports::is_any_support_mesh(mesh))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let before = self.tool_models.replace(now.clone());
+        if !new_scene && before.iter().all(|id| now.contains(id)) {
+            return;
+        }
+        // The controller's own tools first; the window closes the others.
+        if self.measure.on() {
+            self.set_measuring(false);
+        }
+        if self.lay_face.get() {
+            self.set_lay_on_face(false);
+        }
+        let ui = self.ui.clone();
+        slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+            if let Some(ui) = ui.upgrade() {
+                ui.invoke_close_tools();
+            }
+        });
     }
 
     fn mirror_undo_state_to_ui(&self) {
@@ -3364,6 +3448,9 @@ impl ViewportController {
             self.update_modal(cursor, super::drag_modifiers(modifiers));
             return;
         }
+        if self.lay_face.get() {
+            self.lay_face_hover(Some(cursor));
+        }
         if !self.allows_transform_gizmo()
             || self.cut_on()
             || self.measure.on()
@@ -3380,6 +3467,11 @@ impl ViewportController {
         ) {
             self.mark_dirty();
         }
+        if self.input.lone_member_drag.replace(false)
+            && let Some(ui) = self.ui.upgrade()
+        {
+            ui.set_status_notice(lone_member_text());
+        }
     }
 
     /// Ends a left press: commits a gizmo drag, or picks on a click (with
@@ -3393,6 +3485,11 @@ impl ViewportController {
             ui.set_box_select_armed(false);
         }
         let outcome = self.input.on_pointer_up(self.session.document(), cursor);
+        if let Some(ui) = self.ui.upgrade()
+            && ui.get_status_notice() == lone_member_text()
+        {
+            ui.set_status_notice(Default::default());
+        }
         match self.support_drag.replace(DragPhase::Idle) {
             DragPhase::Dragging(_) => {
                 if let Some(handler) = self.support_drag_handler() {
@@ -4056,10 +4153,125 @@ impl ViewportController {
             self.set_measuring(false);
         }
         self.lay_face.set(on);
+        if !on {
+            self.lay_hover.replace(None);
+        }
         if let Some(ui) = self.ui.upgrade() {
             ui.set_lay_face_on(on);
         }
         self.mark_dirty();
+    }
+
+    /// Lights the flat face under `cursor` while Lay on face is armed
+    /// (#656): the triangles a click there lays on the plate. Worked out
+    /// again only when the cursor leaves that face.
+    fn lay_face_hover(&self, cursor: Option<ScreenPoint>) {
+        let hit = cursor.and_then(|cursor| {
+            let vp = self.render.viewport()?;
+            let camera = self.camera.camera_cell().borrow().as_ref().cloned()?;
+            let fov = crate::mesh_render::default_fov_y();
+            let ray =
+                picking::ray_from_pixel(&camera, fov, vp.width(), vp.height(), cursor.x, cursor.y);
+            self.session
+                .document()
+                .with_scene(|spatial| {
+                    picking::pick_face_where(&ray, spatial, |id| !shows_supports(spatial, id))
+                })
+                .flatten()
+        });
+        let Some(hit) = hit else {
+            if self.lay_hover.replace(None).is_some() {
+                self.mark_dirty();
+            }
+            return;
+        };
+        let face = hit.face as usize;
+        if self
+            .lay_hover
+            .borrow()
+            .as_ref()
+            .is_some_and(|h| h.leaf == hit.leaf && h.faces.binary_search(&face).is_ok())
+        {
+            return;
+        }
+        let shown = self
+            .session
+            .document()
+            .with_scene(|spatial| {
+                let query = spatial.leaf(hit.leaf)?;
+                let mesh = query.mesh();
+                let faces = crate::lay_on_face::flat_patch(mesh, face);
+                let world = match query.world_transform() {
+                    Transform3D::Identity => sc_mesh_core::transform::AffineTransform3D::identity(),
+                    Transform3D::Affine(a) => a,
+                };
+                let normal = crate::lay_on_face::flat_normal(mesh, face)
+                    .and_then(|n| crate::lay_on_face::world_normal(&world, n))?;
+                // A hair off the face, so it is drawn over it.
+                let lift = normal.map(|v| v * 0.02);
+                let mut piece = crate::mesh_render::OverlayMesh {
+                    positions: Vec::with_capacity(faces.len() * 3),
+                    indices: Vec::with_capacity(faces.len() * 3),
+                    tint: crate::mesh_render::OverlayTint::Picked,
+                };
+                for &f in &faces {
+                    let tri = mesh.faces().get(f)?;
+                    for v in tri.vertices {
+                        let w = world
+                            .apply_to_vertex(*mesh.vertices().get(usize::from(v))?)
+                            .coords()
+                            .map(f64::from);
+                        piece.indices.push(piece.positions.len() as u32);
+                        piece.positions.push([
+                            (w[0] + lift[0]) as f32,
+                            (w[1] + lift[1]) as f32,
+                            (w[2] + lift[2]) as f32,
+                        ]);
+                    }
+                }
+                Some(LayHover {
+                    leaf: hit.leaf,
+                    faces,
+                    marks: Arc::from(vec![Arc::new(piece)]),
+                })
+            })
+            .flatten();
+        self.lay_hover.replace(shown);
+        self.mark_dirty();
+    }
+
+    /// How many triangles the face lit under the cursor has (#656).
+    #[cfg(test)]
+    pub(crate) fn lay_hover_faces(&self) -> usize {
+        self.lay_hover
+            .borrow()
+            .as_ref()
+            .map_or(0, |h| h.faces.len())
+    }
+
+    /// `overlay` with the face Lay on face would lay lit over it (#656).
+    fn with_lay_hover(
+        &self,
+        overlay: Option<crate::mesh_render::Overlay>,
+    ) -> Option<crate::mesh_render::Overlay> {
+        let hover = self.lay_hover.borrow();
+        let Some(marks) = hover.as_ref().map(|h| h.marks.clone()) else {
+            return overlay;
+        };
+        let Some(base) = overlay else {
+            return Some(marks);
+        };
+        let mut both = self.lay_joined.borrow_mut();
+        if let Some((b, m, joined)) = both.as_ref()
+            && b.as_ref().is_some_and(|b| Arc::ptr_eq(b, &base))
+            && Arc::ptr_eq(m, &marks)
+        {
+            return Some(joined.clone());
+        }
+        let joined: crate::mesh_render::Overlay =
+            base.iter().chain(marks.iter()).cloned().collect();
+        *both = Some((Some(base), marks, joined.clone()));
+        Some(joined)
     }
 
     /// A click while Lay on face is armed (#15): the model under `cursor`
@@ -4264,7 +4476,8 @@ impl ViewportController {
             .as_ref()
             .map_or(100.0, |c| c.distance);
         // In steps, so a zoom does not draw it again every frame.
-        let radius = 2f32.powf((distance * 0.0016).max(0.02).log2().round());
+        // About a pixel and a half across, like the plate's rulers (#654).
+        let radius = 2f32.powf((distance * 0.0006).max(0.01).log2().round());
         let Some(marks) = self.measure.overlay(radius) else {
             return overlay;
         };
@@ -5018,7 +5231,7 @@ impl ViewportController {
                 document.set_selection(Selection::of(models.into_iter().map(LeafId)));
                 ctr!(
                     "Workspace",
-                    "Grouped: picked, moved and arranged as one, on one raft of lines. Ctrl+Shift+G undoes it."
+                    "Grouped: picked, moved and arranged as one, on one raft of lines. Dragging one of them with nothing picked moves it alone. Ctrl+Shift+G undoes it."
                 )
             } else {
                 ctr!("Workspace", "Pick two models or more to group them.")
@@ -6052,6 +6265,7 @@ impl ViewportController {
             .repair_marks
             .over(self.overlay.borrow().as_ref(), marks_shown);
         let overlay = self.with_measure(overlay);
+        let overlay = self.with_lay_hover(overlay);
         renderer.set_overlay(overlay.as_ref());
         let hints = (self.session.section() == WorkspaceSection::Supports)
             .then(|| self.hint_marks.borrow().clone())

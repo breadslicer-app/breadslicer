@@ -1222,7 +1222,7 @@ impl CutRun {
     }
 
     /// The stroke drawn, as a ribbon across the view through the model's
-    /// middle.
+    /// middle, and the surface it cuts along, through the model (#658).
     fn show_stroke(&self) {
         let Some((_, target)) = self.on_show() else {
             return;
@@ -1258,6 +1258,55 @@ impl CutRun {
                 }
                 indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
                 indices.extend([base, base + 2, base + 1, base, base + 3, base + 2]);
+            }
+            // The cutting surface itself (#658): the stroke swept along the
+            // view it was drawn in, right through the model, drawn as the
+            // plane of a plane cut is, so it shows from any side once the
+            // camera turns.
+            let mut wall_positions = Vec::new();
+            let mut wall_indices = Vec::new();
+            let deep = target.reach();
+            for w in world.points.windows(2) {
+                let (a, b) = (at(w[0]), at(w[1]));
+                let base = wall_positions.len() as u32;
+                for p in [
+                    sub(a, scale(world.along, deep)),
+                    add(a, scale(world.along, deep)),
+                    add(b, scale(world.along, deep)),
+                    sub(b, scale(world.along, deep)),
+                ] {
+                    wall_positions.push(p.map(|x| x as f32));
+                }
+                wall_indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+                wall_indices.extend([base, base + 2, base + 1, base, base + 3, base + 2]);
+            }
+            if !wall_positions.is_empty() {
+                pieces.push(Arc::new(OverlayMesh {
+                    positions: wall_positions,
+                    indices: wall_indices,
+                    tint: OverlayTint::Cavity,
+                }));
+            }
+            // Where it goes through the model, once the cut is worked out,
+            // shown as a plane cut's section is.
+            if let Some(trial) = self.stroke_trial.borrow().as_ref()
+                && let Some(cut) = &trial.cut
+                && !cut.cap.1.is_empty()
+            {
+                let (positions, indices) = &cut.cap;
+                pieces.push(Arc::new(OverlayMesh {
+                    positions: positions
+                        .iter()
+                        .map(|p| trial.target.world.apply(p.map(f64::from)).map(|x| x as f32))
+                        .collect(),
+                    indices: indices
+                        .as_chunks::<3>()
+                        .0
+                        .iter()
+                        .flat_map(|t| [t[0], t[1], t[2], t[0], t[2], t[1]])
+                        .collect(),
+                    tint: OverlayTint::Valid,
+                }));
             }
             if !positions.is_empty() {
                 pieces.push(Arc::new(OverlayMesh {
@@ -1603,6 +1652,7 @@ impl CutRun {
                     }
                 }
                 self.describe_stroke();
+                self.show_stroke();
             }
             Worked::Ready(ready) => {
                 self.waiting.set(0);
@@ -2186,7 +2236,14 @@ impl CutRun {
         };
         match self.document.apply_edit(edit.clone()) {
             Ok(()) => {
-                self.document.push_edit(edit);
+                // Pieces of a model with Breadslicer supports get supports
+                // again, in this Undo step, as a tilt does (#659, #153).
+                if supports.is_empty() {
+                    self.document.push_edit(edit);
+                } else {
+                    let pieces: Vec<_> = slots.iter().map(|slot| slot.0).collect();
+                    self.document.push_edit_wanting(edit, &pieces);
+                }
                 self.document
                     .set_selection(Selection::One(LeafId(slots[0].0)));
                 crate::breadcrumbs::note(&format!(
@@ -2200,7 +2257,7 @@ impl CutRun {
                         notice.push(' ');
                         notice.push_str(&ctr!(
                             "CutRun",
-                            "Its supports were removed: generate supports for the pieces."
+                            "Supports are being made again for the pieces."
                         ));
                     }
                     if !imported_gone.is_empty() {
