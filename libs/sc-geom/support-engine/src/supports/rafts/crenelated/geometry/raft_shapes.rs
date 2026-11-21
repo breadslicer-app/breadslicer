@@ -10,7 +10,7 @@
 use super::polygon_set_2d::{
     PolygonWithHoles, difference_polygon_sets, ring_to_polygon, union_polygon_sets,
 };
-use super::small::compute_footprint;
+use super::raft_body::compute_footprint;
 use crate::supports::rafts::crenelated::geometry::polygon_set_2d::PolygonError;
 use crate::supports::rafts::crenelated::raft_types::SupportBaseCircle;
 use crate::geom::Vector2;
@@ -176,7 +176,7 @@ pub fn with_peel_tabs(
     if points.len() < 3 {
         return Ok(footprint.to_vec());
     }
-    let hull = super::convex_hull_2d::convex_hull_2d(&points);
+    let hull = super::raft_body::convex_hull_2d(&points);
     let mut tips = sharp_corners(&hull);
     if tips.is_empty() {
         tips = long_ends(&points);
@@ -406,7 +406,7 @@ mod tests {
         let tabbed = with_peel_tabs(&polys).unwrap();
         assert_eq!(tabbed.len(), 1, "the tabs stand on the raft: {tabbed:?}");
         assert!(area(&tabbed) > area(&polys) + PEEL_TAB_LENGTH_MM * PEEL_TAB_WIDTH_MM);
-        let hull = super::super::convex_hull_2d::convex_hull_2d(&raft);
+        let hull = super::super::raft_body::convex_hull_2d(&raft);
         sharp_corners(&hull).len()
     }
 

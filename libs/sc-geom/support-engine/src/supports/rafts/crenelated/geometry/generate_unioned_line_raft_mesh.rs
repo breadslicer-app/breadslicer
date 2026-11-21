@@ -9,7 +9,7 @@ use super::polygon_set_2d::{
     PolygonWithHoles, polygon_set_contains, polygon_set_to_shapes, ring_to_polygon,
     segment_distance_mm, union_polygon_sets,
 };
-use super::small::inset_convex_polygon;
+use super::raft_body::inset_convex_polygon;
 use crate::supports::rafts::crenelated::geometry::polygon_set_2d::PolygonError;
 use crate::geom::Vector2;
 use crate::geom::buffer_geometry::BufferGeometry;

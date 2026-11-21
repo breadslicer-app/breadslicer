@@ -11,7 +11,7 @@ use super::polygon_set_2d::{
     EDGE_QUERY_EPS_MM, PolygonWithHoles, build_clearance_edge_grid, difference_polygon_sets,
     grid_segment_blocked, offset_polygon_set, polygon_set_contains, ring_to_polygon,
 };
-use super::small::compute_footprint;
+use super::raft_body::compute_footprint;
 use crate::supports::rafts::crenelated::geometry::polygon_set_2d::PolygonError;
 use crate::geom::math_utils::{js_max, js_min, js_tan};
 

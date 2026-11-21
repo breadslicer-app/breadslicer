@@ -7,11 +7,11 @@ use super::super::raft_types::{RaftBottomMode, RaftSettings, SupportBaseCircle};
 use super::compute_raft_footprint::{
     compute_raft_footprint_polygons, raft_dynamic_margin_mm, raft_wall_base_height_mm,
 };
-use super::generate_chamfered_base::generate_chamfered_base;
-use super::generate_crenelated_wall_manual::generate_crenelated_wall_manual;
-use super::generate_perimeter_wall::generate_perimeter_wall;
+use super::raft_body::generate_chamfered_base;
+use super::raft_body::generate_crenelated_wall_manual;
+use super::raft_body::generate_perimeter_wall;
 use super::polygon_set_2d::PolygonWithHoles;
-use super::small::{inset_convex_polygon, signed_area_2d};
+use super::raft_body::{inset_convex_polygon, signed_area_2d};
 use crate::supports::rafts::crenelated::geometry::polygon_set_2d::PolygonError;
 use crate::geom::Vector2;
 use crate::geom::buffer_geometry::{BufferGeometry, merge_geometries};

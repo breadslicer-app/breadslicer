@@ -18,7 +18,7 @@ use i_overlay::float::overlay::{FloatOverlay, OverlayOptions};
 use i_overlay::mesh::float::outline::offset::OutlineOffset;
 use i_overlay::mesh::float::style::{LineJoin, OutlineStyle};
 
-use super::small::signed_area_2d;
+use super::raft_body::signed_area_2d;
 use crate::geom::Vector2;
 use crate::geom::math_utils::{js_hypot, js_max, js_min};
 use crate::geom::shape::{Path as ShapePath, Shape};

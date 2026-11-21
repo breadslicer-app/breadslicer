@@ -4,7 +4,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::convex_hull_2d::convex_hull_2d;
+use super::raft_body::convex_hull_2d;
 use crate::geom::Vector2;
 use crate::geom::math_utils::{js_max, js_min};
 
