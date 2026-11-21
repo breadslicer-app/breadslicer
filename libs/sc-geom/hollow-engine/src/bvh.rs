@@ -1,51 +1,94 @@
-//! Axis-aligned bounding volume hierarchy over the triangles of an
-//! [`IndexedMesh`].
+//! A tree of boxes over the triangles of an [`IndexedMesh`], for the rays
+//! and the nearest-surface questions the hollow asks of a mesh: whether a
+//! point is inside, where a drain meets the cavity, how thick a wall is.
 //!
-//! Ported from DragonFruit `rust/dragonfruit-mesh-core/src/bvh.rs`: the flat,
-//! leaf-batched build and the ray hit count the parity tests of the hollowing
-//! engine use, plus [`Bvh::ray_hit_distances`] for automatic drain depth and
-//! [`Bvh::nearest_distance`] for the exact wall distance.
+//! Built by the surface area heuristic over binned centroids: each split
+//! takes the plane, out of a few per axis, that makes the two halves'
+//! surface times triangles smallest. Large halves build on separate cores;
+//! the tree is laid out depth first afterwards, so it is the same every run.
 
 use rayon::prelude::*;
 
-use crate::hollowing::point_triangle_distance;
-use crate::mesh::{Aabb, IndexedMesh, Vec3};
+use crate::mesh::{IndexedMesh, Vec3};
 
-/// Triangles per leaf (DragonFruit measured 8 best over 1, 2, 4, 16).
+/// Most triangles a leaf holds.
 const LEAF_FACES: usize = 8;
-/// Marks [`FlatNode::b`] as a leaf's face count rather than a right child.
-const LEAF_FLAG: u32 = 1 << 31;
-/// Traversal stack depth; covers any mesh a `u32` face index can address.
-const STACK_DEPTH: usize = 64;
+/// Candidate planes per axis.
+const BINS: usize = 12;
+/// Halves of fewer triangles than this build on the core that split them.
+const PARALLEL_FACES: usize = 1 << 14;
 
 #[derive(Clone, Copy, Debug)]
-struct FlatNode {
+struct Bounds {
     min: [f32; 3],
     max: [f32; 3],
-    /// Internal: left child. Leaf: first index into `faces`.
-    a: u32,
-    /// Internal: right child. Leaf: `LEAF_FLAG | face count`.
-    b: u32,
 }
 
-impl FlatNode {
-    #[inline]
-    fn is_leaf(&self) -> bool {
-        self.b & LEAF_FLAG != 0
+impl Bounds {
+    const EMPTY: Self = Self {
+        min: [f32::INFINITY; 3],
+        max: [f32::NEG_INFINITY; 3],
+    };
+
+    fn grow(&mut self, o: &Bounds) {
+        for k in 0..3 {
+            self.min[k] = self.min[k].min(o.min[k]);
+            self.max[k] = self.max[k].max(o.max[k]);
+        }
     }
 
-    #[inline]
-    fn face_count(&self) -> usize {
-        (self.b & !LEAF_FLAG) as usize
+    fn area(&self) -> f32 {
+        let d = [0, 1, 2].map(|k| (self.max[k] - self.min[k]).max(0.0));
+        d[0] * d[1] + d[1] * d[2] + d[2] * d[0]
+    }
+
+    /// Squared distance from `p` to the box, 0 inside.
+    fn distance_sq(&self, p: Vec3) -> f32 {
+        let p = p.to_array();
+        (0..3)
+            .map(|k| {
+                let d = (self.min[k] - p[k]).max(p[k] - self.max[k]).max(0.0);
+                d * d
+            })
+            .sum()
+    }
+
+    /// Whether the ray `origin + t·dir`, `t ≥ 0`, passes through the box
+    /// (`inverse` is `1 / dir`, infinite along an axis `dir` keeps still).
+    fn crossed(&self, origin: [f32; 3], inverse: [f32; 3]) -> bool {
+        let (mut near, mut far) = (0.0f32, f32::INFINITY);
+        for k in 0..3 {
+            if inverse[k].is_infinite() {
+                // Parallel to this axis's faces: through the box's slab or not.
+                if origin[k] < self.min[k] || origin[k] > self.max[k] {
+                    return false;
+                }
+                continue;
+            }
+            let a = (self.min[k] - origin[k]) * inverse[k];
+            let b = (self.max[k] - origin[k]) * inverse[k];
+            near = near.max(a.min(b));
+            far = far.min(a.max(b));
+        }
+        near <= far
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct Node {
+    bounds: Bounds,
+    /// A leaf's first slot in `faces`, or an inner node's second child (its
+    /// first is the next node).
+    at: u32,
+    /// Triangles of a leaf; 0 for an inner node.
+    count: u32,
+}
+
+/// The tree, built by [`Bvh::build`] and asked about with the same mesh.
 #[derive(Clone)]
 pub struct Bvh {
-    nodes: Vec<FlatNode>,
-    /// Triangle indices, grouped by leaf.
+    nodes: Vec<Node>,
     faces: Vec<u32>,
-    root: u32,
 }
 
 impl std::fmt::Debug for Bvh {
@@ -57,131 +100,171 @@ impl std::fmt::Debug for Bvh {
     }
 }
 
+/// A triangle while the tree is built: its number, box and centroid.
+#[derive(Clone, Copy)]
+struct Item {
+    face: u32,
+    bounds: Bounds,
+    centre: [f32; 3],
+}
+
+enum Built {
+    Leaf(Bounds, Vec<u32>),
+    Split(Bounds, Box<Built>, Box<Built>),
+}
+
+fn bounds_of(items: &[Item]) -> Bounds {
+    let mut b = Bounds::EMPTY;
+    items.iter().for_each(|i| b.grow(&i.bounds));
+    b
+}
+
+/// Where to split `items` (already bounded by `whole`): the axis, the
+/// lowest centroid and span along it, and the first bin of the right half;
+/// `None` when no split costs less than a leaf.
+fn best_split(items: &[Item], whole: &Bounds) -> Option<(usize, f32, f32, usize)> {
+    let mut cmin = [f32::INFINITY; 3];
+    let mut cmax = [f32::NEG_INFINITY; 3];
+    for i in items {
+        for k in 0..3 {
+            cmin[k] = cmin[k].min(i.centre[k]);
+            cmax[k] = cmax[k].max(i.centre[k]);
+        }
+    }
+    let mut best: Option<(f32, usize, usize)> = None;
+    let bin = |i: &Item, axis: usize, span: f32| {
+        (((i.centre[axis] - cmin[axis]) / span * BINS as f32) as usize).min(BINS - 1)
+    };
+    for axis in 0..3 {
+        let span = cmax[axis] - cmin[axis];
+        if span <= 0.0 {
+            continue;
+        }
+        let mut bins = [(Bounds::EMPTY, 0usize); BINS];
+        for i in items {
+            let b = &mut bins[bin(i, axis, span)];
+            b.0.grow(&i.bounds);
+            b.1 += 1;
+        }
+        // Cost of every plane between bins: left sums from below, right from above.
+        let mut right = [(0.0f32, 0usize); BINS];
+        let (mut acc, mut n) = (Bounds::EMPTY, 0);
+        for b in (1..BINS).rev() {
+            acc.grow(&bins[b].0);
+            n += bins[b].1;
+            right[b] = (acc.area(), n);
+        }
+        let (mut acc, mut n) = (Bounds::EMPTY, 0);
+        for b in 1..BINS {
+            acc.grow(&bins[b - 1].0);
+            n += bins[b - 1].1;
+            let (right_area, right_n) = right[b];
+            if n == 0 || right_n == 0 {
+                continue;
+            }
+            let cost = acc.area() * n as f32 + right_area * right_n as f32;
+            if best.is_none_or(|(c, _, _)| cost < c) {
+                best = Some((cost, axis, b));
+            }
+        }
+    }
+    let leaf_cost = whole.area() * items.len() as f32;
+    best.filter(|&(cost, _, _)| items.len() > LEAF_FACES || cost < leaf_cost)
+        .map(|(_, axis, first_right)| (axis, cmin[axis], cmax[axis] - cmin[axis], first_right))
+}
+
+fn build(items: &mut [Item]) -> Built {
+    let whole = bounds_of(items);
+    let split = (items.len() > LEAF_FACES)
+        .then(|| best_split(items, &whole))
+        .flatten();
+    let Some((axis, low, span, first_right)) = split else {
+        if items.len() > LEAF_FACES {
+            // Every centroid in one place: halve by count.
+            let (a, b) = items.split_at_mut(items.len() / 2);
+            let (a, b) = (build(a), build(b));
+            return Built::Split(whole, Box::new(a), Box::new(b));
+        }
+        return Built::Leaf(whole, items.iter().map(|i| i.face).collect());
+    };
+    // The items of the left bins first, in one pass.
+    let goes_left = |i: &Item| {
+        (((i.centre[axis] - low) / span * BINS as f32) as usize).min(BINS - 1) < first_right
+    };
+    let mut left = 0;
+    for k in 0..items.len() {
+        if goes_left(&items[k]) {
+            items.swap(left, k);
+            left += 1;
+        }
+    }
+    let (a, b) = items.split_at_mut(left);
+    let (a, b) = if a.len() + b.len() >= PARALLEL_FACES {
+        rayon::join(|| build(a), || build(b))
+    } else {
+        (build(a), build(b))
+    };
+    Built::Split(whole, Box::new(a), Box::new(b))
+}
+
 impl Bvh {
     pub fn build(mesh: &IndexedMesh) -> Self {
-        let count = mesh.triangles.len();
-        let mut prims: Vec<(u32, Aabb, Vec3)> = mesh
+        let mut items: Vec<Item> = mesh
             .triangles
             .par_iter()
             .enumerate()
-            .map(|(i, tri)| {
-                let a = mesh.positions[tri[0] as usize];
-                let b = mesh.positions[tri[1] as usize];
-                let c = mesh.positions[tri[2] as usize];
-                let mut bb = Aabb::empty();
-                bb.expand(a);
-                bb.expand(b);
-                bb.expand(c);
-                let centroid = a.add(b).add(c).scale(1.0 / 3.0);
-                (i as u32, bb, centroid)
+            .map(|(face, t)| {
+                let [a, b, c] = t.map(|i| mesh.positions[i as usize].to_array());
+                let bounds = Bounds {
+                    min: [0, 1, 2].map(|k| a[k].min(b[k]).min(c[k])),
+                    max: [0, 1, 2].map(|k| a[k].max(b[k]).max(c[k])),
+                };
+                let centre = [0, 1, 2].map(|k| (a[k] + b[k] + c[k]) / 3.0);
+                Item {
+                    face: face as u32,
+                    bounds,
+                    centre,
+                }
             })
             .collect();
-
-        if count == 0 {
-            return Self {
-                nodes: Vec::new(),
-                faces: Vec::new(),
-                root: 0,
-            };
+        let mut tree = Self {
+            nodes: Vec::new(),
+            faces: Vec::with_capacity(items.len()),
+        };
+        if !items.is_empty() {
+            tree.lay_out(build(&mut items));
         }
-        let (nodes, faces) = build_halves(&mut prims, PARALLEL_LEVELS);
-        let root = nodes.len() as u32 - 1;
-        Self { nodes, faces, root }
+        tree
     }
 
-    /// How many triangles the ray from `origin` along `dir` crosses.
-    pub fn ray_hit_count(&self, mesh: &IndexedMesh, origin: Vec3, dir: Vec3) -> u32 {
-        let mut count = 0u32;
-        self.traverse(mesh, origin, dir, |_, _| count += 1);
-        count
-    }
-
-    /// Distances along `dir` (in units of `dir`'s length) of every triangle
-    /// the ray crosses, sorted ascending.
-    pub fn ray_hit_distances(&self, mesh: &IndexedMesh, origin: Vec3, dir: Vec3) -> Vec<f32> {
-        let mut hits = Vec::new();
-        self.traverse(mesh, origin, dir, |t, _| hits.push(t));
-        hits.sort_by(f32::total_cmp);
-        hits
-    }
-
-    /// [`Bvh::ray_hit_distances`] for a closed mesh, without gaps: a ray
-    /// through an edge or a vertex hits every triangle there (so the same
-    /// distance can come more than once) instead of slipping between them,
-    /// which the exact test can do by rounding.
-    pub fn ray_hit_distances_closed(
-        &self,
-        mesh: &IndexedMesh,
-        origin: Vec3,
-        dir: Vec3,
-    ) -> Vec<f32> {
-        let mut hits = Vec::new();
-        self.traverse_with(mesh, origin, dir, ray_tri_closed, |t, _| hits.push(t));
-        hits.sort_by(f32::total_cmp);
-        hits
-    }
-
-    /// [`Bvh::ray_hit_distances_closed`], with the face each hit is on.
-    pub fn ray_hits_closed(&self, mesh: &IndexedMesh, origin: Vec3, dir: Vec3) -> Vec<(f32, u32)> {
-        let mut hits = Vec::new();
-        self.traverse_with(mesh, origin, dir, ray_tri_closed, |t, f| hits.push((t, f)));
-        hits.sort_by(|a, b| a.0.total_cmp(&b.0));
-        hits
-    }
-
-    /// Distance from `p` to the closest triangle of `mesh`, if one is closer
-    /// than `max_distance`. Nearer boxes are visited first, and boxes no
-    /// closer than the best triangle so far are skipped.
-    pub fn nearest_distance(&self, mesh: &IndexedMesh, p: Vec3, max_distance: f32) -> Option<f32> {
-        if self.nodes.is_empty() {
-            return None;
-        }
-        let mut best = max_distance * max_distance;
-        let mut found = false;
-        let mut stack = [0u32; STACK_DEPTH];
-        let mut depth = 1usize;
-        stack[0] = self.root;
-        while depth > 0 {
-            depth -= 1;
-            let node = &self.nodes[stack[depth] as usize];
-            if box_distance_sq(node, p) >= best {
-                continue;
+    /// Appends `built` depth first: an inner node, its first child right
+    /// after it, its second child where `at` says.
+    fn lay_out(&mut self, built: Built) {
+        match built {
+            Built::Leaf(bounds, faces) => {
+                self.nodes.push(Node {
+                    bounds,
+                    at: self.faces.len() as u32,
+                    count: faces.len() as u32,
+                });
+                self.faces.extend(faces);
             }
-            if node.is_leaf() {
-                for k in 0..node.face_count() {
-                    let [a, b, c] = mesh.tri_positions(self.faces[node.a as usize + k]);
-                    let d = point_triangle_distance(p, a, b, c);
-                    if d * d < best {
-                        best = d * d;
-                        found = true;
-                    }
-                }
-            } else {
-                let near_a = box_distance_sq(&self.nodes[node.a as usize], p);
-                let near_b = box_distance_sq(&self.nodes[node.b as usize], p);
-                // The farther child goes first on the stack, so the nearer
-                // is visited first and tightens `best` for the other.
-                let (far, near) = if near_a <= near_b {
-                    ((node.b, near_b), (node.a, near_a))
-                } else {
-                    ((node.a, near_a), (node.b, near_b))
-                };
-                for (child, d2) in [far, near] {
-                    if d2 < best {
-                        stack[depth] = child;
-                        depth += 1;
-                    }
-                }
+            Built::Split(bounds, a, b) => {
+                let me = self.nodes.len();
+                self.nodes.push(Node {
+                    bounds,
+                    at: 0,
+                    count: 0,
+                });
+                self.lay_out(*a);
+                self.nodes[me].at = self.nodes.len() as u32;
+                self.lay_out(*b);
             }
         }
-        found.then(|| best.sqrt())
     }
 
-    fn traverse(&self, mesh: &IndexedMesh, origin: Vec3, dir: Vec3, hit: impl FnMut(f32, u32)) {
-        self.traverse_with(mesh, origin, dir, ray_tri, hit);
-    }
-
-    fn traverse_with(
+    /// Calls `hit(t, face)` for every triangle `test` says the ray crosses.
+    fn cast(
         &self,
         mesh: &IndexedMesh,
         origin: Vec3,
@@ -192,270 +275,193 @@ impl Bvh {
         if self.nodes.is_empty() {
             return;
         }
-        let inv_dir = inverse_direction(dir);
-        let mut stack = [0u32; STACK_DEPTH];
-        let mut depth = 1usize;
-        stack[0] = self.root;
-        while depth > 0 {
-            depth -= 1;
-            let node = self.nodes[stack[depth] as usize];
-            if node_entry(origin, inv_dir, &node, f32::INFINITY).is_infinite() {
+        let o = origin.to_array();
+        let inverse = dir.to_array().map(|d| 1.0 / d);
+        let mut stack = vec![0u32];
+        while let Some(n) = stack.pop() {
+            let node = &self.nodes[n as usize];
+            if !node.bounds.crossed(o, inverse) {
                 continue;
             }
-            if node.is_leaf() {
-                for k in 0..node.face_count() {
-                    let face = self.faces[node.a as usize + k];
-                    let [a, b, c] = mesh.tri_positions(face);
-                    if let Some(t) = test(origin, dir, a, b, c) {
-                        hit(t, face);
-                    }
+            if node.count == 0 {
+                stack.push(node.at);
+                stack.push(n + 1);
+                continue;
+            }
+            for &face in &self.faces[node.at as usize..(node.at + node.count) as usize] {
+                let [a, b, c] = mesh.tri_positions(face);
+                if let Some(t) = test(origin, dir, a, b, c) {
+                    hit(t, face);
                 }
-            } else {
-                stack[depth] = node.a;
-                stack[depth + 1] = node.b;
-                depth += 2;
             }
         }
     }
-}
 
-/// Recursively split `prims` into nodes, appending leaves to `nodes` and their
-/// face indices to `faces`. `written` is the next free slot in `faces`.
-/// How many levels of the tree have their halves built side by side.
-const PARALLEL_LEVELS: u32 = 6;
-/// Fewer triangles than this are built on one core.
-const PARALLEL_MIN_FACES: usize = 1 << 15;
-
-/// The nodes and faces [`build_rec`] lays out for `prims`, the top
-/// `levels` levels' halves built on separate cores (#451): each half on
-/// its own, then the left's nodes and faces, the right's after them and
-/// the parent last, as one core builds them, so the tree is the same.
-fn build_halves(prims: &mut [(u32, Aabb, Vec3)], levels: u32) -> (Vec<FlatNode>, Vec<u32>) {
-    if levels == 0 || prims.len() < PARALLEL_MIN_FACES {
-        let mut nodes = Vec::with_capacity(prims.len() / LEAF_FACES * 2 + 2);
-        let mut faces = vec![0u32; prims.len()];
-        let mut written = 0usize;
-        build_rec(&mut nodes, &mut faces, &mut written, prims);
-        return (nodes, faces);
+    /// How many triangles the ray from `origin` along `dir` crosses.
+    pub fn ray_hit_count(&self, mesh: &IndexedMesh, origin: Vec3, dir: Vec3) -> u32 {
+        let mut count = 0;
+        self.cast(mesh, origin, dir, ray_tri, |_, _| count += 1);
+        count
     }
-    let bbox = bounds_of(prims);
-    let mid = split_at_median(prims);
-    let (left_slice, right_slice) = prims.split_at_mut(mid);
-    let ((mut nodes, mut faces), (right_nodes, right_faces)) = rayon::join(
-        || build_halves(left_slice, levels - 1),
-        || build_halves(right_slice, levels - 1),
-    );
-    let left = nodes.len() as u32 - 1;
-    let (node_shift, face_shift) = (nodes.len() as u32, faces.len() as u32);
-    nodes.extend(right_nodes.into_iter().map(|mut node| {
-        if node.is_leaf() {
-            node.a += face_shift;
-        } else {
-            node.a += node_shift;
-            node.b += node_shift;
+
+    /// How far along `dir` (in its lengths) the ray crosses each triangle,
+    /// nearest first.
+    pub fn ray_hit_distances(&self, mesh: &IndexedMesh, origin: Vec3, dir: Vec3) -> Vec<f32> {
+        let mut hits = Vec::new();
+        self.cast(mesh, origin, dir, ray_tri, |t, _| hits.push(t));
+        hits.sort_by(f32::total_cmp);
+        hits
+    }
+
+    /// [`Bvh::ray_hit_distances`] for a closed mesh, with no gaps: a ray
+    /// through an edge or a corner hits every triangle there (the same
+    /// distance can come more than once) rather than slipping between them.
+    pub fn ray_hit_distances_closed(
+        &self,
+        mesh: &IndexedMesh,
+        origin: Vec3,
+        dir: Vec3,
+    ) -> Vec<f32> {
+        let mut hits = Vec::new();
+        self.cast(mesh, origin, dir, ray_tri_closed, |t, _| hits.push(t));
+        hits.sort_by(f32::total_cmp);
+        hits
+    }
+
+    /// [`Bvh::ray_hit_distances_closed`] with the triangle each distance is
+    /// on.
+    pub fn ray_hits_closed(&self, mesh: &IndexedMesh, origin: Vec3, dir: Vec3) -> Vec<(f32, u32)> {
+        let mut hits = Vec::new();
+        self.cast(mesh, origin, dir, ray_tri_closed, |t, f| hits.push((t, f)));
+        hits.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        hits
+    }
+
+    /// The distance from `p` to the nearest triangle, when one is closer than
+    /// `max_distance`. The nearer child is opened first; boxes no nearer
+    /// than the best triangle found are passed over.
+    pub fn nearest_distance(&self, mesh: &IndexedMesh, p: Vec3, max_distance: f32) -> Option<f32> {
+        let mut best = max_distance * max_distance;
+        let mut found = false;
+        let mut stack: Vec<(u32, f32)> = Vec::new();
+        if let Some(root) = self.nodes.first() {
+            stack.push((0, root.bounds.distance_sq(p)));
         }
-        node
-    }));
-    faces.extend(right_faces);
-    let right = nodes.len() as u32 - 1;
-    nodes.push(FlatNode {
-        min: bbox.min.to_array(),
-        max: bbox.max.to_array(),
-        a: left,
-        b: right,
-    });
-    (nodes, faces)
-}
-
-/// The box of `prims`.
-fn bounds_of(prims: &[(u32, Aabb, Vec3)]) -> Aabb {
-    let mut bbox = Aabb::empty();
-    for &(_, bb, _) in prims {
-        bbox.union(&bb);
-    }
-    bbox
-}
-
-/// Splits `prims` along the axis their centroids spread most, at the
-/// median, and returns where the right half starts.
-fn split_at_median(prims: &mut [(u32, Aabb, Vec3)]) -> usize {
-    let mut cmin = Vec3::new(f32::INFINITY, f32::INFINITY, f32::INFINITY);
-    let mut cmax = Vec3::new(f32::NEG_INFINITY, f32::NEG_INFINITY, f32::NEG_INFINITY);
-    for &(_, _, c) in prims.iter() {
-        cmin = cmin.min(c);
-        cmax = cmax.max(c);
-    }
-    let ext = cmax.sub(cmin);
-    let axis = if ext.x >= ext.y && ext.x >= ext.z {
-        0
-    } else if ext.y >= ext.z {
-        1
-    } else {
-        2
-    };
-    let mid = prims.len() / 2;
-    prims.select_nth_unstable_by(mid, |a, b| {
-        let (av, bv) = match axis {
-            0 => (a.2.x, b.2.x),
-            1 => (a.2.y, b.2.y),
-            _ => (a.2.z, b.2.z),
-        };
-        av.total_cmp(&bv)
-    });
-    mid
-}
-
-fn build_rec(
-    nodes: &mut Vec<FlatNode>,
-    faces: &mut [u32],
-    written: &mut usize,
-    prims: &mut [(u32, Aabb, Vec3)],
-) -> u32 {
-    let bbox = bounds_of(prims);
-
-    if prims.len() <= LEAF_FACES {
-        let first = *written as u32;
-        for &(face, _, _) in prims.iter() {
-            faces[*written] = face;
-            *written += 1;
-        }
-        let idx = nodes.len() as u32;
-        nodes.push(FlatNode {
-            min: bbox.min.to_array(),
-            max: bbox.max.to_array(),
-            a: first,
-            b: LEAF_FLAG | prims.len() as u32,
-        });
-        return idx;
-    }
-
-    // Split along the axis with the largest centroid spread, at the median.
-    let mid = split_at_median(prims);
-    let (left_slice, right_slice) = prims.split_at_mut(mid);
-
-    let left = build_rec(nodes, faces, written, left_slice);
-    let right = build_rec(nodes, faces, written, right_slice);
-
-    let idx = nodes.len() as u32;
-    nodes.push(FlatNode {
-        min: bbox.min.to_array(),
-        max: bbox.max.to_array(),
-        a: left,
-        b: right,
-    });
-    idx
-}
-
-/// Squared distance from `p` to `node`'s box (0 inside it).
-#[inline]
-fn box_distance_sq(node: &FlatNode, p: Vec3) -> f32 {
-    p.to_array()
-        .iter()
-        .zip(node.min.iter().zip(&node.max))
-        .map(|(&p, (&min, &max))| {
-            let v = (min - p).max(p - max).max(0.0);
-            v * v
-        })
-        .sum()
-}
-
-#[inline]
-fn inverse_direction(dir: Vec3) -> Vec3 {
-    let axis = |v: f32| {
-        if v.abs() > 1e-20 {
-            1.0 / v
-        } else {
-            f32::INFINITY
-        }
-    };
-    Vec3::new(axis(dir.x), axis(dir.y), axis(dir.z))
-}
-
-/// Distance along the ray at which it enters `node`, or infinity if it misses
-/// or enters beyond `max_distance`.
-#[inline]
-fn node_entry(origin: Vec3, inv_dir: Vec3, node: &FlatNode, max_distance: f32) -> f32 {
-    // A ray parallel to a slab is in it or misses it: with the inverse at
-    // infinity, `(bound - origin) * inv` would be NaN for an origin on the
-    // bound, and the box would be skipped (a ray along an axis through a
-    // box face slipped past every triangle in it, #315).
-    let slab = |min: f32, max: f32, o: f32, inv: f32| -> (f32, f32) {
-        if inv.is_infinite() {
-            if (min..=max).contains(&o) {
-                (f32::NEG_INFINITY, f32::INFINITY)
-            } else {
-                (f32::INFINITY, f32::NEG_INFINITY)
+        while let Some((n, d2)) = stack.pop() {
+            if d2 >= best {
+                continue;
             }
-        } else {
-            let (a, b) = ((min - o) * inv, (max - o) * inv);
-            (a.min(b), a.max(b))
+            let node = &self.nodes[n as usize];
+            if node.count == 0 {
+                let kids =
+                    [n + 1, node.at].map(|k| (k, self.nodes[k as usize].bounds.distance_sq(p)));
+                let (near, far) = if kids[0].1 <= kids[1].1 {
+                    (kids[0], kids[1])
+                } else {
+                    (kids[1], kids[0])
+                };
+                stack.push(far);
+                stack.push(near);
+                continue;
+            }
+            for &face in &self.faces[node.at as usize..(node.at + node.count) as usize] {
+                let [a, b, c] = mesh.tri_positions(face);
+                let d = point_triangle_distance(p, a, b, c);
+                if d * d < best {
+                    best = d * d;
+                    found = true;
+                }
+            }
         }
-    };
-    let (x0, x1) = slab(node.min[0], node.max[0], origin.x, inv_dir.x);
-    let (y0, y1) = slab(node.min[1], node.max[1], origin.y, inv_dir.y);
-    let (z0, z1) = slab(node.min[2], node.max[2], origin.z, inv_dir.z);
-    let tmin = x0.max(y0).max(z0).max(0.0);
-    let tmax = x1.min(y1).min(z1);
-    if tmax < tmin || tmin > max_distance {
-        f32::INFINITY
-    } else {
-        tmin
+        found.then(|| best.sqrt())
     }
 }
 
-/// Möller–Trumbore triangle intersection; `t >= 0` if hit in front.
+/// Whether `p` is inside the closed `mesh`: an odd number of its triangles
+/// lie along a ray from `p` in a fixed slanted direction (slanted so it
+/// does not run along the grid's planes), started a fifth of `nudge`
+/// along it, off any surface `p` sits on.
+pub fn point_inside_mesh_parity(mesh: &IndexedMesh, bvh: &Bvh, p: Vec3, nudge: f32) -> bool {
+    let dir = Vec3::new(0.802, 0.457, 0.384);
+    bvh.ray_hit_count(mesh, p + dir * (nudge * 0.2), dir) % 2 == 1
+}
+
+/// Where the ray `origin + t·dir` crosses the triangle `abc`, as `t ≥ 0`,
+/// by its barycentric coordinates (Cramer's rule on the triangle's edges).
+/// A ray in the triangle's plane misses.
 pub fn ray_tri(origin: Vec3, dir: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<f32> {
-    const EPS: f32 = 1e-8;
-    let e1 = b.sub(a);
-    let e2 = c.sub(a);
-    let p = dir.cross(e2);
-    let det = e1.dot(p);
-    if det.abs() < EPS {
-        return None;
-    }
-    let inv_det = 1.0 / det;
-    let s = origin.sub(a);
-    let u = s.dot(p) * inv_det;
-    if !(0.0..=1.0).contains(&u) {
-        return None;
-    }
-    let q = s.cross(e1);
-    let v = dir.dot(q) * inv_det;
-    if v < 0.0 || u + v > 1.0 {
-        return None;
-    }
-    let t = e2.dot(q) * inv_det;
-    if t >= 0.0 { Some(t) } else { None }
+    crossing(origin, dir, a, b, c, 0.0, |det, _, _| det.abs() < 1e-8)
 }
 
-/// [`ray_tri`] with the triangle grown by a hair in barycentric terms
-/// (`1e-4` of its size), so a ray through a shared edge or vertex hits the
-/// triangles on both sides rather than slipping between them, and tiny
-/// triangles counted.
+/// [`ray_tri`] with the triangle grown by `1e-4` of itself in barycentric
+/// terms, so a ray through a shared edge or corner hits the triangles on
+/// both sides instead of slipping between them, and tiny triangles count.
+/// Edge-on is judged relative to the triangle's size.
 pub fn ray_tri_closed(origin: Vec3, dir: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Option<f32> {
-    const GROW: f32 = 1e-4;
-    let e1 = b.sub(a);
-    let e2 = c.sub(a);
-    let p = dir.cross(e2);
-    let det = e1.dot(p);
-    // Relative to the triangle's size: a tiny triangle (a contour through a
-    // grid corner makes them) is still hit; one edge-on to the ray is not.
-    if det.abs() <= 1e-7 * e1.dot(e1).sqrt() * p.dot(p).sqrt() {
+    crossing(origin, dir, a, b, c, 1e-4, |det, e1, side| {
+        det.abs() <= 1e-7 * e1.length() * side.length()
+    })
+}
+
+fn crossing(
+    origin: Vec3,
+    dir: Vec3,
+    a: Vec3,
+    b: Vec3,
+    c: Vec3,
+    grow: f32,
+    edge_on: impl Fn(f32, Vec3, Vec3) -> bool,
+) -> Option<f32> {
+    let (e1, e2) = (b - a, c - a);
+    let side = dir.cross(e2);
+    let det = e1.dot(side);
+    if edge_on(det, e1, side) {
         return None;
     }
-    let inv_det = 1.0 / det;
-    let s = origin.sub(a);
-    let u = s.dot(p) * inv_det;
-    if !(-GROW..=1.0 + GROW).contains(&u) {
+    let to = origin - a;
+    let u = to.dot(side) / det;
+    if u < -grow || u > 1.0 + grow {
         return None;
     }
-    let q = s.cross(e1);
-    let v = dir.dot(q) * inv_det;
-    if v < -GROW || u + v > 1.0 + GROW {
+    let up = to.cross(e1);
+    let v = dir.dot(up) / det;
+    if v < -grow || u + v > 1.0 + grow {
         return None;
     }
-    let t = e2.dot(q) * inv_det;
-    if t >= 0.0 { Some(t) } else { None }
+    let t = e2.dot(up) / det;
+    (t >= 0.0).then_some(t)
+}
+
+/// The distance from `p` to the triangle `abc`: to its plane when `p`'s
+/// foot falls inside it, else to the nearest of its three sides.
+pub fn point_triangle_distance(p: Vec3, a: Vec3, b: Vec3, c: Vec3) -> f32 {
+    let normal = (b - a).cross(c - a);
+    let n2 = normal.dot(normal);
+    if n2 > 0.0 {
+        // The foot's barycentric weights: each the area of the triangle it
+        // makes with the opposite side, over the whole.
+        let foot = p - normal * ((p - a).dot(normal) / n2);
+        let wa = (b - foot).cross(c - foot).dot(normal);
+        let wb = (c - foot).cross(a - foot).dot(normal);
+        let wc = (a - foot).cross(b - foot).dot(normal);
+        if wa >= 0.0 && wb >= 0.0 && wc >= 0.0 {
+            return (p - foot).length();
+        }
+    }
+    segment_distance(p, a, b)
+        .min(segment_distance(p, b, c))
+        .min(segment_distance(p, c, a))
+}
+
+fn segment_distance(p: Vec3, a: Vec3, b: Vec3) -> f32 {
+    let ab = b - a;
+    let l2 = ab.dot(ab);
+    let t = if l2 > 0.0 {
+        ((p - a).dot(ab) / l2).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    (p - (a + ab * t)).length()
 }
 
 #[cfg(test)]
@@ -463,34 +469,49 @@ mod tests {
     use super::*;
     use crate::shapes::icosphere;
 
-    /// The tree built on several cores is the one a single core builds
-    /// (#451): the same nodes, in the same places, over the same faces.
+    /// The tree is the same every time, and answers like asking every
+    /// triangle.
     #[test]
-    fn the_tree_built_on_every_core_is_the_one_built_on_one() {
-        let mesh = icosphere(10.0, 7);
-        assert!(mesh.triangles.len() > 4 * PARALLEL_MIN_FACES);
-        let prims = |mesh: &IndexedMesh| -> Vec<(u32, Aabb, Vec3)> {
-            mesh.triangles
-                .iter()
-                .enumerate()
-                .map(|(i, tri)| {
-                    let [a, b, c] = tri.map(|v| mesh.positions[v as usize]);
-                    let mut bb = Aabb::empty();
-                    bb.expand(a);
-                    bb.expand(b);
-                    bb.expand(c);
-                    (i as u32, bb, a.add(b).add(c).scale(1.0 / 3.0))
+    fn the_tree_answers_like_every_triangle_and_the_same_each_build() {
+        let mesh = icosphere(10.0, 6);
+        let tree = Bvh::build(&mesh);
+        let again = Bvh::build(&mesh);
+        assert_eq!(tree.faces, again.faces);
+        let mut faces = tree.faces.clone();
+        faces.sort_unstable();
+        assert_eq!(faces, (0..mesh.triangles.len() as u32).collect::<Vec<_>>());
+        for k in 0..40 {
+            let f = k as f32;
+            let p = Vec3::new((f * 0.7).sin() * 14.0, (f * 1.3).cos() * 9.0, f * 0.4 - 8.0);
+            let brute = (0..mesh.triangles.len() as u32)
+                .map(|t| {
+                    let [a, b, c] = mesh.tri_positions(t);
+                    point_triangle_distance(p, a, b, c)
                 })
-                .collect()
-        };
-        let (one_nodes, one_faces) = build_halves(&mut prims(&mesh), 0);
-        let (nodes, faces) = build_halves(&mut prims(&mesh), PARALLEL_LEVELS);
-        assert_eq!(faces, one_faces);
-        assert_eq!(nodes.len(), one_nodes.len());
-        for (a, b) in nodes.iter().zip(&one_nodes) {
-            assert_eq!((a.min, a.max, a.a, a.b), (b.min, b.max, b.a, b.b));
+                .fold(f32::INFINITY, f32::min);
+            assert_eq!(tree.nearest_distance(&mesh, p, 100.0), Some(brute));
+            let dir = Vec3::new(0.893, 0.372, 0.254);
+            let brute_hits = (0..mesh.triangles.len() as u32)
+                .filter(|&t| {
+                    let [a, b, c] = mesh.tri_positions(t);
+                    ray_tri(p, dir, a, b, c).is_some()
+                })
+                .count() as u32;
+            assert_eq!(tree.ray_hit_count(&mesh, p, dir), brute_hits);
         }
-        let built = Bvh::build(&mesh);
-        assert_eq!(built.root as usize, one_nodes.len() - 1);
+    }
+
+    #[test]
+    fn a_point_is_as_far_from_a_triangle_as_from_its_nearest_part() {
+        let (a, b, c) = (
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(4.0, 0.0, 0.0),
+            Vec3::new(0.0, 4.0, 0.0),
+        );
+        let d = |p: Vec3| point_triangle_distance(p, a, b, c);
+        assert_eq!(d(Vec3::new(1.0, 1.0, 3.0)), 3.0);
+        assert_eq!(d(Vec3::new(-3.0, -4.0, 0.0)), 5.0);
+        assert_eq!(d(Vec3::new(2.0, -2.0, 0.0)), 2.0);
+        assert!((d(Vec3::new(3.0, 3.0, 0.0)) - 2.0f32.sqrt()).abs() < 1e-6);
     }
 }

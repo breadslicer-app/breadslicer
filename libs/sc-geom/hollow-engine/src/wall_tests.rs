@@ -1,28 +1,21 @@
 use super::*;
-use crate::hollowing::point_triangle_distance;
+use crate::bvh::point_triangle_distance;
 use crate::mesh::{IndexedMesh, Vec3};
 use crate::shapes::{icosphere, merged, tessellated_box};
 
-fn session(mesh: IndexedMesh, voxel_mm: f32) -> HollowSession {
-    HollowSession::build(
-        mesh,
-        192,
-        [0.0, 0.0, 0.0, 1.0],
-        Some(voxel_mm),
-        Control::none(),
-    )
-    .unwrap()
+fn session(mesh: IndexedMesh, voxel_mm: f32) -> Volume {
+    Volume::build(mesh, voxel_mm, Control::none()).unwrap()
 }
 
 /// A 40 mm cube turned 30° about Z and 20° about X: its faces follow no
 /// grid axis.
 fn turned_cube() -> IndexedMesh {
     let mut cube = tessellated_box([-20.0; 3], [20.0; 3], 8);
-    let (z, x) = (30f32.to_radians() / 2.0, 20f32.to_radians() / 2.0);
-    let qz = [0.0, 0.0, z.sin(), z.cos()];
-    let qx = [x.sin(), 0.0, 0.0, x.cos()];
+    let (z, x) = (30f32.to_radians(), 20f32.to_radians());
     for p in &mut cube.positions {
-        *p = p.rotate_by_quat(qz).rotate_by_quat(qx);
+        let (px, py) = (p.x * z.cos() - p.y * z.sin(), p.x * z.sin() + p.y * z.cos());
+        let (py, pz) = (py * x.cos() - p.z * x.sin(), py * x.sin() + p.z * x.cos());
+        *p = Vec3::new(px, py, pz);
     }
     cube
 }
@@ -67,7 +60,7 @@ fn the_nearest_triangle_matches_a_full_scan() {
 }
 
 /// Every voxel within the band holds its exact distance, and none outside it
-/// reads closer than the band: the chamfer limit misses no voxel.
+/// reads closer than the band: the seed distance misses no voxel.
 #[test]
 fn every_voxel_within_the_band_is_exact() {
     for (name, mesh, voxel) in [
@@ -79,12 +72,9 @@ fn every_voxel_within_the_band_is_exact() {
         let band = 2.0 / voxel + 5.0;
         let walls = WallDistances::measure(&session, band, None, Control::none()).unwrap();
         let grid = session.grid();
-        let (solid, chamfer) = (session.solid_mask(), session.chamfer_distances());
+        let solid = session.solid_mask();
         let mut exact = 0;
-        for i in 0..grid.cell_count() {
-            if !solid[i] || chamfer[i] == 0.0 {
-                continue;
-            }
+        for (i, _) in solid.iter().enumerate().filter(|(_, s)| **s) {
             let (x, y, z) = grid.coords(i);
             let truth = brute_distance(&mesh, grid.center_world(x, y, z)) / voxel;
             let got = walls.dist[i];

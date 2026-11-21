@@ -4,12 +4,11 @@ version = "0.0.1"
 edition = "2024"
 license = "MIT"
 authors = [
-    "Open Resin Alliance (DragonFruit)",
     "SynrgStudio",
 ]
-description = "Native Rust port of DragonFruit's voxel hollowing engine (cavity, infill, solid areas, preview and apply) with an exact drain-hole cut, for the SoulCrafted Slicer."
+description = "Hollowing for Breadslicer: exact wall distance, one cavity for the preview and the result, infill, and exact drain cuts."
 categories = ["algorithms"]
-keywords = ["geometry", "hollow", "3d-printing", "SLA", "dragonfruit"]
+keywords = ["geometry", "hollow", "3d-printing", "SLA"]
 repository = "https://codeberg.org/SoulCrafted/Slicer"
 autotests = false
 
@@ -22,7 +21,6 @@ ahash = "0.8.12"
 # Joins the parts of a model that overlap before it is hollowed (#453).
 manifold-rust = "0.19.2"
 rayon = "1.12"
-smallvec = "1.16"
 
 [dev-dependencies]
 serde_json = "1.0.150"

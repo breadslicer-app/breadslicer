@@ -99,7 +99,7 @@ impl DrillTarget {
     /// meeting the mesh) is right behind the wall there: the wall's
     /// thickness. A cheaper look than [`DrillTarget::report`], for a map.
     pub fn wall_depth(&self, point: [f32; 3], inward: [f32; 3], rays: usize) -> Option<f32> {
-        let axis = crate::hollowing::vec3_normalize(Vec3::new(inward[0], inward[1], inward[2]))?;
+        let axis = Vec3::new(inward[0], inward[1], inward[2]).normalized()?;
         let start = Vec3::new(point[0], point[1], point[2]).sub(axis.scale(DRAIN_RAY_START_MM));
         let walls = self.walls(start, axis);
         if walls.len() < 3 || walls.len() % 2 == 1 || walls[0] > DRAIN_RAY_START_MM + ON_SURFACE_MM

@@ -1,11 +1,8 @@
 //! Drain holes: an exact cut of a closed mesh by a convex prism.
 //!
-//! DragonFruit punches its drains with manifold3d (`punch_cylinders_manifold`,
-//! a C++ library its build clones and compiles with CMake) and refuses its own
-//! voxel-tunnel fallback. SoulCrafted builds offline and in pure Rust, so the
-//! cut is done here, for the one shape a drain needs: a closed edge-manifold
-//! mesh `A` minus a convex polyhedron `C` (a cylinder, as a prism of
-//! DragonFruit's segment count, or a cone, as a frustum of one). The same
+//! Done here, in pure Rust, for the one shape a drain needs: a closed
+//! edge-manifold mesh `A` minus a convex polyhedron `C` (a cylinder, as a
+//! prism, or a cone, as a frustum of one). The same
 //! cut keeps the other side for [`intersect_convex`]: `A ∩ C`, the piece a
 //! drain takes out, from which its plug is made (#318).
 //!
@@ -32,7 +29,7 @@ use std::cell::OnceCell;
 use std::collections::{HashMap, HashSet};
 
 use crate::bvh::Bvh;
-use crate::hollowing::{compact_unreferenced_vertices, point_inside_mesh_parity, vec3_normalize};
+use crate::bvh::point_inside_mesh_parity;
 use crate::mesh::{IndexedMesh, Vec3};
 use crate::topology::{EdgeManifoldDefects, edge_manifold_defects};
 
@@ -216,8 +213,7 @@ const GENERAL_POSITION_MM: f64 = 1e-4;
 
 impl ConvexCutter {
     /// A prism over an ellipse with `segments` sides, from `origin` along
-    /// `axis` for `length`: DragonFruit's `build_cylinder_mesh` shape and
-    /// basis, turned by `phase` radians.
+    /// `axis` for `length`, turned by `phase` radians.
     pub fn prism(
         origin: Vec3,
         axis: Vec3,
@@ -250,14 +246,23 @@ impl ConvexCutter {
         segments: usize,
         phase: f64,
     ) -> Self {
-        let axis = vec3_normalize(axis).unwrap_or(Vec3::new(0.0, 0.0, -1.0));
+        let axis = axis.normalized().unwrap_or(Vec3::new(0.0, 0.0, -1.0));
         let helper = if axis.z.abs() < 0.95 {
             Vec3::new(0.0, 0.0, 1.0)
         } else {
             Vec3::new(0.0, 1.0, 0.0)
         };
-        let u = to64(vec3_normalize(helper.cross(axis)).unwrap_or(Vec3::new(1.0, 0.0, 0.0)));
-        let v = to64(vec3_normalize(axis.cross(to32(u))).unwrap_or(Vec3::new(0.0, 1.0, 0.0)));
+        let u = to64(
+            helper
+                .cross(axis)
+                .normalized()
+                .unwrap_or(Vec3::new(1.0, 0.0, 0.0)),
+        );
+        let v = to64(
+            (axis.cross(to32(u)))
+                .normalized()
+                .unwrap_or(Vec3::new(0.0, 1.0, 0.0)),
+        );
         Prism {
             origin: to64(origin),
             u,
@@ -763,7 +768,7 @@ impl<'a> OverlappingShells<'a> {
             .map(|(&tri, _)| tri)
             .collect();
         let mut untouched = IndexedMesh::new(self.mesh.positions.clone(), triangles);
-        compact_unreferenced_vertices(&mut untouched);
+        untouched.drop_unused_corners();
         Ok(CutShells { untouched, shells })
     }
 
@@ -796,7 +801,7 @@ impl<'a> OverlappingShells<'a> {
             .map(|(&tri, _)| tri)
             .collect();
         let mut out = IndexedMesh::new(self.mesh.positions.clone(), triangles);
-        compact_unreferenced_vertices(&mut out);
+        out.drop_unused_corners();
         out
     }
 
@@ -1305,7 +1310,7 @@ impl<'a> Cut<'a> {
         let mut positions: Vec<Vec3> = self.mesh.positions.clone();
         positions.extend(self.extra.iter().map(|&p| to32(p)));
         let mut mesh = IndexedMesh::new(positions, out);
-        compact_unreferenced_vertices(&mut mesh);
+        mesh.drop_unused_corners();
         let closed = closed && (!inside || edge_manifold_defects(&mesh).is_clean());
         Ok((mesh, fresh, closed))
     }
