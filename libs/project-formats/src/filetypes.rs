@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 /// File formats [`crate::read_project`] / [`crate::write_project`]
 /// dispatch on. One variant per supported project container; other
-/// formats (DragonFruit's VOXL, for instance) become new variants
+/// formats (a voxel format, for instance) become new variants
 /// with their own submodules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProjectFileType {

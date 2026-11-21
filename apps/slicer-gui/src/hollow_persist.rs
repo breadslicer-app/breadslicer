@@ -94,13 +94,16 @@ use sc_project_formats::HollowDocument;
 use sc_scene::node::NodeKind;
 use sc_scene::{NodeId, Scene};
 
-use sc_geom::df_hollow::hollow_df::LassoRegion;
+use sc_geom::hollow::hollow_engine::LassoRegion;
 
 use crate::hollow_run::{HollowOptions, Hollowed, LocalDrain, PlugLink};
 use crate::scene_document::SceneDocument;
 
-/// The hollower that writes these documents: the DragonFruit port.
-pub(crate) const DF_HOLLOWER: &str = "df";
+/// The hollower that writes these documents.
+pub(crate) const HOLLOWER: &str = "breadslicer";
+
+/// The hollower name projects saved before 2026-11-21 carry.
+const EARLIER_HOLLOWER: &str = "df";
 
 /// The newest document version this build writes and reads.
 pub(crate) const HOLLOW_DOCUMENT_VERSION: u32 = 6;
@@ -127,7 +130,7 @@ pub(crate) fn hollow_documents(doc: &SceneDocument, spatial: &SceneSpatial) -> V
             Some(HollowDocument {
                 leaf,
                 original: hollowed.original.clone(),
-                hollower: DF_HOLLOWER.to_owned(),
+                hollower: HOLLOWER.to_owned(),
                 version,
                 document,
             })
@@ -158,7 +161,7 @@ pub(crate) fn restore_hollows(scene: &Scene, documents: Vec<HollowDocument>) -> 
 }
 
 fn restore(scene: &Scene, document: &HollowDocument) -> Result<Hollowed, String> {
-    if document.hollower != DF_HOLLOWER {
+    if document.hollower != HOLLOWER && document.hollower != EARLIER_HOLLOWER {
         return Err(format!(
             "a hollow was made by an unknown hollower, \"{}\"",
             document.hollower
@@ -606,7 +609,7 @@ fn decode(bytes: &[u8], version: u32) -> Option<Decoded> {
 
 #[cfg(test)]
 mod hollow_persist_tests {
-    use sc_geom::df_hollow::HOLLOW_ENGINE_VERSION;
+    use sc_geom::hollow::HOLLOW_ENGINE_VERSION;
     use sc_mesh_fixtures::unit_cube_mesh;
 
     use super::*;

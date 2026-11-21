@@ -23,15 +23,15 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::Instant;
 
-use sc_geom::df_supports::{DfSupportRequest, scene_model_leaves, settings_for};
+use sc_geom::supports::{SupportRequest, scene_model_leaves, settings_for};
 use sc_project_formats::{LoadedContent, load_scene};
 use serde_json::Value;
-use support_gen_df::pipeline::world_soup;
-use support_gen_df::supports::model_mesh::ModelMesh;
-use support_gen_df::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
-use support_gen_df::supports::support_types::trunk::cavity_bridge::attempt_cavity_bridge;
-use support_gen_df::three::{Matrix4, Vec3};
-use support_gen_df::three_mesh_bvh::{BvhMesh, MeshBvh, Side};
+use support_engine::pipeline::world_soup;
+use support_engine::supports::model_mesh::ModelMesh;
+use support_engine::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
+use support_engine::supports::support_types::trunk::cavity_bridge::attempt_cavity_bridge;
+use support_engine::three::{Matrix4, Vec3};
+use support_engine::three_mesh_bvh::{BvhMesh, MeshBvh, Side};
 
 /// Parts that start with no pixel of a tip under them and last: what
 /// supports must go under.
@@ -330,8 +330,7 @@ fn why_an_island_has_no_landing() {
         panic!("a .bread is a project");
     };
     let leaves = scene_model_leaves(&project.scene, None).expect("bake");
-    let mut settings = settings_for(&DfSupportRequest::default()).supports;
-    settings.mesh_to_mesh.every_landing = true;
+    let settings = settings_for(&SupportRequest::default()).supports;
     let mut next = 0;
     let mut new_id = || {
         next += 1;
@@ -434,7 +433,7 @@ fn the_underside_of_942_has_a_landing_at_every_contact() {
             matrix_world: &matrix,
         },
     };
-    let mut settings = settings_for(&DfSupportRequest::default()).supports;
+    let settings = settings_for(&SupportRequest::default()).supports;
     let [x, y, z] = ISLAND_942_MM;
     let mut seen = HashSet::new();
     let mut contacts = Vec::new();
@@ -463,27 +462,23 @@ fn the_underside_of_942_has_a_landing_at_every_contact() {
     let mut landed_at_once = 0;
     let mut stranded = Vec::new();
     for &(tip, normal) in &contacts {
-        for every_landing in [false, true] {
-            settings.mesh_to_mesh.every_landing = every_landing;
-            let attempt = attempt_cavity_bridge(
-                tip,
-                normal,
-                "m",
-                mesh,
-                Side::Front,
-                None,
-                &settings,
-                &mut new_id,
-            );
-            if every_landing {
-                if attempt.bridge.is_none() {
-                    stranded.push(tip);
-                }
-            } else if let Some(why) = attempt.refusals.first() {
-                *first_refusal.entry(format!("{why:?}")).or_default() += 1;
-            } else {
-                landed_at_once += 1;
-            }
+        let attempt = attempt_cavity_bridge(
+            tip,
+            normal,
+            "m",
+            mesh,
+            Side::Front,
+            None,
+            &settings,
+            &mut new_id,
+        );
+        if attempt.bridge.is_none() {
+            stranded.push(tip);
+        }
+        if let Some(why) = attempt.refusals.first() {
+            *first_refusal.entry(format!("{why:?}")).or_default() += 1;
+        } else {
+            landed_at_once += 1;
         }
     }
     eprintln!(

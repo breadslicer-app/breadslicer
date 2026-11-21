@@ -20,7 +20,7 @@
 use std::cell::RefCell;
 
 use glam::Vec3;
-use sc_geom::df_supports::is_any_support_mesh;
+use sc_geom::supports::is_any_support_mesh;
 use sc_mesh_core::primitives::Vertex;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_spatial::{ObjectQuery, SceneSpatial};
@@ -127,7 +127,7 @@ impl GroupMove {
                 let Some(query) = spatial.leaf(id) else {
                     continue;
                 };
-                let owner = if sc_geom::df_supports::is_imported_supports(query.mesh()) {
+                let owner = if sc_geom::supports::is_imported_supports(query.mesh()) {
                     crate::imported_supports::owner_of(spatial, id, None)
                 } else {
                     model_of(&sessions, id)

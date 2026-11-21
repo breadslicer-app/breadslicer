@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::Duration;
 
 use sc_arrange::{Body, Part};
-use sc_geom::df_supports::{DfSupportRequest, start_df_supports};
+use sc_geom::supports::{SupportRequest, start_supports};
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_scene::{LeafPayload, Scene};
@@ -32,7 +32,7 @@ use crate::raft_clash::RESTING_MM;
 /// all the preset draws, under which nothing takes room (#556).
 #[derive(Clone, Debug)]
 pub(crate) struct ForecastCtx {
-    pub(crate) request: DfSupportRequest,
+    pub(crate) request: SupportRequest,
     pub(crate) lift_to_mm: Option<f64>,
     pub(crate) raft_top_mm: f64,
 }
@@ -175,7 +175,7 @@ fn work_out(
     request.models = None;
     request.keep_edits = Vec::new();
     request.prescanned = None;
-    let job = start_df_supports(&scene, request).ok()?;
+    let job = start_supports(&scene, request).ok()?;
     let outcome = loop {
         if cancel.load(Ordering::Relaxed) {
             job.cancel();

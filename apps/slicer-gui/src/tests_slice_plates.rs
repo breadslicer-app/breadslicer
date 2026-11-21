@@ -17,9 +17,9 @@ use sc_scene::node::LeafPayload;
 use super::*;
 use crate::WorkspaceSection;
 use crate::build_volume::BuildVolume;
-use crate::df_support_run::DfSupportRun;
 use crate::hollow_run::HollowRun;
 use crate::preferences_bus::PreferencesSnapshot;
+use crate::support_run::SupportRun;
 use crate::test_support::slint_thread::on_fresh_slint_thread;
 use crate::viewport::ViewportController;
 
@@ -73,7 +73,7 @@ fn two_plates() -> Window {
     let dialogs = ctrl.dialogs();
     dialogs.attach(&window);
     let repair = RepairRun::install(&window, document.clone(), dialogs.clone(), ctrl.clone());
-    let supports = DfSupportRun::install(
+    let supports = SupportRun::install(
         &window,
         bus.clone(),
         document.clone(),

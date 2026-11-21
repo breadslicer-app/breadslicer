@@ -11,7 +11,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use sc_geom::df_supports::{DF_SUPPORT_MESH_NAME, overhang_and_stability_from_soup};
+use sc_geom::supports::{SUPPORT_MESH_NAME, overhang_and_stability_from_soup};
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::MeshMetadata;
 use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
@@ -53,10 +53,10 @@ fn down_facing_quad() -> IndexedMesh {
 
 fn named_supports(mut mesh: IndexedMesh) -> IndexedMesh {
     mesh.set_meta(Some(MeshMetadata {
-        name: Some(DF_SUPPORT_MESH_NAME.to_owned()),
+        name: Some(SUPPORT_MESH_NAME.to_owned()),
         header_comment: None,
         declared_facet_normals: None,
-        role: sc_mesh_core::MeshRole::from_legacy_name(DF_SUPPORT_MESH_NAME),
+        role: sc_mesh_core::MeshRole::from_legacy_name(SUPPORT_MESH_NAME),
     }));
     mesh
 }

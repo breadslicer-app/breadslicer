@@ -10,7 +10,7 @@
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use sc_geom::df_supports::is_any_support_mesh;
+use sc_geom::supports::is_any_support_mesh;
 
 use crate::scene_document::SceneDocument;
 

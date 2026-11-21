@@ -36,7 +36,7 @@ use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
 
-use sc_geom::df_supports::{SupportContact, recommended_lift_mm};
+use sc_geom::supports::{SupportContact, recommended_lift_mm};
 use sc_print_glue::{PlateFrame, SlicedPlate};
 use sc_review::finding::sort_findings;
 use sc_review::{
@@ -369,7 +369,7 @@ fn tip_plan(
         .filter(|d| *d > 0.0)
         .reduce(f64::max)
         .or(supports.bare_tip_mm)?;
-    let smallest = sc_geom::df_supports::zone_presets::smallest_size().tip_diameter_mm;
+    let smallest = sc_geom::supports::zone_presets::smallest_size().tip_diameter_mm;
     Some(plan_all_tips(
         islands,
         growths,

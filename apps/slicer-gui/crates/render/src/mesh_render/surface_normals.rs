@@ -31,7 +31,7 @@ use std::sync::{Arc, OnceLock, Weak};
 
 use glam::{Mat4, Vec3};
 use rayon::prelude::*;
-use sc_geom::df_supports::{COVERED_AGREEMENT, COVERED_SURFACE_MM};
+use sc_geom::supports::{COVERED_AGREEMENT, COVERED_SURFACE_MM};
 use sc_mesh_core::IndexedMesh;
 use sc_scene::{CsgPolicy, Scene, SceneError};
 use slint::wgpu_30::wgpu;

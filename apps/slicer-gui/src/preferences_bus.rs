@@ -55,7 +55,7 @@ pub(crate) struct PreferencesSnapshot {
     pub output_format_by_printer: BTreeMap<PrinterId, OutputFormatBinding>,
     /// App-wide anti-aliasing level applied when rasterizing slices.
     pub aa_level: AaLevel,
-    /// Whether the support scans run in the background (`DfSupportRun`).
+    /// Whether the support scans run in the background (`SupportRun`).
     pub prescan_supports: bool,
     /// Whether models shade smooth in the viewport; supports always do.
     pub smooth_models: bool,

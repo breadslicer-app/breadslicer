@@ -11,7 +11,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
-use sc_geom::df_supports::is_any_support_mesh_name;
+use sc_geom::supports::is_any_support_mesh_name;
 use sc_mesh_core::indexed_mesh::{MeshErrorReport, MeshFix, RepairPasses, group_errors_by_variant};
 use sc_mesh_core::primitives::CoordAxis;
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
@@ -35,8 +35,10 @@ use sc_sl1cer::error::{InvalidLeafGeometry, LeafValidationFailure, SliceSceneErr
 use sc_sl1cer::{CancelToken, VERSION, sliceable_leaves};
 use sc_sla_formats::{Format, WriterOptions, write_scene_slices, write_slice};
 
-use crate::commands::df_supports::{SupportSet, add_df_supports, lift_scene, restore_df_supports};
 use crate::commands::fix::{show_applied_fixes, show_refusal_warnings, show_zero_area_warnings};
+use crate::commands::generate_supports::{
+    SupportSet, add_generated_supports, lift_scene, restore_support_sets,
+};
 use crate::commands::mesh_loader::{display_threemf_warning, display_warnings};
 use crate::commands::review::cleaned_stack;
 use crate::config::cmd_options::PlateOptions;
@@ -211,11 +213,11 @@ pub(crate) fn load_and_slice(
             }
             if !options.no_auto_place {
                 place_on_plate(&mut scene, &printer.hardware.build_volume())?;
-                if options.df_supports {
+                if options.generate_supports {
                     lift_scene(
                         &mut scene,
                         &printer.hardware.build_volume(),
-                        options.df_lift,
+                        options.support_lift,
                     )?;
                 }
             }
@@ -226,7 +228,7 @@ pub(crate) fn load_and_slice(
             supports,
             ..
         }) => {
-            sets = restore_df_supports(&mut scene, supports, &mut std::io::stderr());
+            sets = restore_support_sets(&mut scene, supports, &mut std::io::stderr());
             if options.repair {
                 repair_scene(&mut scene, &mut std::io::stderr());
             }
@@ -234,11 +236,15 @@ pub(crate) fn load_and_slice(
         }
     };
     let mut scene = scene;
-    if options.df_supports {
+    if options.generate_supports {
         let layer_height_mm = options.layer_height.map_or(0.05, PositiveFiniteMm::value);
         let pitch = printer.hardware.pixel_size_microns();
         let pitch_mm = [pitch.x.value() / 1000.0, pitch.y.value() / 1000.0];
-        sets.extend(add_df_supports(&mut scene, layer_height_mm, pitch_mm)?);
+        sets.extend(add_generated_supports(
+            &mut scene,
+            layer_height_mm,
+            pitch_mm,
+        )?);
     }
     let plate = slice_scene(&scene, printer, material, options)?;
     Ok(SlicedScene { scene, plate, sets })

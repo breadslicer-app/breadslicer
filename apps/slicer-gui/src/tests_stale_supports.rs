@@ -28,7 +28,7 @@ struct Edits {
 
 /// Every tip of `session`, rounded to a micron and sorted: what two sets
 /// made the same way share whatever their ids.
-fn tip_places(session: &DfSupportSession) -> Vec<[i64; 3]> {
+fn tip_places(session: &SupportSession) -> Vec<[i64; 3]> {
     let mut places: Vec<[i64; 3]> = session
         .tips()
         .into_iter()
@@ -58,7 +58,7 @@ fn close_messages(window: &MainWindow) {
 
 /// A tip moved by a drag, a support removed and one added by clicks, as
 /// the person makes them in the viewport.
-fn edit_by_hand(window: &MainWindow, run: &Rc<DfSupportRun>) -> Edits {
+fn edit_by_hand(window: &MainWindow, run: &Rc<SupportRun>) -> Edits {
     let generated = in_force_session(run).expect("editable");
     let tips = generated.tips();
     // A tip that moves 1.5 mm over by a drag.
@@ -168,7 +168,7 @@ fn underside_raised(p: [f32; 3]) -> [f32; 3] {
 /// The card of the model's supports out of date, as a click brings it
 /// when they could not be kept in step (#526): it says why and offers the
 /// rows `hand_edited` says.
-fn card_on_click(window: &MainWindow, run: &Rc<DfSupportRun>, hand_edited: bool) {
+fn card_on_click(window: &MainWindow, run: &Rc<SupportRun>, hand_edited: bool) {
     close_messages(window);
     window.set_support_tool(1);
     let revision = run.document.scene_revision();
@@ -196,8 +196,8 @@ fn stale_slab(
     change: impl Fn([f32; 3]) -> [f32; 3],
 ) -> (
     Rc<SceneDocument>,
-    Rc<DfSupportRun>,
-    Arc<DfSupportSession>,
+    Rc<SupportRun>,
+    Arc<SupportSession>,
     Option<Edits>,
 ) {
     let (document, run) = supported_slab(window);
@@ -549,12 +549,11 @@ fn a_repaired_pre_supported_mini_keeps_its_supports_editable() {
             .unwrap();
         graph.add_root(model).unwrap();
         document.install_graph(graph.clone(), PathBuf::from("Mini4-40mm.stl"));
-        let run =
-            DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+        let run = SupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
         run.dialogs.attach(&window);
         // The run made again uses the options the first one did.
-        run.set_options(DfSupportOptions::default());
-        let outcome = start_df_supports(&graph, DfSupportRequest::default())
+        run.set_options(SupportOptions::default());
+        let outcome = start_supports(&graph, SupportRequest::default())
             .unwrap()
             .join();
         *run.started_on.borrow_mut() = Some(document.scene_revision());
@@ -631,7 +630,7 @@ fn a_repaired_pre_supported_mini_keeps_its_supports_editable() {
 /// Every brace of `session` by its two ends, rounded to a micron, each
 /// pair and the list sorted: what two sets braced alike share whatever
 /// their ids.
-fn brace_places(session: &DfSupportSession) -> Vec<[[i64; 3]; 2]> {
+fn brace_places(session: &SupportSession) -> Vec<[[i64; 3]; 2]> {
     let c = &session.state().collections;
     let at = |knot: &str| {
         let p = c.knots[knot].pos;

@@ -39,7 +39,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use sc_arrange::{Body, Part, Placement, Plate, Settings};
-use sc_geom::df_supports::is_any_support_mesh;
+use sc_geom::supports::is_any_support_mesh;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_formats::messages::LoadMeshWarning;

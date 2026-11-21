@@ -701,7 +701,7 @@ fn cutting_a_supported_model_asks_supports_for_its_pieces() {
         let bus = crate::preferences_bus::PreferencesBus::new(
             crate::preferences_bus::PreferencesSnapshot::for_tests(),
         );
-        let supports = crate::df_support_run::DfSupportRun::install(
+        let supports = crate::support_run::SupportRun::install(
             &window,
             bus,
             document.clone(),

@@ -11,7 +11,7 @@
 use super::*;
 
 /// How many rings are on show.
-fn rings(run: &DfSupportRun) -> usize {
+fn rings(run: &SupportRun) -> usize {
     run.ctrl
         .hint_marks_for_test()
         .map_or(0, |marks| marks.iter().map(|m| m.positions.len()).sum::<usize>())
@@ -19,7 +19,7 @@ fn rings(run: &DfSupportRun) -> usize {
 }
 
 /// Ticks the watcher until the recommended places are worked out and shown.
-fn worked_out(window: &MainWindow, run: &DfSupportRun) {
+fn worked_out(window: &MainWindow, run: &SupportRun) {
     let start = Instant::now();
     loop {
         run.last_change.set(Instant::now() - Duration::from_secs(10));
@@ -38,7 +38,7 @@ fn rings_show_where_supports_go_and_a_tip_there_takes_its_ring_away() {
         let window = MainWindow::new().expect("the headless platform creates a main window");
         let (document, run) = supported_slab(&window);
         // The tab's preset is the one the slab's supports were made with.
-        *run.options.borrow_mut() = DfSupportRequest::default().options;
+        *run.options.borrow_mut() = SupportRequest::default().options;
         window.set_workspace_section(WorkspaceSection::Supports);
 
         // No tool armed: nothing runs, nothing shows.

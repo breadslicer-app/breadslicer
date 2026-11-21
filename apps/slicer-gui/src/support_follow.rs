@@ -12,8 +12,8 @@
 //! Center). Each model has a support set of its own (#197): while a move in
 //! the plate plane is live, the model's support leaf rides along on its own
 //! transform. When it is committed, the set's session is taken along with the
-//! model ([`DfSupportSession::moved_in_plane`],
-//! [`DfSupportSession::turned_in_plane`]), and the support leaf keeps its
+//! model ([`SupportSession::moved_in_plane`],
+//! [`SupportSession::turned_in_plane`]), and the support leaf keeps its
 //! mesh and takes the move on its own transform, as one rigid piece with the
 //! model, in the same undo entry as the move (#560). Nothing is drawn again:
 //! an Arrange of a hundred models would otherwise draw millions of triangles
@@ -43,8 +43,8 @@
 
 use std::sync::Arc;
 
-use sc_geom::df_supports::{
-    DfSupportSession, is_any_support_mesh, is_plate_raft, is_support_mesh, scene_model_leaves,
+use sc_geom::supports::{
+    SupportSession, is_any_support_mesh, is_plate_raft, is_support_mesh, scene_model_leaves,
 };
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_scene::NodeId;
@@ -205,7 +205,7 @@ fn model_set(
     doc: &SceneDocument,
     model: NodeId,
     model_world: Option<&Transform3D>,
-) -> Option<(NodeId, Arc<DfSupportSession>, Transform3D)> {
+) -> Option<(NodeId, Arc<SupportSession>, Transform3D)> {
     let sessions = doc.support_sessions();
     doc.with_scene(|spatial| {
         sets_of_model(spatial, &sessions, model)
@@ -338,13 +338,13 @@ fn set_supports_transform(doc: &SceneDocument, supports: NodeId, target: Transfo
 /// again, so hand edits stay. `None` when it cannot be: a session of
 /// several models, supports standing on another, or the engine failing.
 pub(crate) fn moved_set(
-    session: &DfSupportSession,
+    session: &SupportSession,
     delta: [f64; 2],
-) -> Option<(Arc<DfSupportSession>, Arc<sc_mesh_core::IndexedMesh>)> {
+) -> Option<(Arc<SupportSession>, Arc<sc_mesh_core::IndexedMesh>)> {
     if session.model_count() != 1 || !session.supports_only_on(0) {
         return None;
     }
-    // The port is DragonFruit's code: a panic in it leaves the copy without
+    // The support engine: a panic in it leaves the copy without
     // a set drawn for it, not a failed copy.
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let moved = session.moved_in_plane(0, delta);
@@ -360,7 +360,7 @@ pub(crate) fn moved_set(
 pub(crate) struct MovedSet {
     pub(crate) leaf: NodeId,
     pub(crate) model: NodeId,
-    pub(crate) session: Arc<DfSupportSession>,
+    pub(crate) session: Arc<SupportSession>,
 }
 
 /// An edit about to be recorded, as [`commit`] hands it back.

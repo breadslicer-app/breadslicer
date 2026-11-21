@@ -1,0 +1,1263 @@
+use std::sync::Arc;
+
+use sc_mesh_core::transform::AffineTransform3D;
+use sc_scene::LeafPayload;
+use sc_sl1cer::profile::{
+    AaLevel, BuildVolume, LayerSchedule, Mirror, PackingMode, PixelResolution, SliceProfile,
+};
+
+use super::*;
+
+fn sphere_leaf_mesh(radius: f32) -> IndexedMesh {
+    let s = hollow_engine::shapes::icosphere(radius, 3);
+    IndexedMesh::new(
+        Some(MeshMetadata {
+            name: Some("sphere".into()),
+            ..Default::default()
+        }),
+        s.positions
+            .iter()
+            .map(|p| Vertex::new(p.to_array()))
+            .collect(),
+        s.triangles
+            .iter()
+            .map(|&t| IndexedTriangle::from_raw_indices(t))
+            .collect(),
+    )
+}
+
+fn scene_with(mesh: IndexedMesh, transform: Transform3D) -> (Scene, NodeId) {
+    let mut scene = Scene::new();
+    let id = scene
+        .add_leaf(None, transform, LeafPayload::Mesh(Arc::new(mesh)))
+        .unwrap();
+    (scene, id)
+}
+
+fn affine(linear: [[f64; 3]; 3], translation: [f64; 3]) -> Transform3D {
+    Transform3D::Affine(AffineTransform3D::from_linear_and_translation(
+        linear,
+        translation,
+    ))
+}
+
+fn run(scene: &Scene, leaf: NodeId, request: HollowRequest) -> HollowOutcome {
+    start_hollow(scene, leaf, request).unwrap().join().unwrap()
+}
+
+fn as_engine(mesh: &IndexedMesh) -> hollow_engine::IndexedMesh {
+    engine_mesh(mesh, &LeafFrame::of(&Transform3D::Identity).unwrap())
+}
+
+#[test]
+fn a_rigid_transform_has_no_stretch() {
+    let rot = AffineTransform3D::from_axis_angle([0.3, 0.5, 0.8], 1.1).unwrap();
+    let world = affine(*rot.linear(), [10.0, -4.0, 2.0]);
+    let frame = LeafFrame::of(&world).unwrap();
+    assert_eq!(frame.stretch, IDENTITY);
+    for i in 0..3 {
+        for j in 0..3 {
+            assert!((frame.rotation[i][j] - rot.linear()[i][j]).abs() < 1e-12);
+        }
+    }
+}
+
+#[test]
+fn a_scaled_transform_splits_into_rotation_and_stretch() {
+    let rot = AffineTransform3D::from_axis_angle([1.0, 0.0, 1.0], 0.7).unwrap();
+    let scale = AffineTransform3D::from_non_uniform_scale([2.0, 1.0, 0.5]);
+    let m = mul(rot.linear(), scale.linear());
+    let frame = LeafFrame::of(&affine(m, [0.0; 3])).unwrap();
+    let rebuilt = mul(&frame.rotation, &frame.stretch);
+    let r_rt = mul(&frame.rotation, &transpose(&frame.rotation));
+    for i in 0..3 {
+        for j in 0..3 {
+            assert!((rebuilt[i][j] - m[i][j]).abs() < 1e-12, "M = R·P");
+            assert!((r_rt[i][j] - IDENTITY[i][j]).abs() < 1e-12, "R orthogonal");
+            assert!(
+                (frame.stretch[i][j] - frame.stretch[j][i]).abs() < 1e-12,
+                "P symmetric"
+            );
+        }
+    }
+}
+
+#[test]
+fn moving_and_turning_the_model_reuses_the_session() {
+    let (mut scene, leaf) = scene_with(sphere_leaf_mesh(15.0), Transform3D::Identity);
+    let first = run(&scene, leaf, HollowRequest::default());
+    assert!(!first.reused_session);
+    let rot = AffineTransform3D::from_axis_angle([0.0, 1.0, 1.0], 0.9).unwrap();
+    scene
+        .set_local_transform(leaf, affine(*rot.linear(), [30.0, 20.0, 15.0]))
+        .unwrap();
+    let second = run(
+        &scene,
+        leaf,
+        HollowRequest {
+            prepared: Some(first.prepared.clone()),
+            ..HollowRequest::default()
+        },
+    );
+    assert!(second.reused_session);
+    let (HollowResult::Preview { cavity: a, .. }, HollowResult::Preview { cavity: b, .. }) =
+        (&first.result, &second.result)
+    else {
+        panic!("previews");
+    };
+    assert_eq!(a, b, "the local-frame cavity does not depend on the pose");
+
+    // A scale is a different physical object: a new session.
+    scene
+        .set_local_transform(
+            leaf,
+            Transform3D::Affine(AffineTransform3D::from_uniform_scale(1.2)),
+        )
+        .unwrap();
+    let third = run(
+        &scene,
+        leaf,
+        HollowRequest {
+            prepared: Some(second.prepared.clone()),
+            ..HollowRequest::default()
+        },
+    );
+    assert!(!third.reused_session);
+}
+
+#[test]
+fn the_wall_is_physical_under_a_non_uniform_scale() {
+    // A sphere of radius 10 stretched to 40 x 20 x 20 mm; a 2 mm wall must
+    // stay 2 mm on every axis (DragonFruit's mean-scale rule would give 1.5 mm
+    // across Y and Z and 3 mm across X).
+    let world = affine(
+        [[2.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        [0.0; 3],
+    );
+    let (scene, leaf) = scene_with(sphere_leaf_mesh(10.0), world);
+    let out = run(
+        &scene,
+        leaf,
+        HollowRequest {
+            grid: GridRequest {
+                voxel_size_mm: 0.25,
+                max_resolution: 192,
+                ..GridRequest::default()
+            },
+            ..HollowRequest::default()
+        },
+    );
+    let HollowResult::Preview { cavity, .. } = &out.result else {
+        panic!("preview");
+    };
+    // Physically the cavity spans 40 - 4 along X and 20 - 4 along Y.
+    let frame = LeafFrame::of(&world).unwrap();
+    let (mut min, mut max) = ([f32::MAX; 3], [f32::MIN; 3]);
+    for v in cavity.vertices() {
+        let p = frame.local_to_frame(*v.as_array());
+        for k in 0..3 {
+            min[k] = min[k].min(p[k]);
+            max[k] = max[k].max(p[k]);
+        }
+    }
+    let span = [0, 1, 2].map(|k| max[k] - min[k]);
+    assert!((span[0] - 36.0).abs() < 0.6, "x span {}", span[0]);
+    assert!((span[1] - 16.0).abs() < 0.6, "y span {}", span[1]);
+    assert!((span[2] - 16.0).abs() < 0.6, "z span {}", span[2]);
+}
+
+/// The hollow a model gets carries the cavity its preview showed, in the
+/// leaf's own frame, vertex for vertex (#29), also under a non-uniform
+/// scale and through the session the preview left (as the Hollow tab runs
+/// them).
+#[test]
+fn the_applied_hollow_carries_the_previewed_cavity() {
+    let world = affine(
+        [[1.6, 0.0, 0.2], [0.0, 1.0, 0.0], [0.0, 0.0, 0.8]],
+        [5.0, -3.0, 12.0],
+    );
+    let (scene, leaf) = scene_with(sphere_leaf_mesh(12.0), world);
+    let preview = run(&scene, leaf, HollowRequest::default());
+    let HollowResult::Preview { cavity, .. } = &preview.result else {
+        panic!("preview");
+    };
+    let applied = run(
+        &scene,
+        leaf,
+        HollowRequest {
+            kind: HollowKind::Apply,
+            prepared: Some(preview.prepared.clone()),
+            ..HollowRequest::default()
+        },
+    );
+    assert!(applied.reused_session);
+    let HollowResult::Apply { mesh, .. } = &applied.result else {
+        panic!("apply");
+    };
+    let corners = |m: &IndexedMesh, f: &IndexedTriangle| {
+        f.vertices
+            .map(|v| m.vertices()[usize::from(v)].as_array().map(f32::to_bits))
+    };
+    let hollow: std::collections::HashSet<[[u32; 3]; 3]> =
+        mesh.faces().iter().map(|f| corners(mesh, f)).collect();
+    assert!(!cavity.faces().is_empty());
+    for f in cavity.faces() {
+        let [a, b, c] = corners(cavity, f);
+        assert!(
+            [[a, b, c], [b, c, a], [c, a, b]]
+                .iter()
+                .any(|t| hollow.contains(t)),
+            "a previewed cavity triangle is not in the hollow"
+        );
+    }
+    assert_eq!(
+        mesh.faces().len(),
+        sphere_leaf_mesh(12.0).faces().len() + cavity.faces().len()
+    );
+}
+
+#[test]
+fn a_memory_limited_hollow_keeps_the_previewed_voxel() {
+    let (scene, leaf) = scene_with(sphere_leaf_mesh(12.0), Transform3D::Identity);
+    let grid = GridRequest {
+        voxel_size_mm: 0.1,
+        max_memory_bytes: 200_000 * hollow_engine::engine::BYTES_PER_CELL,
+        ..GridRequest::default()
+    };
+    let preview = run(
+        &scene,
+        leaf,
+        HollowRequest {
+            grid,
+            ..HollowRequest::default()
+        },
+    );
+    assert!(matches!(
+        preview.stats.grid.bound,
+        Some(hollow_engine::ResolutionBound::MemoryLimited { .. })
+    ));
+    let applied = run(
+        &scene,
+        leaf,
+        HollowRequest {
+            kind: HollowKind::Apply,
+            grid,
+            prepared: Some(preview.prepared.clone()),
+            ..HollowRequest::default()
+        },
+    );
+    assert!(applied.reused_session);
+    assert_eq!(applied.stats.grid, preview.stats.grid);
+}
+
+fn profile(layers: u32) -> SliceProfile {
+    SliceProfile::new(
+        BuildVolume::new(100.0, 100.0, 100.0).unwrap(),
+        PixelResolution::new(1000, 1000).unwrap(),
+        LayerSchedule::uniform(0.5, 0.5, layers).unwrap(),
+        Mirror::default(),
+        AaLevel::Off,
+        PackingMode::None,
+    )
+}
+
+/// Holes in the layers of `mesh` (world) sliced at mid height.
+fn holes_at_mid_height(mesh: IndexedMesh, z_mid: f64) -> (usize, usize) {
+    let (scene, leaf) = scene_with(mesh, Transform3D::Identity);
+    let stack = sc_sl1cer::slice_leaf(&scene, leaf, &profile((2.0 * z_mid / 0.5) as u32)).unwrap();
+    let layer = stack
+        .layers()
+        .iter()
+        .min_by(|a, b| {
+            (a.z_mm() - z_mid)
+                .abs()
+                .total_cmp(&(b.z_mm() - z_mid).abs())
+        })
+        .unwrap();
+    let holes = layer.polygons().iter().map(|p| p.holes().len()).sum();
+    (layer.polygons().len(), holes)
+}
+
+#[test]
+fn an_applied_hollow_with_a_drain_slices_with_a_hole() {
+    // Sphere of radius 15 sitting on the plate at (50, 50).
+    let (scene, leaf) = scene_with(sphere_leaf_mesh(15.0), affine(IDENTITY, [50.0, 50.0, 15.0]));
+    let out = run(
+        &scene,
+        leaf,
+        HollowRequest {
+            kind: HollowKind::Apply,
+            drains: vec![WorldDrain::new([50.0, 50.0, 0.0], [0.0, 0.0, 1.0], 1.5)],
+            ..HollowRequest::default()
+        },
+    );
+    let HollowResult::Apply { mesh, drains, .. } = &out.result else {
+        panic!("apply");
+    };
+    assert!(drains[0].reaches_cavity, "{drains:?}");
+    assert_eq!(
+        mesh.meta().as_ref().and_then(|m| m.name.as_deref()),
+        Some("sphere")
+    );
+    assert!(hollow_engine::topology::is_edge_manifold(&as_engine(mesh)));
+    let removed = out.stats.removed_volume_mm3.unwrap();
+    assert!(
+        removed > 0.5 * out.stats.source_volume_mm3,
+        "{:?}",
+        out.stats
+    );
+
+    let world = bake_mesh_to_world_of(&scene, leaf, mesh);
+    let (polygons, holes) = holes_at_mid_height(world, 15.0);
+    assert_eq!((polygons, holes), (1, 1), "a ring: wall around the cavity");
+}
+
+/// With infill, drains that open are cut (#321): the result is one the
+/// slicer takes, and the drain from below is a hole in the floor.
+#[test]
+fn an_applied_hollow_with_infill_and_drains_slices() {
+    use hollow_engine::{HollowFill, InfillMode};
+    let (scene, leaf) = scene_with(sphere_leaf_mesh(15.0), affine(IDENTITY, [50.0, 50.0, 15.0]));
+    for pattern in [InfillMode::Lattice, InfillMode::Pillar] {
+        let out = run(
+            &scene,
+            leaf,
+            HollowRequest {
+                kind: HollowKind::Apply,
+                settings: HollowSettings {
+                    fill: HollowFill::Infill {
+                        pattern,
+                        cell_mm: 6.0,
+                        beam_radius_mm: 0.6,
+                    },
+                    ..HollowSettings::default()
+                },
+                drains: vec![
+                    WorldDrain::new([50.0, 50.0, 0.0], [0.0, 0.0, 1.0], 1.5),
+                    WorldDrain::new([35.0, 50.0, 15.0], [1.0, 0.0, 0.0], 1.0),
+                    WorldDrain::new([50.0, 65.0, 15.0], [0.0, -1.0, 0.0], 1.0),
+                ],
+                ..HollowRequest::default()
+            },
+        );
+        let HollowResult::Apply { mesh, drains, .. } = &out.result else {
+            panic!("apply");
+        };
+        assert!(drains.iter().all(|d| d.reaches_cavity), "{drains:?}");
+        assert!(mesh.is_sliceable(), "{pattern:?}");
+        let world = bake_mesh_to_world_of(&scene, leaf, mesh);
+        let (polygons, holes) = holes_at_mid_height(world, 1.0);
+        assert_eq!(
+            (polygons, holes),
+            (1, 1),
+            "{pattern:?}: the drain in the floor"
+        );
+    }
+}
+
+/// `mesh` (a leaf's local mesh) under that leaf's world transform.
+fn bake_mesh_to_world_of(scene: &Scene, leaf: NodeId, mesh: &IndexedMesh) -> IndexedMesh {
+    let world = scene.world_transform_of(leaf).unwrap();
+    sc_scene::bake_mesh_to_world(mesh, &world).unwrap()
+}
+
+#[test]
+fn an_undrained_hollow_slices_with_a_hole() {
+    // The cavity is its own (inward) shell when no drain joins it to the
+    // outside. The slicer groups contours per shell, so this checks it
+    // still reads the cavity as a hole rather than as a second solid.
+    let (scene, leaf) = scene_with(sphere_leaf_mesh(15.0), affine(IDENTITY, [50.0, 50.0, 15.0]));
+    let out = run(
+        &scene,
+        leaf,
+        HollowRequest {
+            kind: HollowKind::Apply,
+            ..HollowRequest::default()
+        },
+    );
+    let HollowResult::Apply { mesh, .. } = &out.result else {
+        panic!("apply");
+    };
+    let world = bake_mesh_to_world_of(&scene, leaf, mesh);
+    let (polygons, holes) = holes_at_mid_height(world, 15.0);
+    assert_eq!(
+        (polygons, holes),
+        (1, 1),
+        "the cavity must be a hole, not a second solid"
+    );
+}
+
+#[test]
+fn a_cancelled_job_reports_cancelled() {
+    let (scene, leaf) = scene_with(sphere_leaf_mesh(15.0), Transform3D::Identity);
+    let handle = start_hollow(
+        &scene,
+        leaf,
+        HollowRequest {
+            grid: GridRequest {
+                voxel_size_mm: 0.1,
+                max_resolution: 400,
+                ..GridRequest::default()
+            },
+            ..HollowRequest::default()
+        },
+    )
+    .unwrap();
+    handle.cancel();
+    assert!(matches!(handle.join(), Err(JobError::Cancelled)));
+}
+
+/// Every triangle of `part` is in `whole`, corner for corner.
+fn has_every_triangle(whole: &IndexedMesh, part: &IndexedMesh) -> bool {
+    let key = |mesh: &IndexedMesh, f: &IndexedTriangle| -> [u32; 9] {
+        let corners = f.vertices.map(|v| {
+            mesh.vertices()[u32::from(v) as usize]
+                .as_array()
+                .map(f32::to_bits)
+        });
+        let first = (0..3).min_by_key(|&k| corners[k]).unwrap();
+        std::array::from_fn(|i| corners[(first + i / 3) % 3][i % 3])
+    };
+    let all: std::collections::HashSet<[u32; 9]> =
+        whole.faces().iter().map(|f| key(whole, f)).collect();
+    part.faces().iter().all(|f| all.contains(&key(part, f)))
+}
+
+/// #339 through the adapter: a preview with the model's drains shows the
+/// infill with their channels cleared, exactly as the apply carries it.
+#[test]
+fn a_preview_with_drains_shows_the_infill_the_hollow_gets() {
+    use hollow_engine::{HollowFill, InfillMode};
+    let (scene, leaf) = scene_with(sphere_leaf_mesh(15.0), affine(IDENTITY, [50.0, 50.0, 15.0]));
+    for pattern in [InfillMode::Lattice, InfillMode::Pillar] {
+        let settings = HollowSettings {
+            fill: HollowFill::Infill {
+                pattern,
+                cell_mm: 6.0,
+                beam_radius_mm: 0.6,
+            },
+            ..HollowSettings::default()
+        };
+        let plain = run(
+            &scene,
+            leaf,
+            HollowRequest {
+                settings: settings.clone(),
+                ..HollowRequest::default()
+            },
+        );
+        let HollowResult::Preview { infill, .. } = &plain.result else {
+            panic!("preview");
+        };
+        // Straight down onto the highest beam end (local frame: the sphere
+        // is centred on the origin).
+        let top = infill
+            .as_ref()
+            .unwrap()
+            .vertices()
+            .iter()
+            .map(|v| *v.as_array())
+            .max_by(|a, b| a[2].total_cmp(&b[2]))
+            .unwrap();
+        let surface = (225.0 - top[0] * top[0] - top[1] * top[1]).sqrt();
+        let request = HollowRequest {
+            settings,
+            drains: vec![
+                WorldDrain::new(
+                    [50.0 + top[0], 50.0 + top[1], 15.0 + surface],
+                    [0.0, 0.0, -1.0],
+                    1.5,
+                ),
+                WorldDrain::new([35.0, 50.0, 15.0], [1.0, 0.0, 0.0], 1.0),
+            ],
+            ..HollowRequest::default()
+        };
+        let shown = run(&scene, leaf, request.clone());
+        let applied = run(
+            &scene,
+            leaf,
+            HollowRequest {
+                kind: HollowKind::Apply,
+                ..request
+            },
+        );
+        let infill = |out: &HollowOutcome| match &out.result {
+            HollowResult::Preview { infill, .. } => infill.clone().unwrap(),
+            HollowResult::Apply { .. } => panic!("preview"),
+        };
+        let (whole, cleared) = (infill(&plain), infill(&shown));
+        assert!(
+            cleared != whole,
+            "{pattern:?}: the drains clear some infill"
+        );
+        let HollowResult::Apply { mesh, .. } = &applied.result else {
+            panic!("apply");
+        };
+        assert!(mesh.is_sliceable(), "{pattern:?}");
+        assert!(has_every_triangle(mesh, &cleared), "{pattern:?}");
+    }
+}
+
+/// #330 through the adapter: on a fin 3 mm wide, drains whose cutter
+/// corner lies on the diagonal of the fin's top give a mesh the slicer
+/// takes, and the top of the fin is open at both.
+#[test]
+fn drains_on_a_face_diagonal_slice() {
+    let outline: [(f32, f32); 8] = [
+        (0.0, 0.0),
+        (40.0, 0.0),
+        (40.0, 30.0),
+        (21.5, 30.0),
+        (21.5, 50.0),
+        (18.5, 50.0),
+        (18.5, 30.0),
+        (0.0, 30.0),
+    ];
+    let n = outline.len() as u32;
+    let mut vertices = Vec::new();
+    for y in [0.0, 30.0] {
+        vertices.extend(outline.iter().map(|&(x, z)| Vertex::new([x, y, z])));
+    }
+    let mut faces = Vec::new();
+    for [a, b, c] in [
+        [0, 1, 2],
+        [0, 2, 3],
+        [6, 3, 4],
+        [6, 4, 5],
+        [0, 3, 6],
+        [0, 6, 7],
+    ] {
+        faces.push(IndexedTriangle::from_raw_indices([a, b, c]));
+        faces.push(IndexedTriangle::from_raw_indices([a + n, c + n, b + n]));
+    }
+    for i in 0..n {
+        let j = (i + 1) % n;
+        faces.push(IndexedTriangle::from_raw_indices([i, j + n, j]));
+        faces.push(IndexedTriangle::from_raw_indices([i, i + n, j + n]));
+    }
+    let block = IndexedMesh::new(None, vertices, faces);
+    assert!(block.is_sliceable());
+    let (scene, leaf) = scene_with(block, Transform3D::Identity);
+    for wall in [1.0, 2.0] {
+        let out = run(
+            &scene,
+            leaf,
+            HollowRequest {
+                kind: HollowKind::Apply,
+                settings: HollowSettings {
+                    wall_thickness_mm: wall,
+                    ..HollowSettings::default()
+                },
+                drains: vec![
+                    WorldDrain::new([20.0, 10.0, 50.0], [0.0, 0.0, -1.0], 0.5),
+                    WorldDrain::new([20.0, 20.0, 50.0], [0.0, 0.0, -1.0], 0.5),
+                ],
+                ..HollowRequest::default()
+            },
+        );
+        let HollowResult::Apply { mesh, drains, .. } = &out.result else {
+            panic!("apply");
+        };
+        assert!(drains.iter().all(|d| d.reaches_cavity), "{drains:?}");
+        assert!(mesh.is_sliceable(), "wall {wall}");
+        let (polygons, holes) = holes_at_mid_height(mesh.clone(), 49.9);
+        assert_eq!(
+            (polygons, holes),
+            (1, 2),
+            "wall {wall}: two drains in the tip"
+        );
+    }
+}
+
+/// #318: a drain's plug comes back as a model of its own, standing up: in
+/// world millimetres, its axis on `z`, its lowest point on the plate,
+/// closed and facing out (a mirrored model's too), as wide as the hole less
+/// the clearance, and it slices as one solid disc.
+#[test]
+fn a_plug_comes_back_standing_and_slices() {
+    let mirror = [[-1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+    for linear in [IDENTITY, mirror] {
+        let (scene, leaf) = scene_with(sphere_leaf_mesh(15.0), affine(linear, [50.0, 50.0, 15.0]));
+        // In from the side, along -x.
+        let mut drain = WorldDrain::new([65.0, 50.0, 15.0], [-1.0, 0.0, 0.0], 2.0);
+        drain.plug_clearance_mm = Some(0.1);
+        let out = run(
+            &scene,
+            leaf,
+            HollowRequest {
+                kind: HollowKind::Apply,
+                drains: vec![drain],
+                ..HollowRequest::default()
+            },
+        );
+        let HollowResult::Apply { drains, plugs, .. } = &out.result else {
+            panic!("apply");
+        };
+        assert!(drains[0].reaches_cavity, "{drains:?}");
+        assert_eq!(plugs.len(), 1);
+        assert_eq!(plugs[0].drain, 0);
+        let plug = plugs[0].mesh.clone().expect("a plug");
+        let engine = as_engine(&plug);
+        assert!(hollow_engine::topology::is_edge_manifold(&engine));
+        assert!(engine.signed_volume() > 0.0, "it faces out");
+        let bbox = engine.bbox();
+        assert!(bbox.min.z.abs() < 1e-5, "{bbox:?}");
+        // Through the 2 mm wall, about.
+        assert!((1.8..=2.9).contains(&bbox.max.z), "{bbox:?}");
+        let widest = plug
+            .vertices()
+            .iter()
+            .map(|v| v.as_array()[0].hypot(v.as_array()[1]))
+            .fold(0.0f32, f32::max);
+        assert!((widest - 1.95).abs() < 1e-3, "{widest}");
+
+        let (plate, placed) = scene_with(plug.clone(), affine(IDENTITY, [20.0, 20.0, 0.0]));
+        let placed = bake_mesh_to_world_of(&plate, placed, &plug);
+        let (polygons, holes) = holes_at_mid_height(placed, 0.5 * bbox.max.z as f64);
+        assert_eq!((polygons, holes), (1, 0), "a solid disc");
+    }
+}
+
+/// #179: a region drawn in the world at the current pose keeps the same
+/// world material solid however the model is placed, turned or scaled: no
+/// point of the cavity, back in the world, is inside it.
+#[test]
+fn a_drawn_region_stays_solid_where_it_was_drawn() {
+    // Looking down -z from above, the region's side across x = 2.
+    let region = hollow_engine::LassoRegion {
+        perspective: true,
+        origin: [0.0, 0.0, 80.0],
+        u: [1.0, 0.0, 0.0],
+        v: [0.0, -1.0, 0.0],
+        w: [0.0, 0.0, -1.0],
+        polygon: vec![[0.025, -1.0], [1.0, -1.0], [1.0, 1.0], [0.025, 1.0]],
+    };
+    let prepared = region.prepared().expect("a region");
+    let turn = 0.4f64;
+    for world in [
+        affine(
+            [
+                [turn.cos(), -turn.sin(), 0.0],
+                [turn.sin(), turn.cos(), 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            [3.0, -2.0, 1.0],
+        ),
+        affine(
+            [[1.6, 0.0, 0.2], [0.0, 1.0, 0.0], [0.0, 0.0, 0.8]],
+            [1.0, 0.5, 0.0],
+        ),
+    ] {
+        let (scene, leaf) = scene_with(sphere_leaf_mesh(12.0), world);
+        let plain = run(&scene, leaf, HollowRequest::default());
+        let drawn = run(
+            &scene,
+            leaf,
+            HollowRequest {
+                solid_areas: vec![WorldSolidArea::Lasso(region.clone())],
+                prepared: Some(plain.prepared.clone()),
+                ..HollowRequest::default()
+            },
+        );
+        assert!(drawn.stats.removed_voxels < plain.stats.removed_voxels);
+        let HollowResult::Preview { cavity, .. } = &drawn.result else {
+            panic!("preview");
+        };
+        let deepest = cavity
+            .vertices()
+            .iter()
+            .map(|v| {
+                let p = world.apply_to_vertex(*v).coords();
+                prepared.signed_distance_mm(hollow_engine::Vec3::new(p[0], p[1], p[2]))
+            })
+            .fold(f32::MIN, f32::max);
+        assert!(deepest <= 0.06, "{deepest} mm into the region");
+        assert!(deepest >= -0.06, "the cavity reaches the region: {deepest}");
+    }
+}
+
+/// Reads a binary STL, its vertices welded where they are equal.
+fn read_binary_stl(path: &str) -> IndexedMesh {
+    let bytes = std::fs::read(path).expect("the model reads");
+    let n = u32::from_le_bytes(bytes[80..84].try_into().unwrap()) as usize;
+    let mut index = std::collections::HashMap::new();
+    let mut vertices = Vec::new();
+    let mut faces = Vec::with_capacity(n);
+    for i in 0..n {
+        let o = 84 + i * 50 + 12;
+        let corner = |k: usize| {
+            std::array::from_fn::<f32, 3, _>(|c| {
+                let p = o + k * 12 + c * 4;
+                f32::from_le_bytes(bytes[p..p + 4].try_into().unwrap())
+            })
+        };
+        let ids = [0, 1, 2].map(|k| {
+            let p = corner(k);
+            *index.entry(p.map(f32::to_bits)).or_insert_with(|| {
+                vertices.push(Vertex::new(p));
+                (vertices.len() - 1) as u32
+            })
+        });
+        if ids[0] != ids[1] && ids[1] != ids[2] && ids[0] != ids[2] {
+            faces.push(IndexedTriangle::from_raw_indices(ids));
+        }
+    }
+    IndexedMesh::new(None, vertices, faces)
+}
+
+/// #179, measured by hand: with `HOLLOW_LASSO_STL` naming a binary STL, the
+/// time a cavity preview takes without and with a drawn region over the top
+/// third of the model, on the same session, and how far into the region
+/// the cavity reaches.
+#[test]
+#[ignore = "measured by hand on a real model"]
+fn a_drawn_region_on_a_real_model() {
+    let Ok(path) = std::env::var("HOLLOW_LASSO_STL") else {
+        return;
+    };
+    let mesh = read_binary_stl(&path);
+    let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+    for v in mesh.vertices() {
+        for k in 0..3 {
+            lo[k] = lo[k].min(v.as_array()[k]);
+            hi[k] = hi[k].max(v.as_array()[k]);
+        }
+    }
+    let centre: [f32; 3] = std::array::from_fn(|k| 0.5 * (lo[k] + hi[k]));
+    let height = hi[2] - lo[2];
+    // A perspective eye in front of the model (-y), level with its middle;
+    // the region: the top third, across the whole width.
+    let eye = [centre[0], lo[1] - 3.0 * height, centre[2]];
+    let depth = centre[1] - eye[1];
+    let top = (hi[2] - height / 3.0 - centre[2]) / depth;
+    let region = hollow_engine::LassoRegion {
+        perspective: true,
+        origin: eye,
+        u: [1.0, 0.0, 0.0],
+        v: [0.0, 0.0, 1.0],
+        w: [0.0, 1.0, 0.0],
+        polygon: vec![[-1.0, top], [1.0, top], [1.0, 1.0], [-1.0, 1.0]],
+    };
+    let (scene, leaf) = scene_with(mesh, Transform3D::Identity);
+    let started = std::time::Instant::now();
+    let plain = run(&scene, leaf, HollowRequest::default());
+    let first = started.elapsed();
+    for round in 0..2 {
+        let started = std::time::Instant::now();
+        let again = run(
+            &scene,
+            leaf,
+            HollowRequest {
+                settings: HollowSettings {
+                    wall_thickness_mm: 2.0 + 0.1 * (round + 1) as f32,
+                    ..HollowSettings::default()
+                },
+                prepared: Some(plain.prepared.clone()),
+                ..HollowRequest::default()
+            },
+        );
+        let plain_ms = started.elapsed();
+        let started = std::time::Instant::now();
+        let drawn = run(
+            &scene,
+            leaf,
+            HollowRequest {
+                settings: HollowSettings {
+                    wall_thickness_mm: 2.0 + 0.1 * (round + 1) as f32,
+                    ..HollowSettings::default()
+                },
+                solid_areas: vec![WorldSolidArea::Lasso(region.clone())],
+                prepared: Some(plain.prepared.clone()),
+                ..HollowRequest::default()
+            },
+        );
+        let drawn_ms = started.elapsed();
+        let HollowResult::Preview { cavity, .. } = &drawn.result else {
+            panic!("preview");
+        };
+        let prepared = region.prepared().unwrap();
+        let deepest = cavity
+            .vertices()
+            .iter()
+            .map(|v| {
+                let p = v.as_array();
+                prepared.signed_distance_mm(hollow_engine::Vec3::new(p[0], p[1], p[2]))
+            })
+            .fold(f32::MIN, f32::max);
+        println!(
+            "{path}: session + first preview {first:?}; preview {plain_ms:?}, with the region {drawn_ms:?}; removed voxels {} -> {}; deepest into the region {deepest:.3} mm",
+            again.stats.removed_voxels, drawn.stats.removed_voxels
+        );
+    }
+}
+
+/// #179, by hand: with `HOLLOW_LASSO_STL` naming a binary STL (supports it
+/// came with taken off), many regions drawn across it from around, each
+/// checked for a closed cavity. Prints the ones that leave it open.
+#[test]
+#[ignore = "measured by hand on a real model"]
+fn drawn_regions_leave_the_cavity_closed() {
+    let Ok(path) = std::env::var("HOLLOW_LASSO_STL") else {
+        return;
+    };
+    let mut mesh = read_binary_stl(&path);
+    if let Some(found) = sc_mesh_core::presupported::find_supports(&mesh) {
+        mesh = found.model;
+    }
+    let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+    for v in mesh.vertices() {
+        for k in 0..3 {
+            lo[k] = lo[k].min(v.as_array()[k]);
+            hi[k] = hi[k].max(v.as_array()[k]);
+        }
+    }
+    let centre: [f32; 3] = std::array::from_fn(|k| 0.5 * (lo[k] + hi[k]));
+    let size = (0..3).map(|k| hi[k] - lo[k]).fold(0.0, f32::max);
+    let (scene, leaf) = scene_with(mesh, Transform3D::Identity);
+    let plain = run(&scene, leaf, HollowRequest::default());
+    let mut seed = 0x2545_f491_4f6c_dd1du64;
+    let mut rnd = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed >> 11) as f32 / (1u64 << 53) as f32
+    };
+    let mut open = 0;
+    let tries: usize = std::env::var("HOLLOW_LASSO_TRIES")
+        .ok()
+        .and_then(|t| t.parse().ok())
+        .unwrap_or(60);
+    for attempt in 0..tries {
+        let yaw = rnd() * std::f32::consts::TAU;
+        let pitch = (rnd() - 0.5) * 2.0;
+        let forward = [
+            -(pitch.cos() * yaw.cos()),
+            -(pitch.cos() * yaw.sin()),
+            -pitch.sin(),
+        ];
+        let right = [-yaw.sin(), yaw.cos(), 0.0];
+        let up = [
+            right[1] * forward[2] - right[2] * forward[1],
+            right[2] * forward[0] - right[0] * forward[2],
+            right[0] * forward[1] - right[1] * forward[0],
+        ];
+        let perspective = attempt % 2 == 0;
+        let distance = 2.5 * size;
+        let eye: [f32; 3] = std::array::from_fn(|k| centre[k] - forward[k] * distance);
+        // A blob around a random point of the view, a fifth to a half wide.
+        let (cx, cy) = ((rnd() - 0.5) * 0.3, (rnd() - 0.5) * 0.3);
+        let radius = 0.05 + 0.12 * rnd();
+        let n = 24 + (rnd() * 40.0) as usize;
+        let polygon: Vec<[f32; 2]> = (0..n)
+            .map(|k| {
+                let a = k as f32 / n as f32 * std::f32::consts::TAU;
+                let r = radius * (0.7 + 0.3 * rnd());
+                [cx + r * a.cos(), cy + r * a.sin()]
+            })
+            .map(|p| {
+                if perspective {
+                    p
+                } else {
+                    [p[0] * distance, p[1] * distance]
+                }
+            })
+            .collect();
+        let region = hollow_engine::LassoRegion {
+            perspective,
+            origin: eye,
+            u: right,
+            v: up,
+            w: forward,
+            polygon,
+        };
+        let drawn = run(
+            &scene,
+            leaf,
+            HollowRequest {
+                solid_areas: vec![WorldSolidArea::Lasso(region.clone())],
+                prepared: Some(plain.prepared.clone()),
+                ..HollowRequest::default()
+            },
+        );
+        let HollowResult::Preview { cavity, .. } = &drawn.result else {
+            panic!("preview");
+        };
+        let defects = hollow_engine::topology::edge_manifold_defects(&as_engine(cavity));
+        if !defects.is_clean() {
+            open += 1;
+            println!("OPEN attempt {attempt}: {defects:?} region {region:?}");
+        }
+    }
+    println!("{path}: {open} of {tries} regions left the cavity open");
+}
+
+/// By hand: whether `HOLLOW_LASSO_STL` (supports taken off) hollows at all,
+/// without any region, and the source's own defects.
+#[test]
+#[ignore = "measured by hand on a real model"]
+fn a_real_model_hollows_without_regions() {
+    let Ok(path) = std::env::var("HOLLOW_LASSO_STL") else {
+        return;
+    };
+    let mut mesh = read_binary_stl(&path);
+    if let Some(found) = sc_mesh_core::presupported::find_supports(&mesh) {
+        mesh = found.model;
+    }
+    println!(
+        "source defects: {:?}",
+        hollow_engine::topology::edge_manifold_defects(&as_engine(&mesh))
+    );
+    let (scene, leaf) = scene_with(mesh, Transform3D::Identity);
+    let preview = run(&scene, leaf, HollowRequest::default());
+    if let HollowResult::Preview { cavity, .. } = &preview.result {
+        let engine = as_engine(cavity);
+        println!(
+            "cavity defects: {:?}",
+            hollow_engine::topology::edge_manifold_defects(&engine)
+        );
+        let mut count = std::collections::HashMap::new();
+        for t in &engine.triangles {
+            for k in 0..3 {
+                let (a, b) = (t[k], t[(k + 1) % 3]);
+                *count.entry((a.min(b), a.max(b))).or_insert(0) += 1;
+            }
+        }
+        for ((a, b), n) in count {
+            if n == 1 {
+                println!(
+                    "open edge {:?} - {:?}",
+                    engine.positions[a as usize].to_array(),
+                    engine.positions[b as usize].to_array()
+                );
+            }
+        }
+        println!("voxel {:?}", preview.stats.grid);
+    }
+    match start_hollow(
+        &scene,
+        leaf,
+        HollowRequest {
+            kind: HollowKind::Apply,
+            ..HollowRequest::default()
+        },
+    )
+    .unwrap()
+    .join()
+    {
+        Ok(_) => println!("APPLY ok"),
+        Err(e) => println!("APPLY failed: {e:?}"),
+    }
+}
+
+/// #453 measured by hand: which real models have parts that overlap, and
+/// what joining them costs. `HOLLOW_JOIN_STLS`: binary STL paths split by `|`.
+#[test]
+#[ignore = "measured by hand on real models"]
+fn overlapping_parts_of_real_models() {
+    let Ok(paths) = std::env::var("HOLLOW_JOIN_STLS") else {
+        return;
+    };
+    for path in paths.split('|') {
+        let mesh = as_engine(&read_binary_stl(path));
+        let (_, parts) = hollow_engine::topology::face_shells(&mesh);
+        println!("{path}: {parts} parts…");
+        let started = std::time::Instant::now();
+        let joined = hollow_engine::overlap::joined_parts(&mesh);
+        println!(
+            "{path}: {} triangles, {parts} parts, volume {:.1}; joined {:?} in {:.2} s",
+            mesh.triangles.len(),
+            mesh.signed_volume(),
+            joined
+                .as_ref()
+                .map(|j| (j.triangles.len(), (j.signed_volume() * 10.0).round() / 10.0)),
+            started.elapsed().as_secs_f64()
+        );
+    }
+}
+
+/// #454 measured by hand: the resin a narrowest cavity of 2 mm keeps, and
+/// what it costs. `HOLLOW_WIDTH_STLS`: binary STL paths split by `|`.
+#[test]
+#[ignore = "measured by hand on real models"]
+fn narrowest_cavity_on_real_models() {
+    let Ok(paths) = std::env::var("HOLLOW_WIDTH_STLS") else {
+        return;
+    };
+    for path in paths.split('|') {
+        let mesh = as_engine(&read_binary_stl(path));
+        let session = Session::build(mesh, &GridRequest::default(), None, Control::none()).unwrap();
+        for width in [0.0, 2.0] {
+            let settings = HollowSettings {
+                min_cavity_width_mm: width,
+                ..HollowSettings::default()
+            };
+            let started = std::time::Instant::now();
+            let preview = session.preview(&settings, Control::none()).unwrap();
+            println!(
+                "{path}: width {width}: cavity {:.1} mm3 in {:.2} s",
+                preview.stats.cavity_volume_mm3,
+                started.elapsed().as_secs_f64()
+            );
+        }
+    }
+}
+
+/// A hollow as a file brings it (#447): a sphere and its cavity, facing in,
+/// with nothing recorded of how it was made.
+fn imported_hollow_leaf_mesh() -> IndexedMesh {
+    let outer = hollow_engine::shapes::icosphere(15.0, 3);
+    let mut inner = hollow_engine::shapes::icosphere(13.0, 3);
+    for tri in &mut inner.triangles {
+        tri.swap(1, 2);
+    }
+    let both = hollow_engine::shapes::merged(&[outer, inner]);
+    IndexedMesh::new(
+        None,
+        both.positions
+            .iter()
+            .map(|p| Vertex::new(p.to_array()))
+            .collect(),
+        both.triangles
+            .iter()
+            .map(|&t| IndexedTriangle::from_raw_indices(t))
+            .collect(),
+    )
+}
+
+#[test]
+fn a_drain_is_drilled_into_an_imported_hollow_under_a_stretch() {
+    let mesh = Arc::new(imported_hollow_leaf_mesh());
+    // Stretched along x, turned, standing on the plate at (50, 50).
+    let world = affine(
+        [[0.0, -1.0, 0.0], [1.5, 0.0, 0.0], [0.0, 0.0, 1.0]],
+        [50.0, 50.0, 15.0],
+    );
+    let drain = WorldDrain::new([50.2, 50.1, 0.0], [0.0, 0.0, 1.0], 1.5);
+    let probe = DrillProbe::new(&mesh, &world).unwrap();
+    assert!(probe.is_closed());
+    let report = probe.report(&world, &drain).unwrap();
+    assert!(report.reaches_cavity, "{report:?}");
+    let out = start_drill_mesh(mesh.clone(), &world, vec![drain], None)
+        .unwrap()
+        .join()
+        .unwrap();
+    assert_eq!(out.drains, vec![report]);
+    assert!(hollow_engine::topology::is_edge_manifold(&as_engine(
+        &out.mesh
+    )));
+    let (scene, leaf) = scene_with(out.mesh.clone(), world);
+    let baked = bake_mesh_to_world_of(&scene, leaf, &out.mesh);
+    let floor = {
+        let (polygons, holes) = holes_at_mid_height(baked, 0.4);
+        (polygons, holes)
+    };
+    assert_eq!(floor, (1, 1), "the floor has the drain's hole");
+    // A drain that starts in the air beside the model: nothing is cut.
+    let miss = WorldDrain::new([90.0, 50.0, 15.0], [-1.0, 0.0, 0.0], 1.5);
+    let none = start_drill_mesh(mesh.clone(), &world, vec![miss], Some(Arc::new(probe)))
+        .unwrap()
+        .join()
+        .unwrap();
+    assert!(!none.drains[0].reaches_cavity);
+    assert_eq!(none.mesh, *mesh);
+}
+
+#[test]
+fn the_drain_map_shows_the_low_thin_outside_and_counts_the_cavity() {
+    let mesh = imported_hollow_leaf_mesh();
+    assert_eq!(sealed_cavities(&mesh), 1);
+    let world = affine(IDENTITY, [0.0, 0.0, 15.0]);
+    let probe = DrillProbe::new(&mesh, &world).unwrap();
+    assert_eq!(probe.sealed_cavities(), 1);
+    let faces = probe.drain_map(&world, 1.5, &[], 0.0, &|_| false).unwrap();
+    assert!(!faces.is_empty());
+    // All on the outside, in the bottom quarter.
+    for &f in &faces {
+        let face = mesh.faces()[f as usize].vertices.map(u32::from);
+        let z = face
+            .iter()
+            .map(|&v| mesh.vertices()[v as usize].as_array()[2] + 15.0)
+            .fold(f32::MIN, f32::max);
+        assert!(z <= 0.25 * 30.0 + 2.0, "{z}");
+        assert!(f < mesh.faces().len() as u32 / 2, "on the outer sphere");
+    }
+    // A drain at the bottom clears the faces around it.
+    let near = probe
+        .drain_map(&world, 1.5, &[[0.0, 0.0, 0.0]], 50.0, &|_| false)
+        .unwrap();
+    assert!(near.is_empty());
+}
+
+/// #447 measured by hand: one more drain on a real hollow, drilled into the
+/// hollow as it is against hollowing the original again with it (the voxel
+/// session and the cavity reused, as the tab did). `HOLLOW_DRILL_STL`: a
+/// binary STL; the drain goes up into the underside at its lowest point.
+#[test]
+#[ignore = "measured by hand on a real model"]
+fn drilling_a_real_hollow_against_hollowing_it_again() {
+    let Ok(path) = std::env::var("HOLLOW_DRILL_STL") else {
+        return;
+    };
+    let mut mesh = read_binary_stl(&path);
+    if let Some(found) = sc_mesh_core::presupported::find_supports(&mesh) {
+        mesh = found.model;
+    }
+    let mesh = Arc::new(mesh);
+    let world = Transform3D::Identity;
+    // Under the middle of the model: the lowest vertex near its centre.
+    let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+    for v in mesh.vertices() {
+        for k in 0..3 {
+            lo[k] = lo[k].min(v.as_array()[k]);
+            hi[k] = hi[k].max(v.as_array()[k]);
+        }
+    }
+    let mid = [0.5 * (lo[0] + hi[0]), 0.5 * (lo[1] + hi[1])];
+    let low = mesh
+        .vertices()
+        .iter()
+        .map(|v| *v.as_array())
+        .filter(|p| (p[0] - mid[0]).hypot(p[1] - mid[1]) < 4.0)
+        .min_by(|a, b| a[2].total_cmp(&b[2]))
+        .unwrap();
+    println!("drain at {low:?}, model {lo:?} to {hi:?}");
+    let drain = WorldDrain::new(low, [0.0, 0.0, 1.0], 1.5);
+    let apply = |drains: Vec<WorldDrain>, prepared: Option<Arc<PreparedHollow>>| {
+        start_hollow_mesh(
+            mesh.clone(),
+            &world,
+            HollowRequest {
+                kind: HollowKind::Apply,
+                drains,
+                prepared,
+                ..HollowRequest::default()
+            },
+        )
+        .unwrap()
+        .join()
+        .unwrap()
+    };
+    let plain = apply(Vec::new(), None);
+    let HollowResult::Apply { mesh: hollow, .. } = &plain.result else {
+        panic!("apply");
+    };
+    let hollow = Arc::new(hollow.clone());
+    let settings = HollowSettings::default();
+    println!(
+        "engine on its cavity: {:?}",
+        plain.prepared.drain_report(&world, &settings, &drain)
+    );
+    let probe = Arc::new(DrillProbe::new(&hollow, &world).unwrap());
+    println!("drill on the hollow: {:?}", probe.report(&world, &drain));
+    {
+        let target =
+            hollow_engine::DrillTarget::new(engine_mesh(&hollow, &LeafFrame::of(&world).unwrap()));
+        let started = std::time::Instant::now();
+        let _ = hollow_engine::DrillTarget::new(target.mesh().clone());
+        println!("target {:.0} ms", started.elapsed().as_secs_f64() * 1e3);
+        let hole = drain.in_frame(&LeafFrame::of(&world).unwrap());
+        let started = std::time::Instant::now();
+        let d = target.drill(&[hole], Control::none()).unwrap();
+        println!(
+            "drill alone {:.0} ms, {} faces",
+            started.elapsed().as_secs_f64() * 1e3,
+            d.mesh.triangles.len()
+        );
+        println!(
+            "shells {}",
+            hollow_engine::topology::edge_components(target.mesh()).1
+        );
+        let start = hollow_engine::Vec3::new(low[0], low[1], low[2] - 0.3);
+        let up = hollow_engine::Vec3::new(0.0, 0.0, 1.0);
+        let source = as_engine(&mesh);
+        let hits = |m: &hollow_engine::IndexedMesh| {
+            hollow_engine::bvh::Bvh::build(m)
+                .ray_hit_distances_closed(m, start, up)
+                .iter()
+                .map(|t| (t * 100.0).round() / 100.0)
+                .collect::<Vec<_>>()
+        };
+        println!("source hits {:?}", hits(&source));
+        println!("hollow hits {:?}", hits(target.mesh()));
+        if let HollowResult::Apply { .. } = &plain.result {}
+        let preview = start_hollow_mesh(
+            mesh.clone(),
+            &world,
+            HollowRequest {
+                prepared: Some(plain.prepared.clone()),
+                ..HollowRequest::default()
+            },
+        )
+        .unwrap()
+        .join()
+        .unwrap();
+        if let HollowResult::Preview { cavity, .. } = &preview.result {
+            println!("cavity hits {:?}", hits(&as_engine(cavity)));
+        }
+    }
+    // Both checks over the surface: a drain at every 2000th face, into it.
+    let (mut agree, mut engine_only, mut drill_only) = (0, 0, 0);
+    let mut opening = None;
+    for f in mesh.faces().iter().step_by(2000) {
+        let [a, b, c] = f
+            .vertices
+            .map(|v| *mesh.vertices()[u32::from(v) as usize].as_array());
+        let centre = [0, 1, 2].map(|k| (a[k] + b[k] + c[k]) / 3.0);
+        let (u, v) = (
+            [0, 1, 2].map(|k| b[k] - a[k]),
+            [0, 1, 2].map(|k| c[k] - a[k]),
+        );
+        let n = [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ];
+        let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+        if len < 1e-9 {
+            continue;
+        }
+        let hole = WorldDrain::new(centre, n.map(|c| -c / len), 1.5);
+        let e = plain
+            .prepared
+            .drain_report(&world, &settings, &hole)
+            .is_some_and(|r| r.reaches_cavity);
+        let d = probe
+            .report(&world, &hole)
+            .is_some_and(|r| r.reaches_cavity);
+        match (e, d) {
+            (true, true) => {
+                agree += 1;
+                opening.get_or_insert(hole);
+            }
+            (false, false) => agree += 1,
+            (true, false) => engine_only += 1,
+            (false, true) => drill_only += 1,
+        }
+    }
+    println!(
+        "over the surface: {agree} agree, {engine_only} only the engine opens, {drill_only} only the drill opens"
+    );
+    let drain = opening.unwrap_or(drain);
+    for round in 0..3 {
+        let started = std::time::Instant::now();
+        let again = apply(vec![drain], Some(plain.prepared.clone()));
+        let rehollow = started.elapsed();
+        let started = std::time::Instant::now();
+        let drilled = start_drill_mesh(hollow.clone(), &world, vec![drain], Some(probe.clone()))
+            .unwrap()
+            .join()
+            .unwrap();
+        let drill = started.elapsed();
+        let HollowResult::Apply { drains, .. } = &again.result else {
+            panic!("apply");
+        };
+        println!(
+            "round {round}: hollow again {:.0} ms (reaches {}), drill {:.0} ms (reaches {}), {:.1}x",
+            rehollow.as_secs_f64() * 1e3,
+            drains[0].reaches_cavity,
+            drill.as_secs_f64() * 1e3,
+            drilled.drains[0].reaches_cavity,
+            rehollow.as_secs_f64() / drill.as_secs_f64(),
+        );
+    }
+}

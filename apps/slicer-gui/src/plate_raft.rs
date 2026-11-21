@@ -5,7 +5,7 @@
 
 //! One raft for all (#556): the support sets standing on one raft draw no
 //! raft of their own; each plate shows one raft of lines under the roots of
-//! all of them, a mesh leaf of its own ([`sc_geom::df_supports::PLATE_RAFT_NAME`]).
+//! all of them, a mesh leaf of its own ([`sc_geom::supports::PLATE_RAFT_NAME`]).
 //!
 //! A group of models (#475) stands on a raft of its own, apart from the
 //! plate's: the sets of one group, and those of no group, are each drawn
@@ -23,7 +23,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::mpsc;
 use std::sync::{Arc, Weak};
 
-use sc_geom::df_supports::{DfSupportSession, is_plate_raft, plate_raft};
+use sc_geom::supports::{SupportSession, is_plate_raft, plate_raft};
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_scene::NodeId;
@@ -40,7 +40,7 @@ type Key = u64;
 /// place of, if any.
 struct RaftWork {
     key: Key,
-    sets: Vec<(Arc<DfSupportSession>, AffineTransform3D)>,
+    sets: Vec<(Arc<SupportSession>, AffineTransform3D)>,
     leaf: Option<NodeId>,
 }
 
@@ -119,7 +119,7 @@ impl PlateRafts {
                             .rafts
                             .iter()
                             .map(|r| {
-                                let sets: Vec<(&DfSupportSession, AffineTransform3D)> =
+                                let sets: Vec<(&SupportSession, AffineTransform3D)> =
                                     r.sets.iter().map(|(s, m)| (s.as_ref(), *m)).collect();
                                 plate_raft(&sets).map(Arc::new)
                             })
@@ -162,10 +162,7 @@ impl PlateRafts {
             .with_scene(|spatial| {
                 // Each plate's rafts, by the group their sets' models are in
                 // (`None`: no group), in a stable order.
-                type Rafts = Vec<(
-                    Option<usize>,
-                    Vec<(Arc<DfSupportSession>, AffineTransform3D)>,
-                )>;
+                type Rafts = Vec<(Option<usize>, Vec<(Arc<SupportSession>, AffineTransform3D)>)>;
                 let mut by_plate: HashMap<u32, (Rafts, Vec<NodeId>)> = HashMap::new();
                 for set in sets.iter().filter(|s| s.session.stands_on_one_raft()) {
                     let Some(plate) =
@@ -359,7 +356,7 @@ impl PlateRafts {
 
 /// What a plate's raft is drawn from: where its sets' roots stand, how wide,
 /// and the raft they stand on.
-fn key_of(sets: &[(Arc<DfSupportSession>, AffineTransform3D)]) -> Key {
+fn key_of(sets: &[(Arc<SupportSession>, AffineTransform3D)]) -> Key {
     let mut circles: Vec<[i64; 3]> = sets
         .iter()
         .flat_map(|(session, motion)| session.raft_roots(motion))

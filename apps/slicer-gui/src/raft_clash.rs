@@ -12,7 +12,7 @@
 //! warns on Generate and offers to lift the models clear of the raft or to
 //! turn the raft off; the Review card offers the same for a slice.
 
-use sc_geom::df_supports::{DfSupportOptions, recommended_lift_mm};
+use sc_geom::supports::{SupportOptions, recommended_lift_mm};
 use sc_mesh_spatial::SceneSpatial;
 use sc_scene::NodeId;
 use sc_scene_edit::SceneEdit;
@@ -42,7 +42,7 @@ const TOLERANCE_MM: f64 = 1e-6;
 /// above the plate (`None` without a model). `None` when there is no raft
 /// or the models stand above it.
 pub(crate) fn raft_clash(
-    options: &DfSupportOptions,
+    options: &SupportOptions,
     layer_height_mm: f64,
     lowest_model_mm: Option<f64>,
 ) -> Option<RaftClash> {
@@ -63,7 +63,7 @@ pub(crate) fn raft_clash(
 /// generator's default support lift (or a higher configured one), never
 /// below the last layer of a raft built with `options` in layers of
 /// `layer_height_mm`.
-pub(crate) fn support_lift_mm(options: &DfSupportOptions, layer_height_mm: f64) -> f64 {
+pub(crate) fn support_lift_mm(options: &SupportOptions, layer_height_mm: f64) -> f64 {
     recommended_lift_mm(Some(options.lift_mm()))
         .max(options.raft_layers(layer_height_mm) as f64 * layer_height_mm)
 }
@@ -109,7 +109,7 @@ pub(crate) fn model_bottoms(spatial: &SceneSpatial) -> Vec<(NodeId, f64)> {
         .map_while(|i| spatial.leaf_id_at_index(i))
         .filter_map(|id| {
             let mesh = scene.leaf_mesh_arc(id)?;
-            if sc_geom::df_supports::is_any_support_mesh(mesh) {
+            if sc_geom::supports::is_any_support_mesh(mesh) {
                 return None;
             }
             let query = spatial.leaf(id)?;
@@ -162,7 +162,7 @@ pub(crate) fn lift_edit(
 mod raft_clash_tests {
     use std::sync::Arc;
 
-    use sc_geom::df_supports::{DEFAULT_SUPPORT_LIFT_MM, RaftMode};
+    use sc_geom::supports::{DEFAULT_SUPPORT_LIFT_MM, RaftMode};
     use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
     use sc_scene::Scene;
     use sc_scene::{LeafPayload, SceneMetadata};
@@ -172,13 +172,13 @@ mod raft_clash_tests {
     #[test]
     fn a_model_on_the_plate_clashes_with_the_default_raft() {
         // The default raft is of lines (#435): 0.6 mm, 12 layers of 0.05 mm.
-        let lines = DfSupportOptions::default();
+        let lines = SupportOptions::default();
         let clash = raft_clash(&lines, 0.05, Some(0.0)).expect("in the raft");
         assert_eq!(clash.layers, 12);
         assert!((clash.raft_top_mm - 0.6).abs() < 1e-9);
         // A solid one: plate 0.5 mm plus wall 0.35 mm, 17 layers of 0.05 mm,
         // 9 of 0.1 mm.
-        let options = DfSupportOptions {
+        let options = SupportOptions {
             raft: RaftMode::Solid,
             ..Default::default()
         };
@@ -197,19 +197,19 @@ mod raft_clash_tests {
 
     #[test]
     fn a_model_above_the_raft_or_no_raft_is_clear() {
-        let options = DfSupportOptions {
+        let options = SupportOptions {
             raft: RaftMode::Solid,
             ..Default::default()
         };
         assert_eq!(raft_clash(&options, 0.05, Some(0.85)), None);
         assert_eq!(raft_clash(&options, 0.05, Some(5.0)), None);
         assert_eq!(raft_clash(&options, 0.05, None), None);
-        let off = DfSupportOptions {
+        let off = SupportOptions {
             raft: RaftMode::Off,
             ..Default::default()
         };
         assert_eq!(raft_clash(&off, 0.05, Some(0.0)), None);
-        let thin = DfSupportOptions {
+        let thin = SupportOptions {
             raft_wall: false,
             ..options.clone()
         };

@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use sc_geom::JobHandle;
-use sc_geom::df_supports::DfSupportOutcome;
+use sc_geom::supports::SupportOutcome;
 
 use crate::mesh_render::{OverlayMesh, OverlayTint};
 use crate::scene_document::SceneRevision;
@@ -41,7 +41,7 @@ pub(crate) struct Hint {
 #[derive(Default)]
 pub(crate) struct Hints {
     /// The run in flight and what it is for.
-    pub(crate) running: Option<(JobHandle<DfSupportOutcome>, String)>,
+    pub(crate) running: Option<(JobHandle<SupportOutcome>, String)>,
     /// The last run's places and what they are for.
     pub(crate) ready: Option<(String, Arc<Vec<Hint>>)>,
     /// The islands the last analysis found (#525), with the models they
@@ -68,7 +68,7 @@ pub(crate) fn next_island(left: &[[f64; 3]], visited: Option<[f64; 3]>) -> Optio
 }
 
 /// The places a run picked: every tip of every set it made.
-pub(crate) fn hints_of(outcome: &DfSupportOutcome) -> Vec<Hint> {
+pub(crate) fn hints_of(outcome: &SupportOutcome) -> Vec<Hint> {
     outcome
         .sets
         .iter()

@@ -15,8 +15,8 @@
 //! otherwise.
 
 use super::*;
-use sc_geom::df_supports::zone_presets::figures_150;
-use sc_geom::df_supports::{DF_SUPPORT_DOCUMENT_VERSION, DfSupportSession};
+use sc_geom::supports::zone_presets::figures_150;
+use sc_geom::supports::{SUPPORT_DOCUMENT_VERSION, SupportSession};
 use sc_mesh_core::transform::Transform3D;
 use serde_json::{Value, json};
 
@@ -111,7 +111,7 @@ fn plate() -> (Scene, Vec<(NodeId, usize, usize)>) {
 /// vertical trunks under the piece centred at `centre`, each with a tip of
 /// `contact` and a cone of `cone` mm, drawn after the first trunk the run
 /// put there.
-fn nine_tips(session: &DfSupportSession, centre: [f64; 2], contact: f64, cone: f64) -> Vec<u8> {
+fn nine_tips(session: &SupportSession, centre: [f64; 2], contact: f64, cone: f64) -> Vec<u8> {
     let mut document: Value =
         serde_json::from_slice(&session.to_document().expect("a run from options is data"))
             .expect("json");
@@ -193,11 +193,10 @@ fn support_test_plate() {
         let document = ctrl.document();
         let (graph, pieces) = plate();
         document.install_graph(graph.clone(), PathBuf::from("support-test.stl"));
-        let run =
-            DfSupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
-        let options = DfSupportOptions {
+        let run = SupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+        let options = SupportOptions {
             zones: Some(figures_150()),
-            ..DfSupportOptions::default()
+            ..SupportOptions::default()
         };
         run.generate_now(options);
         let sets = run.sets_in_force();
@@ -216,9 +215,8 @@ fn support_test_plate() {
             let scene = document
                 .with_scene(|spatial| spatial.graph().clone())
                 .expect("a scene");
-            let session =
-                DfSupportSession::from_document(&scene, DF_SUPPORT_DOCUMENT_VERSION, &bytes)
-                    .expect("the nine tips rebuild");
+            let session = SupportSession::from_document(&scene, SUPPORT_DOCUMENT_VERSION, &bytes)
+                .expect("the nine tips rebuild");
             let mesh = session.mesh().expect("drawn").expect("a support mesh");
             let (lo, hi) =
                 mesh.vertices()

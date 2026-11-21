@@ -6,7 +6,7 @@
 //! whichever of them were picked. A text file (TOML) under its own
 //! extension; the one who opens it picks what to take from it.
 
-use sc_geom::df_supports::{DfSupportOptions, SupportSize};
+use sc_geom::supports::{SupportOptions, SupportSize};
 use serde::{Deserialize, Serialize};
 
 /// The extension of a support settings file.
@@ -19,7 +19,7 @@ const VERSION: u32 = 1;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct SharedPreset {
     pub(crate) name: String,
-    pub(crate) options: DfSupportOptions,
+    pub(crate) options: SupportOptions,
 }
 
 /// One thing a file holds, and a person picks or leaves.
@@ -124,12 +124,12 @@ pub(crate) fn free_name(name: &str, taken: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sc_geom::df_supports::zone_presets::{figures_150, minis_30, support_sizes};
+    use sc_geom::supports::zone_presets::{figures_150, minis_30, support_sizes};
 
-    fn preset(name: &str, zones: sc_geom::df_supports::zone_presets::ZonePreset) -> Entry {
+    fn preset(name: &str, zones: sc_geom::supports::zone_presets::ZonePreset) -> Entry {
         Entry::Preset(Box::new(SharedPreset {
             name: name.to_owned(),
-            options: DfSupportOptions {
+            options: SupportOptions {
                 zones: Some(zones),
                 ..Default::default()
             }

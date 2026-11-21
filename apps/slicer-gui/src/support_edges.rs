@@ -73,10 +73,10 @@ pub(crate) fn past_on(
         let Some(mesh) = spatial.graph().leaf_mesh_arc(leaf) else {
             continue;
         };
-        let supports = sc_geom::df_supports::is_any_support_mesh(mesh);
+        let supports = sc_geom::supports::is_any_support_mesh(mesh);
         if mesh.faces().is_empty()
             || (reach == Reach::Supports && !supports)
-            || sc_geom::df_supports::is_plate_raft(mesh)
+            || sc_geom::supports::is_plate_raft(mesh)
         {
             continue;
         }

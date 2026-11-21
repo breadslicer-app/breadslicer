@@ -14,7 +14,7 @@
 //! mirrored: the engine also supports large steep flats that topple a part,
 //! which depends on the size of the patch and not on a single normal.
 
-use sc_geom::df_supports::overhang_normal_z_limit;
+use sc_geom::supports::overhang_normal_z_limit;
 
 /// How close to the plate, mm, a face counts as resting on it: what "on the
 /// plate" means for lifting a model before its supports (#389).

@@ -52,7 +52,7 @@ pub fn set_smooth_models(on: bool) {
 }
 
 fn is_support(mesh: &IndexedMesh) -> bool {
-    sc_geom::df_supports::is_any_support_mesh(mesh)
+    sc_geom::supports::is_any_support_mesh(mesh)
 }
 
 /// Whether `mesh` is drawn smooth: supports always, models by preference.
@@ -291,9 +291,9 @@ mod tests {
         let model = sc_mesh_fixtures::unit_cube_mesh();
         let support = IndexedMesh::new(
             Some(sc_mesh_core::MeshMetadata {
-                name: Some(sc_geom::df_supports::DF_SUPPORT_MESH_NAME.to_owned()),
+                name: Some(sc_geom::supports::SUPPORT_MESH_NAME.to_owned()),
                 role: sc_mesh_core::MeshRole::from_legacy_name(
-                    sc_geom::df_supports::DF_SUPPORT_MESH_NAME,
+                    sc_geom::supports::SUPPORT_MESH_NAME,
                 ),
                 ..Default::default()
             }),

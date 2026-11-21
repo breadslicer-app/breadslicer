@@ -95,7 +95,7 @@ fn fixture_with(mesh: IndexedMesh, pose: Transform3D) -> Fixture {
     graph.add_root(leaf).unwrap();
     document.install_graph(graph, PathBuf::from("cube.stl"));
     document.set_selection(Selection::One(LeafId(leaf)));
-    let supports = DfSupportRun::install(
+    let supports = SupportRun::install(
         &window,
         PreferencesBus::new(PreferencesSnapshot::for_tests()),
         document.clone(),

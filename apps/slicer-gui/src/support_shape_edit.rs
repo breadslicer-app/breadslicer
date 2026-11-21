@@ -14,8 +14,8 @@
 //! size made thicker on purpose, as the Statues' overhang one, keeps its
 //! own.
 
-use sc_geom::df_supports::zone_presets::{ZonePreset, bracing_presets};
-use sc_geom::df_supports::{AutoBracingPattern, BaseTip, GridDiagonal, SupportSize};
+use sc_geom::supports::zone_presets::{ZonePreset, bracing_presets};
+use sc_geom::supports::{AutoBracingPattern, BaseTip, GridDiagonal, SupportSize};
 
 /// The sizes a hand click picks with keys 1 to 4, smallest first: always
 /// shown, so the sizes read the same in every preset.
@@ -43,7 +43,7 @@ pub(crate) fn short_name(id: &str) -> String {
 /// as it does a zone preset's.
 pub(crate) fn hand_factory() -> ZonePreset {
     let mut hand = ZonePreset::default();
-    hand.rules.sizes = sc_geom::df_supports::zone_presets::support_sizes()
+    hand.rules.sizes = sc_geom::supports::zone_presets::support_sizes()
         .into_iter()
         .filter(|s| HAND_SIZES.contains(&s.id.as_str()))
         .collect();
@@ -442,7 +442,7 @@ pub(crate) fn set_zone_spacing(zones: &mut ZonePreset, zone: Zone, mm: f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sc_geom::df_supports::zone_presets::{figures_150, minis_30};
+    use sc_geom::supports::zone_presets::{figures_150, minis_30};
 
     fn index(zones: &ZonePreset, id: &str) -> usize {
         zones

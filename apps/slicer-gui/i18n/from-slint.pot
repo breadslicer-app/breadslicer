@@ -325,11 +325,6 @@ msgctxt "MenuBar"
 msgid "Tools"
 msgstr ""
 
-#: ui/main-window.slint:813 ui/main-window.slint:2121
-msgctxt "MenuBar"
-msgid "Generate Supports (DragonFruit)…"
-msgstr ""
-
 #: ui/main-window.slint:821 ui/main-window.slint:2129
 msgctxt "MenuBar"
 msgid "Generate Support (trivial for test)…"

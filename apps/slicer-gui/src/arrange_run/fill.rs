@@ -18,8 +18,8 @@
 //! A copy shows the very mesh of its model (the same `Arc`, hollowed or
 //! not), and its support set in force comes along as if the model had
 //! been pasted and moved there: its session taken along by the copy's move
-//! in the plate plane ([`DfSupportSession::moved_in_plane`],
-//! [`DfSupportSession::turned_in_plane`], #119, #153) and drawn for the
+//! in the plate plane ([`SupportSession::moved_in_plane`],
+//! [`SupportSession::turned_in_plane`], #119, #153) and drawn for the
 //! copy, which then has a set of its own, editable and saved as data
 //! (#197). Supports no session stands behind, and those a pre-supported
 //! file came with (#259), go along as they are.
@@ -35,8 +35,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use sc_arrange::{Body, Filled, Placement, Plate, Settings};
-use sc_geom::df_supports::{
-    DfSupportSession, is_imported_supports, model_from_scene_mesh, model_from_world_mesh,
+use sc_geom::supports::{
+    SupportSession, is_imported_supports, model_from_scene_mesh, model_from_world_mesh,
 };
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
@@ -72,7 +72,7 @@ struct Source {
     /// Its supports that go along as they are.
     rigid: Vec<Piece>,
     /// Its support set in force: the session, and the mesh it drew.
-    set: Option<(Arc<DfSupportSession>, Piece)>,
+    set: Option<(Arc<SupportSession>, Piece)>,
 }
 
 /// What a fill made on the worker: the copies, and per copy, then per
@@ -86,7 +86,7 @@ struct Made {
 }
 
 /// A copy's support set: its session and the mesh it drew.
-type CopiedSet = (Arc<DfSupportSession>, Arc<IndexedMesh>);
+type CopiedSet = (Arc<SupportSession>, Arc<IndexedMesh>);
 
 /// How far the worker is, for the card.
 #[derive(Debug, Default)]
@@ -292,7 +292,7 @@ fn moved_models(
     sources: &[Source],
     moved: &[sc_arrange::FillCopy],
     sets: Vec<Option<CopiedSet>>,
-    drawn: &mut Vec<(NodeId, NodeId, Arc<DfSupportSession>)>,
+    drawn: &mut Vec<(NodeId, NodeId, Arc<SupportSession>)>,
 ) -> Option<Vec<SceneEdit>> {
     document
         .with_scene(|spatial| {
@@ -516,7 +516,7 @@ fn copied_set(source: &Source, placement: &Placement) -> Option<CopiedSet> {
     if session.model_count() != 1 || !session.supports_only_on(0) {
         return None;
     }
-    // The port is DragonFruit's code: a panic in it leaves the copy with
+    // The support engine: a panic in it leaves the copy with
     // its supports as they are drawn, not a failed fill.
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         // The session gets the turned model as a run makes it: the mesh the
@@ -575,7 +575,7 @@ fn add_copies(document: &SceneDocument, sources: &[Source], made: Made) -> Resul
         return Err("no scene".to_owned());
     }
     // The models that move to let more copies in go first.
-    let mut drawn: Vec<(NodeId, NodeId, Arc<DfSupportSession>)> = Vec::new();
+    let mut drawn: Vec<(NodeId, NodeId, Arc<SupportSession>)> = Vec::new();
     let mut sets = made.sets;
     let moved_sets = sets.split_off(made.filled.copies.len());
     let mut edits = moved_models(

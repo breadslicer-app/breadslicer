@@ -24,7 +24,7 @@ use crate::autosave_store::{AutosaveStore, OrphanRun};
 use crate::clipboard::{Clipboard, clipboard_from_document_selection};
 use crate::cut_run::CutRun;
 use crate::default_envelope::DefaultEnvelope;
-use crate::df_support_run::DfSupportRun;
+use crate::support_run::SupportRun;
 use crate::error_dialog::{ErrorTexts, InfoTexts, RecoveryChoice};
 use crate::graphics_status::GraphicsUnavailable;
 use crate::hollow_run::HollowRun;
@@ -251,7 +251,7 @@ struct WindowDrivers {
     /// The Tools > "Generate Support (trivial for test)" action driver. Held so
     /// its Slint callbacks live as long as the window.
     _support_gen_run: Rc<GenSupportRun>,
-    _df_support_run: Rc<DfSupportRun>,
+    _support_run: Rc<SupportRun>,
     _hollow_run: Rc<HollowRun>,
     /// Edit > Split into Bodies and Keep Only This Body. Held so its Slint
     /// callbacks and document subscription live as long as the window.
@@ -799,7 +799,7 @@ impl AppState {
         let arrange_run = ArrangeRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
         let support_gen_run =
             GenSupportRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
-        let df_support_run = DfSupportRun::install(
+        let support_run = SupportRun::install(
             ui,
             self.prefs.clone(),
             ctrl.document(),
@@ -809,7 +809,7 @@ impl AppState {
         {
             // Fill bed and Arrange measure a model with no supports yet with
             // the ones it will get (#556).
-            let supports = Rc::downgrade(&df_support_run);
+            let supports = Rc::downgrade(&support_run);
             arrange_run.set_forecast(Rc::new(move || {
                 supports
                     .upgrade()
@@ -826,7 +826,7 @@ impl AppState {
             ctrl.document(),
             ctrl.dialogs(),
             ctrl.clone(),
-            df_support_run.clone(),
+            support_run.clone(),
         );
         let cut_run = CutRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
         let hollow_run = HollowRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
@@ -838,7 +838,7 @@ impl AppState {
             self.prefs.clone(),
             ctrl.document(),
             ctrl.clone(),
-            df_support_run.clone(),
+            support_run.clone(),
             hollow_run.clone(),
         );
         // A suction cup's row turns the model with the Orient tool (#128).
@@ -904,7 +904,7 @@ impl AppState {
             _orient_run: orient_run,
             _cut_run: cut_run,
             _support_gen_run: support_gen_run,
-            _df_support_run: df_support_run,
+            _support_run: support_run,
         }
     }
 
@@ -3525,7 +3525,7 @@ mod window_wiring_tests {
         assert_eq!(density, 20.0);
         assert_eq!(
             clamped, 30.0,
-            "DragonFruit caps the area per support at 30 mm2"
+            "the area per support is capped at 30 mm2"
         );
         assert_eq!(preset_index, 1);
         // Only the zone presets ship (#490).
@@ -3549,7 +3549,7 @@ mod window_wiring_tests {
             let before = window.get_support_gen_in_progress();
             // The cube rests on the plate, in the raft: the press waits for
             // the raft warning's answer (#131).
-            window.invoke_df_support_requested();
+            window.invoke_generate_supports_requested();
             let held = window.get_support_gen_in_progress();
             let warned = !window.get_support_raft_clash_message().is_empty();
             window.invoke_support_raft_ignore_requested();
@@ -4606,7 +4606,7 @@ mod window_wiring_tests {
         _app: Rc<AppState>,
         window: MainWindow,
         controller: Rc<ViewportController>,
-        run: Rc<DfSupportRun>,
+        run: Rc<SupportRun>,
         leaves: Vec<sc_scene::NodeId>,
     }
 
@@ -4720,7 +4720,7 @@ mod window_wiring_tests {
             document.install_graph(graph.clone(), PathBuf::from("cubes.stl"));
             let run = app.main_windows.borrow()[&id]
                 ._drivers
-                ._df_support_run
+                ._support_run
                 .clone();
             run.make_supports_for_test(&graph);
             controller.set_section(WorkspaceSection::Transform);
@@ -5348,7 +5348,7 @@ mod window_wiring_tests {
                 let drivers = &windows[&id]._drivers;
                 (
                     drivers._arrange_run.clone(),
-                    drivers._df_support_run.clone(),
+                    drivers._support_run.clone(),
                 )
             };
             // `BREADSLICER_ONE_RAFT_BOX=0` leaves one raft for all off.
@@ -5406,7 +5406,7 @@ mod window_wiring_tests {
                             .map_while(|i| s.leaf_id_at_index(i))
                             .filter_map(|leaf| {
                                 let q = s.leaf(leaf)?;
-                                (!sc_geom::df_supports::is_any_support_mesh(q.mesh()))
+                                (!sc_geom::supports::is_any_support_mesh(q.mesh()))
                                     .then(|| (leaf, q.world_transform()))
                             })
                             .collect::<Vec<_>>()
@@ -5454,9 +5454,9 @@ mod window_wiring_tests {
             supports.settle_plate_rafts();
             println!("raft settled in {:.2} s", t.elapsed().as_secs_f64());
             let kind = |mesh: &sc_mesh_core::IndexedMesh| -> u8 {
-                if sc_geom::df_supports::is_plate_raft(mesh) {
+                if sc_geom::supports::is_plate_raft(mesh) {
                     2
-                } else if sc_geom::df_supports::is_any_support_mesh(mesh) {
+                } else if sc_geom::supports::is_any_support_mesh(mesh) {
                     1
                 } else {
                     0
@@ -5715,11 +5715,11 @@ mod window_wiring_tests {
             if std::env::var_os("BREADSLICER_ARRANGE_GENERATE").is_some() {
                 let run = app.main_windows.borrow()[&id]
                     ._drivers
-                    ._df_support_run
+                    ._support_run
                     .clone();
                 let started = Instant::now();
-                run.generate_now(sc_geom::df_supports::DfSupportOptions {
-                    zones: Some(sc_geom::df_supports::zone_presets::minis_30()),
+                run.generate_now(sc_geom::supports::SupportOptions {
+                    zones: Some(sc_geom::supports::zone_presets::minis_30()),
                     ..Default::default()
                 });
                 println!(

@@ -638,9 +638,9 @@ impl SceneLoader {
                 if !failures.is_empty() {
                     let details = failures.join("\n");
                     self.dialogs.show_info(move || InfoTexts {
-                        heading: ctr!("DfSupportDialog", "Supports not restored"),
+                        heading: ctr!("SupportDialog", "Supports not restored"),
                         message: ctr!(
-                            "DfSupportDialog",
+                            "SupportDialog",
                             "The project opened, but its supports could not be rebuilt and were left out. Generate them again."
                         ),
                         details: details.as_str().into(),

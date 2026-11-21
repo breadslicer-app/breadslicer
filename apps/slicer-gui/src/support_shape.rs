@@ -19,7 +19,7 @@
 //! Their texts are left to the panel, which lays out text better: each
 //! drawing hands back where its numbers and its words go.
 
-use sc_geom::df_supports::SupportSize;
+use sc_geom::supports::SupportSize;
 use slint::{Rgba8Pixel, SharedPixelBuffer};
 
 /// A part of the support, as the panel names them: what lights up when a
@@ -1259,7 +1259,7 @@ mod tests {
     use super::*;
 
     fn small() -> SupportSize {
-        sc_geom::df_supports::zone_presets::minis_30()
+        sc_geom::supports::zone_presets::minis_30()
             .rules
             .sizes
             .into_iter()

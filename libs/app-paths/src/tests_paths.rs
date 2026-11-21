@@ -110,7 +110,7 @@ fn bundled_data_dirs_from_leave_out_a_missing_source_tree_root() {
 fn dev_assets_dir_walks_up_to_the_tree_with_profiles() {
     let tree = tempdir().unwrap();
     fs::create_dir_all(tree.path().join("assets/profiles")).unwrap();
-    let nested = tree.path().join("libs/sc-geom/support-gen-df");
+    let nested = tree.path().join("libs/sc-geom/support-engine");
     fs::create_dir_all(&nested).unwrap();
     assert_eq!(
         dev_assets_dir(Some(nested)),

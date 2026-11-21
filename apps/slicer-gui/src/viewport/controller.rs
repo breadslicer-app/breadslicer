@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use sc_geom::df_hollow::hollow_df::LassoRegion;
+use sc_geom::hollow::hollow_engine::LassoRegion;
 use sc_mesh_core::transform::Transform3D;
 use slint::ComponentHandle;
 use slint::wgpu_30::wgpu;
@@ -837,7 +837,7 @@ impl ViewportController {
                     .filter(|&id| {
                         scene
                             .leaf_mesh_arc(id)
-                            .is_some_and(|mesh| !sc_geom::df_supports::is_any_support_mesh(mesh))
+                            .is_some_and(|mesh| !sc_geom::supports::is_any_support_mesh(mesh))
                     })
                     .collect()
             })
@@ -1301,7 +1301,7 @@ impl ViewportController {
                     .filter(|&id| {
                         spatial
                             .leaf(id)
-                            .is_some_and(|q| !sc_geom::df_supports::is_any_support_mesh(q.mesh()))
+                            .is_some_and(|q| !sc_geom::supports::is_any_support_mesh(q.mesh()))
                     })
                     .collect()
             })
@@ -5214,7 +5214,7 @@ impl ViewportController {
                     .filter(|&id| {
                         spatial
                             .leaf(id)
-                            .is_some_and(|q| !sc_geom::df_supports::is_any_support_mesh(q.mesh()))
+                            .is_some_and(|q| !sc_geom::supports::is_any_support_mesh(q.mesh()))
                     })
                     .collect()
             })
@@ -5495,8 +5495,8 @@ impl ViewportController {
                     .map(|&id| {
                         let query = spatial.leaf(id)?;
                         let mesh = query.mesh();
-                        if !sc_geom::df_supports::is_any_support_mesh(mesh)
-                            || sc_geom::df_supports::is_plate_raft(mesh)
+                        if !sc_geom::supports::is_any_support_mesh(mesh)
+                            || sc_geom::supports::is_plate_raft(mesh)
                         {
                             return None;
                         }
@@ -6660,11 +6660,11 @@ fn surface_paint_tint(ui: &MainWindow) -> [f32; 4] {
 
 /// The engine's self-support angle before a window's options reach it.
 fn default_tip_reach_mm() -> f64 {
-    sc_geom::df_supports::DfSupportOptions::default().tip_reach_mm()
+    sc_geom::supports::SupportOptions::default().tip_reach_mm()
 }
 
 fn default_overhang_angle_deg() -> f32 {
-    sc_geom::df_supports::DfSupportOptions::default().self_support_angle_deg() as f32
+    sc_geom::supports::SupportOptions::default().self_support_angle_deg() as f32
 }
 
 /// Which rows of the object list are selected, in row order: what the list
@@ -6820,7 +6820,7 @@ mod lasso_region_tests {
             let at = |px: [f32; 2], depth: f32| {
                 let ray = picking::ray_from_pixel(&camera, fov, size[0], size[1], px[0], px[1]);
                 let p = ray.origin + ray.direction * depth;
-                sc_geom::df_hollow::hollow_df::Vec3::new(p.x, p.y, p.z)
+                sc_geom::hollow::hollow_engine::Vec3::new(p.x, p.y, p.z)
             };
             for depth in [20.0, 60.0, 140.0] {
                 assert!(region.contains(at([360.0, 310.0], depth)));

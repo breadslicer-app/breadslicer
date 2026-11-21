@@ -537,12 +537,12 @@ fn a_loaded_project_keeps_its_placement() {
     assert_eq!(world_box(scene), ([24.0, -21.0, 14.5], [36.0, -19.0, 17.0]));
 }
 
-/// A `.bread` of a lifted cube and its DragonFruit supports, the supports kept
+/// A `.bread` of a lifted cube and its supports, the supports kept
 /// as data; `support_offset` moves the cube after the supports were made, so
 /// the supports no longer fit it.
 fn write_bread_with_supports(path: &Path, support_offset: [f64; 3]) -> usize {
-    use sc_geom::df_supports::{
-        DF_SUPPORT_DOCUMENT_VERSION, DF_SUPPORT_GENERATOR, DfSupportRequest, start_df_supports,
+    use sc_geom::supports::{
+        SUPPORT_DOCUMENT_VERSION, SUPPORT_GENERATOR, SupportRequest, start_supports,
     };
     use sc_mesh_core::transform::AffineTransform3D;
     use sc_project_formats::{SupportDocument, write_bread_project_with_progress};
@@ -560,7 +560,7 @@ fn write_bread_with_supports(path: &Path, support_offset: [f64; 3]) -> usize {
         scene.add_root(leaf).unwrap();
         scene
     };
-    let set = start_df_supports(&cube_at([20.0, 20.0, 8.0]), DfSupportRequest::default())
+    let set = start_supports(&cube_at([20.0, 20.0, 8.0]), SupportRequest::default())
         .unwrap()
         .join()
         .unwrap()
@@ -580,8 +580,8 @@ fn write_bread_with_supports(path: &Path, support_offset: [f64; 3]) -> usize {
     let supports = [SupportDocument {
         model: Some(scene.roots()[0]),
         leaf,
-        generator: DF_SUPPORT_GENERATOR.to_owned(),
-        version: DF_SUPPORT_DOCUMENT_VERSION,
+        generator: SUPPORT_GENERATOR.to_owned(),
+        version: SUPPORT_DOCUMENT_VERSION,
         document: set.session.to_document().unwrap(),
     }];
     let mut bytes = Vec::new();
@@ -606,7 +606,7 @@ fn support_mesh_faces(scene: &Scene) -> Vec<usize> {
         .roots()
         .iter()
         .filter_map(|&id| scene.leaf_mesh_arc(id))
-        .filter(|mesh| sc_geom::df_supports::is_support_mesh(mesh))
+        .filter(|mesh| sc_geom::supports::is_support_mesh(mesh))
         .map(|mesh| mesh.faces().len())
         .collect()
 }

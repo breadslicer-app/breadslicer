@@ -757,7 +757,7 @@ pub(super) fn build_model_entries_on(
                 !build_volume
                     .volume()
                     .contains(&on_its_plate(&world_box, &build_volume, plates));
-            let supports = sc_geom::df_supports::is_any_support_mesh(mesh);
+            let supports = sc_geom::supports::is_any_support_mesh(mesh);
             let drawn_as = if overhang_map && !supports {
                 MODEL_OVERHANG_MAP
             } else {

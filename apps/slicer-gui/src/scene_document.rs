@@ -417,7 +417,7 @@ pub(crate) struct SceneDocument {
     groups: RefCell<Vec<Vec<NodeId>>>,
     /// The hidden and the locked models (#16).
     flags: RefCell<SceneFlags>,
-    /// The editable DragonFruit support sessions, one set per model, shared
+    /// The editable support sessions, one set per model, shared
     /// with the support driver: a save keeps each set's session in force as
     /// data, and opening a `.bread` puts the rebuilt ones here.
     support_sessions: Rc<RefCell<SupportSessions>>,
@@ -494,8 +494,8 @@ pub(crate) fn leaf_mesh_swap(
     // a leaf that carried its old mesh along on its transform (#560) goes
     // back to none. Imported supports keep theirs: they are a mesh of their
     // own, moved like a model.
-    let drawn_set = sc_geom::df_supports::is_any_support_mesh(&after)
-        && !sc_geom::df_supports::is_imported_supports(&after);
+    let drawn_set = sc_geom::supports::is_any_support_mesh(&after)
+        && !sc_geom::supports::is_imported_supports(&after);
     if drawn_set && node.local_transform != Transform3D::Identity {
         let swap = leaf_mesh_swap_as_is(scene, leaf, after)?;
         return Some(SceneEdit::Compound(vec![
@@ -2307,7 +2307,7 @@ impl SceneDocument {
                     .filter(|&id| {
                         spatial
                             .leaf(id)
-                            .is_some_and(|q| sc_geom::df_supports::is_any_support_mesh(q.mesh()))
+                            .is_some_and(|q| sc_geom::supports::is_any_support_mesh(q.mesh()))
                     })
                     .collect()
             })
@@ -2380,8 +2380,8 @@ impl SceneDocument {
                     .iter()
                     .filter_map(|&id| {
                         let query = spatial.leaf(id)?;
-                        if !sc_geom::df_supports::is_any_support_mesh(query.mesh())
-                            || sc_geom::df_supports::is_plate_raft(query.mesh())
+                        if !sc_geom::supports::is_any_support_mesh(query.mesh())
+                            || sc_geom::supports::is_plate_raft(query.mesh())
                         {
                             return None;
                         }
@@ -2421,7 +2421,7 @@ impl SceneDocument {
                 .filter(|&&id| {
                     spatial
                         .leaf(id)
-                        .is_some_and(|q| sc_geom::df_supports::is_plate_raft(q.mesh()))
+                        .is_some_and(|q| sc_geom::supports::is_plate_raft(q.mesh()))
                 })
                 .filter_map(|&id| plate_footprint(spatial, id))
                 .collect();
@@ -2433,9 +2433,9 @@ impl SceneDocument {
                 .filter(|&id| {
                     spatial.leaf(id).is_some_and(|q| {
                         let mesh = q.mesh();
-                        sc_geom::df_supports::is_any_support_mesh(mesh)
-                            && !sc_geom::df_supports::is_plate_raft(mesh)
-                            && !sc_geom::df_supports::is_imported_supports(mesh)
+                        sc_geom::supports::is_any_support_mesh(mesh)
+                            && !sc_geom::supports::is_plate_raft(mesh)
+                            && !sc_geom::supports::is_imported_supports(mesh)
                     })
                 })
                 .filter(|&id| {
@@ -2457,8 +2457,8 @@ impl SceneDocument {
                 .iter()
                 .filter(|&&id| {
                     spatial.leaf(id).is_some_and(|q| {
-                        sc_geom::df_supports::is_any_support_mesh(q.mesh())
-                            && !sc_geom::df_supports::is_plate_raft(q.mesh())
+                        sc_geom::supports::is_any_support_mesh(q.mesh())
+                            && !sc_geom::supports::is_plate_raft(q.mesh())
                     })
                 })
                 .filter_map(|&id| footprint(id))
@@ -2471,7 +2471,7 @@ impl SceneDocument {
                 if all.contains(&raft)
                     || !spatial
                         .leaf(raft)
-                        .is_some_and(|q| sc_geom::df_supports::is_plate_raft(q.mesh()))
+                        .is_some_and(|q| sc_geom::supports::is_plate_raft(q.mesh()))
                 {
                     continue;
                 }
@@ -2497,7 +2497,7 @@ impl SceneDocument {
                 let Some(query) = spatial.leaf(id) else {
                     continue;
                 };
-                if sc_geom::df_supports::is_any_support_mesh(query.mesh()) {
+                if sc_geom::supports::is_any_support_mesh(query.mesh()) {
                     continue;
                 }
                 let sets = crate::support_persist::sets_of_model(spatial, &sessions, id);
