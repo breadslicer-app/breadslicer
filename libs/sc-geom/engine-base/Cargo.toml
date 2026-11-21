@@ -1,0 +1,11 @@
+[package]
+name = "engine-base"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "What every stage of Breadslicer's geometry engines shares: cancellation and progress."
+
+[lints]
+workspace = true
+
+[dependencies]

@@ -42,7 +42,6 @@
 //! This "out-of-process backend" is not implemented yet.
 
 use std::fmt;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 
@@ -50,32 +49,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Cooperative cancellation flag for a job. Cheap to clone; clones
-/// share one underlying flag, so a caller can hand a clone to a
-/// worker thread and trip the original to request a stop. Same shape
-/// as `sc_sl1cer::CancelToken`.
-#[derive(Clone, Debug, Default)]
-pub struct CancelToken(Arc<AtomicBool>);
-
-impl CancelToken {
-    /// A fresh token that has not been cancelled.
-    #[inline]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Requests cancellation. Idempotent; visible to every clone.
-    #[inline]
-    pub fn cancel(&self) {
-        self.0.store(true, Ordering::Relaxed);
-    }
-
-    /// Whether cancellation has been requested.
-    #[inline]
-    pub fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::Relaxed)
-    }
-}
+pub use engine_base::CancelToken;
 
 /// Coarse progress of a job: a high-level stage (or phase), with a human-readable name plus a
 /// completed/total value for progress within that phase.
