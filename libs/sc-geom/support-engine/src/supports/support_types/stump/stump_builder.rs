@@ -74,7 +74,6 @@ pub fn build_stump_data(
         disk_thickness_mm: Some(0.1),
         max_standoff_mm: Some(1.5),
         standoff_angle_threshold: Some(std::f64::consts::PI / 4.0),
-        sphere_radius_ratio: None,
         break_point_mm: settings.tip.breakpoint_mm.filter(|b| *b > 0.0),
     };
 

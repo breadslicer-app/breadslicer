@@ -250,14 +250,12 @@ pub fn apply_zone_size(
     settings.tip.penetration_mm = size.penetration_mm;
     settings.tip.breakpoint_mm = Some(size.break_point_mm);
     settings.shaft.diameter_mm = size.trunk_diameter_mm;
-    settings.shaft.secondary_diameter_mm = Some(size.trunk_diameter_mm);
     settings.roots.diameter_mm = size.base_diameter_mm;
     settings.roots.disk_height_mm = size.base_thickness_mm;
     // The base is a disk; its join cone is drawn on its own (on the raft
     // when there is one).
     settings.roots.cone_height_mm = 0.0;
     settings.roots.join_cone_mm = Some(size.join_cone_mm);
-    settings.roots.neck_diameter_mm = size.trunk_diameter_mm;
     settings.mesh_to_mesh.base_tip = size.base_tip;
     settings.auto_support.sizing_preset = rules.band_id(index);
 }

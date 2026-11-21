@@ -1,5 +1,3 @@
-//! DragonFruit `src/supports/Settings/`.
+//! The sizes and rules supports are built with.
 
-pub mod defaults;
-pub mod state;
 pub mod types;

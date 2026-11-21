@@ -67,25 +67,6 @@ impl fmt::Display for SupportTypeId {
     }
 }
 
-/// What can be selected in a support set.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum SupportSelectionCategory {
-    Trunk,
-    Branch,
-    Leaf,
-    Twig,
-    Stick,
-    Brace,
-    Stump,
-    Kickstand,
-    Root,
-    Joint,
-    Knot,
-    Segment,
-    ContactDisk,
-}
-
 /// The collections of a support set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

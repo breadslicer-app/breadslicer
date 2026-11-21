@@ -124,7 +124,6 @@ pub fn build_stick(
                 .standoff_angle_threshold
                 .unwrap_or(std::f64::consts::PI / 4.0),
         ),
-        sphere_radius_ratio: None,
         break_point_mm: settings.tip.breakpoint_mm.filter(|b| *b > 0.0),
     };
 

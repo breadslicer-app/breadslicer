@@ -72,10 +72,6 @@ pub struct SupportTipProfile {
     pub max_standoff_mm: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub standoff_angle_threshold: Option<f64>,
-    // ContactSphereProfile
-    /// Multiplier of contact diameter (e.g. 1.5x)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sphere_radius_ratio: Option<f64>,
     /// SoulCrafted (#360): a neck of the contact diameter this long between
     /// the surface and the cone, where the support breaks off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -142,6 +138,5 @@ pub const DEFAULT_TIP_PROFILE: SupportTipProfile = SupportTipProfile {
     max_standoff_mm: Some(0.25),
     // 45 degrees
     standoff_angle_threshold: Some(std::f64::consts::PI / 4.0),
-    sphere_radius_ratio: None,
     break_point_mm: None,
 };
