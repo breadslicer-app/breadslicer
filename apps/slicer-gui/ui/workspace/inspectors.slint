@@ -908,7 +908,7 @@ export component CutCard inherits Card {
         }
     }
     if root.stroke-mode: Note {
-        text: @tr("Inspector" => "Drag over the model in the view: a stroke from one side to the other cuts it along the stroke, through the model as seen; a loop round a part cuts that part off. Then press Cut.");
+        text: @tr("Inspector" => "Drag over the model in the view: a stroke from one side to the other cuts it along the stroke, through the model as seen; a loop round a part cuts that part off. Then turn the camera and adjust it: the cubes move its points, the arrow and a drag on it move it, the rings tilt it. Then press Cut.");
     }
     if !root.stroke-mode: Note {
         text: @tr("Inspector" => "Cuts the selected model with a plane and closes the pieces. In the scene, the arrow moves the plane, the rings tilt it, the corners shape it and a drag on it moves it along. Click a part of the cut to take it or leave it.");

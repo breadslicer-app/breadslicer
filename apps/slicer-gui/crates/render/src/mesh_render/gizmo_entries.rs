@@ -117,20 +117,52 @@ pub struct GizmoFrame {
     pub tool: Option<ToolGizmo>,
 }
 
+/// How many corner cubes a tool's gizmo draws at most: a plane's four, or
+/// the points of a stroke (#658).
+pub const MAX_TOOL_CORNERS: usize = 24;
+
 /// A tool's gizmo, drawn as the transform gizmo is: an arrow along a
 /// normal, a ring about each of two directions across it, and a cube at
-/// each of four corners, all at `pivot` but the corners.
+/// each corner, all at `pivot` but the corners.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct ToolGizmo {
     /// The two directions (the rings turn about them, red and green) and
     /// the normal (the arrow points along it, blue), unit, right-handed.
     pub axes: [Vec3; 3],
-    /// Where the corner cubes stand, world.
-    pub corners: [Vec3; 4],
+    /// Where the corner cubes stand, world: the first `corner_count`.
+    pub corners: [Vec3; MAX_TOOL_CORNERS],
+    pub corner_count: usize,
     /// The handle under the cursor, and the one being dragged: while one
     /// is, only it shows.
     pub hover: Option<ToolHandle>,
     pub active: Option<ToolHandle>,
+}
+
+impl ToolGizmo {
+    /// The gizmo with a cube at each of `corners` (the first
+    /// [`MAX_TOOL_CORNERS`] of them).
+    pub fn new(
+        axes: [Vec3; 3],
+        corners: &[Vec3],
+        hover: Option<ToolHandle>,
+        active: Option<ToolHandle>,
+    ) -> Self {
+        let mut all = [Vec3::ZERO; MAX_TOOL_CORNERS];
+        let corner_count = corners.len().min(MAX_TOOL_CORNERS);
+        all[..corner_count].copy_from_slice(&corners[..corner_count]);
+        Self {
+            axes,
+            corners: all,
+            corner_count,
+            hover,
+            active,
+        }
+    }
+
+    /// Where its corner cubes stand.
+    pub fn corners(&self) -> &[Vec3] {
+        &self.corners[..self.corner_count]
+    }
 }
 
 /// One of a [`ToolGizmo`]'s handles.
@@ -589,7 +621,7 @@ fn tool_handles(frame: &GizmoFrame, tool: &ToolGizmo) -> Vec<Handle> {
     // The cube mesh stands at `cube_at` along +X: back to the origin, onto
     // the plane, out to the corner.
     let to_origin = Mat4::from_translation(Vec3::new(-m.cube_at * frame.scale, 0.0, 0.0));
-    for (k, corner) in tool.corners.into_iter().enumerate() {
+    for (k, &corner) in tool.corners().iter().enumerate() {
         let Some(look) = state(ToolHandle::Corner(k)) else {
             continue;
         };
@@ -999,13 +1031,12 @@ mod tests {
         let (u, v) = (Vec3::X, Vec3::new(0.0, c, s));
         let n = u.cross(v);
         let mut f = frame(GizmoVisibility::Idle);
-        f.tool = Some(ToolGizmo {
-            axes: [u, v, n],
-            corners: [(-5.0, -5.0), (5.0, -5.0), (5.0, 5.0), (-5.0, 5.0)]
-                .map(|(a, b)| u * a + v * b),
+        f.tool = Some(ToolGizmo::new(
+            [u, v, n],
+            &[(-5.0, -5.0), (5.0, -5.0), (5.0, 5.0), (-5.0, 5.0)].map(|(a, b)| u * a + v * b),
             hover,
             active,
-        });
+        ));
         f
     }
 
