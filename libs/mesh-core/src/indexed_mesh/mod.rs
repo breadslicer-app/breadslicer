@@ -50,7 +50,7 @@ pub use error_summary::{ErrorVariantGroup, MeshErrorReport, group_errors_by_vari
 pub use fix::records::MeshFix;
 pub use mesh::declared_facet_normals::{DeclaredFacetNormals, FacetCountMismatch, RestoreRefusal};
 pub use mesh::geometry_fingerprint::GeometryFingerprint;
-pub use mesh::{IndexedMesh, MeshMetadata};
+pub use mesh::{IndexedMesh, MeshMetadata, MeshRole};
 pub use repair::{MeshRepairReport, RepairPasses, RepairRefusal};
 pub use sliceable::SliceableError;
 pub use topology::MeshTopology;

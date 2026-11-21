@@ -128,6 +128,7 @@ mod build_object_list_names_tests {
         IndexedMesh {
             meta: Some(MeshMetadata {
                 name: Some(name.to_string()),
+                role: sc_mesh_core::MeshRole::from_legacy_name(name),
                 ..Default::default()
             }),
             vertices: vec![Vertex::new([0.0, 0.0, 0.0])],

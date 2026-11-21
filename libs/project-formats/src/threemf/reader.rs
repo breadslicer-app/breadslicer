@@ -109,6 +109,7 @@ fn extract_payload(
                 groups: Vec::new(),
                 hidden: Vec::new(),
                 locked: Vec::new(),
+                metadata: Vec::new(),
             }),
             slice_fingerprint,
         )),

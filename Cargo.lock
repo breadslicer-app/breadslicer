@@ -730,9 +730,8 @@ checksum = "597e81e56404b7a3e26ef7b449f82a4b7a661ae76c3cac692b42d6bad06a0fbe"
 
 [[package]]
 name = "bread-format"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80fa8bda87086027c6ad64c746272f2375c4876882f7607825db499867996c37"
+version = "0.5.0"
+source = "git+https://github.com/breadslicer-app/bread-format?tag=v0.5.0#dd6847e976072288be986b64bf2dd3fb03629c1f"
 dependencies = [
  "crc32fast",
  "meshopt",

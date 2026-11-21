@@ -819,6 +819,7 @@ fn project_bytes(scene: &Scene) -> Vec<u8> {
         groups: Vec::new(),
         hidden: Vec::new(),
         locked: Vec::new(),
+        metadata: Vec::new(),
     };
     let mut bytes = Vec::new();
     write_project(

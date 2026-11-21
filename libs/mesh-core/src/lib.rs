@@ -29,7 +29,7 @@ pub mod triangle_iterator;
 
 // Re-exporting "core" symbols for ease of use
 pub use crate::aabb::Aabb;
-pub use crate::indexed_mesh::{IndexedMesh, MeshMetadata, ValidatedEdgeManifoldMesh};
+pub use crate::indexed_mesh::{IndexedMesh, MeshMetadata, MeshRole, ValidatedEdgeManifoldMesh};
 pub use crate::primitives::{IndexedTriangle, Normal, Triangle, Vector3D, Vertex};
 pub use crate::triangle_iterator::{
     IndexedMeshBuildError, TriangleIterator, indexed_mesh_from_soup,

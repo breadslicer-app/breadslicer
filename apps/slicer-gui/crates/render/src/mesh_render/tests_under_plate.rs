@@ -54,6 +54,7 @@ fn supports(mut mesh: IndexedMesh) -> IndexedMesh {
         name: Some(DF_SUPPORT_MESH_NAME.to_owned()),
         header_comment: None,
         declared_facet_normals: None,
+        role: sc_mesh_core::MeshRole::from_legacy_name(DF_SUPPORT_MESH_NAME),
     }));
     mesh
 }
@@ -936,6 +937,7 @@ fn the_scene_picture_is_written_when_asked() {
         }
         let meta = name.map(|name| MeshMetadata {
             name: Some(name.to_owned()),
+            role: sc_mesh_core::MeshRole::from_legacy_name(name),
             ..Default::default()
         });
         Arc::new(IndexedMesh::new(meta, vertices, faces))

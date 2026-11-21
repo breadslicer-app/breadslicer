@@ -138,6 +138,7 @@ pub(crate) fn project_with_in_sync_slices() -> (Vec<u8>, String) {
         groups: Vec::new(),
         hidden: Vec::new(),
         locked: Vec::new(),
+        metadata: Vec::new(),
     };
 
     let mut bytes = Vec::new();

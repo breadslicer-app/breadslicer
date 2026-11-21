@@ -311,6 +311,7 @@ fn body_meshes_keep_the_name_and_the_declared_normals() {
         name: Some("Mini".to_owned()),
         header_comment: Some("solid".to_owned()),
         declared_facet_normals: Some(declared),
+        role: None,
     }));
     let meshes = Bodies::of_mesh(&mesh).meshes(&mesh);
     assert_eq!(meshes.len(), 2);

@@ -53,6 +53,7 @@ mod serialize_tests {
             groups: Vec::new(),
             hidden: Vec::new(),
             locked: Vec::new(),
+            metadata: Vec::new(),
         };
         let text = serialize_payload(&payload, None).expect("references serialize");
         assert_eq!(
@@ -183,6 +184,7 @@ mod serialize_tests {
             groups: Vec::new(),
             hidden: Vec::new(),
             locked: Vec::new(),
+            metadata: Vec::new(),
         };
         let text = serialize_payload(&payload, None).expect("references serialize");
         assert!(!text.contains("marker-not-expected-in-part"));

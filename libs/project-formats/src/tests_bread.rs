@@ -65,6 +65,7 @@ fn payload() -> ProjectPayload {
         groups: Vec::new(),
         hidden: Vec::new(),
         locked: Vec::new(),
+        metadata: Vec::new(),
     }
 }
 
@@ -239,6 +240,7 @@ fn settings_of_a_newer_version_open_the_scene_as_a_project_without_them() {
         &[],
         &[],
         None,
+        &[],
     )
     .unwrap();
     let bytes = bread_format::write_file(&file, Vec::new()).unwrap();
@@ -429,4 +431,169 @@ fn the_adaptive_layers_come_back_with_the_settings() {
     assert_eq!(parsed.adaptive_layers, payload.adaptive_layers);
     let none = serialize_settings(&ProjectPayload::default(), EmbedProfiles::No).expect("written");
     assert!(!none.contains("adaptive"), "{none}");
+}
+
+/// A scene of a model, imported supports, generated supports kept as a mesh,
+/// and one raft for all, each told by its mesh's role (#228), with names
+/// that say nothing of it.
+fn scene_with_roles() -> Scene {
+    use sc_mesh_core::{MeshMetadata, MeshRole};
+    let mut scene = Scene::new();
+    for (name, role) in [
+        ("Hero", None),
+        ("Pillars", Some(MeshRole::ImportedSupports)),
+        ("Supports", Some(MeshRole::Supports)),
+        ("Base", Some(MeshRole::Raft)),
+    ] {
+        let mut mesh = unit_cube_mesh();
+        mesh.set_meta(Some(MeshMetadata {
+            name: Some(name.to_owned()),
+            role,
+            ..MeshMetadata::default()
+        }));
+        let leaf = scene
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(mesh)),
+            )
+            .unwrap();
+        scene.add_root(leaf).unwrap();
+    }
+    scene
+}
+
+fn roles_of(scene: &Scene) -> Vec<Option<sc_mesh_core::MeshRole>> {
+    leaf_meshes(scene)
+        .iter()
+        .map(|mesh| mesh.meta().as_ref().and_then(|m| m.role))
+        .collect()
+}
+
+/// #228: every leaf that is not a model comes back as what it was, whatever
+/// its name, and a model with a support's name stays a model.
+#[test]
+fn the_roles_of_leaves_come_back_with_the_file() {
+    use sc_mesh_core::{MeshMetadata, MeshRole};
+    let mut scene = scene_with_roles();
+    // A model whose file calls it "Raft" is still a model.
+    let mut odd = unit_cube_mesh();
+    odd.set_meta(Some(MeshMetadata {
+        name: Some("Raft".to_owned()),
+        ..MeshMetadata::default()
+    }));
+    let leaf = scene
+        .add_leaf(
+            None,
+            Transform3D::Identity,
+            LeafPayload::Mesh(Arc::new(odd)),
+        )
+        .unwrap();
+    scene.add_root(leaf).unwrap();
+
+    let file = to_file(&scene, None, &[], &[], None, &[]).unwrap();
+    assert_eq!(file.roles.len(), 3, "the model leaves hold no role");
+    let bytes = write(&scene, &ProjectPayload::default(), &[]);
+    let opened = read_bread_project(Cursor::new(bytes)).unwrap();
+    assert_eq!(
+        roles_of(&opened.scene),
+        vec![
+            None,
+            Some(MeshRole::ImportedSupports),
+            Some(MeshRole::Supports),
+            Some(MeshRole::Raft),
+            None,
+        ]
+    );
+}
+
+/// #228: a file saved before roles were kept tells supports and rafts by
+/// the names they carried then.
+#[test]
+fn a_file_without_roles_reads_them_from_the_old_names() {
+    use sc_mesh_core::{MeshMetadata, MeshRole};
+    let mut scene = Scene::new();
+    for name in [
+        "Hero",
+        "Imported supports",
+        "Supports (DragonFruit)",
+        "Raft",
+    ] {
+        let mut mesh = unit_cube_mesh();
+        mesh.set_meta(Some(MeshMetadata {
+            name: Some(name.to_owned()),
+            ..MeshMetadata::default()
+        }));
+        let leaf = scene
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(mesh)),
+            )
+            .unwrap();
+        scene.add_root(leaf).unwrap();
+    }
+    let bytes = write(&scene, &ProjectPayload::default(), &[]);
+    let opened = read_bread_project(Cursor::new(bytes)).unwrap();
+    assert_eq!(
+        roles_of(&opened.scene),
+        vec![
+            None,
+            Some(MeshRole::ImportedSupports),
+            Some(MeshRole::Supports),
+            Some(MeshRole::Raft),
+        ]
+    );
+}
+
+/// #607: the metadata a file holds comes back, and saving it again writes
+/// it back; the entries of a node that is gone by then are dropped.
+#[test]
+fn the_metadata_of_a_file_is_kept_across_a_save() {
+    use crate::payload::FileMetadata;
+    let scene = two_leaf_scene();
+    let [first, second] = [scene.roots()[0], scene.roots()[1]];
+    let entry = |node, key: &str, value: &str| FileMetadata {
+        node,
+        key: key.to_owned(),
+        value: value.as_bytes().to_vec(),
+    };
+    let payload = ProjectPayload {
+        metadata: vec![
+            entry(None, "title", "Two parts"),
+            entry(Some(first), "designer", "Someone"),
+            entry(Some(second), "license", "CC-BY-4.0"),
+            entry(Some(second), "breadslicer.note", "kept"),
+        ],
+        ..ProjectPayload::default()
+    };
+    let opened = read_bread_project(Cursor::new(write(&scene, &payload, &[]))).unwrap();
+    let kept = opened.payload.unwrap().metadata;
+    let roots = opened.scene.roots().to_vec();
+    assert_eq!(
+        kept,
+        vec![
+            entry(None, "title", "Two parts"),
+            entry(Some(roots[0]), "designer", "Someone"),
+            entry(Some(roots[1]), "license", "CC-BY-4.0"),
+            entry(Some(roots[1]), "breadslicer.note", "kept"),
+        ]
+    );
+
+    // The second part removed: its entries go, the rest stays.
+    let mut scene = opened.scene;
+    scene.remove_leaf(roots[1]).unwrap();
+    let payload = ProjectPayload {
+        metadata: kept,
+        ..ProjectPayload::default()
+    };
+    let again = read_bread_project(Cursor::new(write(&scene, &payload, &[]))).unwrap();
+    let root = again.scene.roots()[0];
+    assert_eq!(
+        again.payload.unwrap().metadata,
+        vec![
+            entry(None, "title", "Two parts"),
+            entry(Some(root), "designer", "Someone"),
+        ]
+    );
 }

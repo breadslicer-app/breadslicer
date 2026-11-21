@@ -31,6 +31,7 @@ fn payload_with_refs() -> ProjectPayload {
         groups: Vec::new(),
         hidden: Vec::new(),
         locked: Vec::new(),
+        metadata: Vec::new(),
     }
 }
 

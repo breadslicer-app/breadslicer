@@ -38,7 +38,7 @@ use std::sync::Arc;
 
 use bread_format as bf;
 use rayon::prelude::*;
-use sc_mesh_core::indexed_mesh::{GeometryFingerprint, IndexedMesh, MeshMetadata};
+use sc_mesh_core::indexed_mesh::{GeometryFingerprint, IndexedMesh, MeshMetadata, MeshRole};
 use sc_mesh_core::primitives::{IndexedTriangle, Vertex};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_scene::{
@@ -47,6 +47,7 @@ use sc_scene::{
 };
 
 use crate::error::{ReadBreadProjectError, WriteBreadProjectError};
+use crate::payload::FileMetadata;
 
 /// The supports of one model, kept as data: their generator's own document
 /// (tips, trunks, joints, rafts and the settings they were built with).
@@ -123,6 +124,7 @@ pub(crate) fn to_file(
     supports: &[SupportDocument],
     hollows: &[HollowDocument],
     thumbnail: Option<Vec<u8>>,
+    metadata: &[FileMetadata],
 ) -> Result<bf::BreadFile, WriteBreadProjectError> {
     let emptied: HashSet<NodeId> = supports.iter().map(|s| s.leaf).collect();
     let mut encoder = Encoder {
@@ -166,6 +168,22 @@ pub(crate) fn to_file(
         .map(|h| node(h.leaf, WriteBreadProjectError::HollowLeafMissing))
         .collect::<Result<Vec<_>, _>>()?;
     let surface = encoder.surface();
+    let roles = encoder.roles(supports.iter().map(|s| s.model), &hollow_models);
+    // Entries of nodes no longer stored are dropped (#607).
+    let metadata = metadata
+        .iter()
+        .filter_map(|entry| {
+            let node = match entry.node {
+                Some(id) => Some(*encoder.nodes.get(&id)?),
+                None => None,
+            };
+            Some(bf::MetadataEntry {
+                node,
+                key: entry.key.clone(),
+                value: entry.value.clone(),
+            })
+        })
+        .collect();
     let hollows = hollows
         .iter()
         .zip(hollow_models)
@@ -186,6 +204,8 @@ pub(crate) fn to_file(
         // Supports go in as their data alone, never as a mesh (#204).
         support_previews: Vec::new(),
         surface,
+        roles,
+        metadata,
     })
 }
 
@@ -301,6 +321,32 @@ impl Encoder<'_> {
         Ok(index)
     }
 
+    /// The leaves stored that are not models (#228), in leaf order: the
+    /// supports and rafts that are a mesh of their own. A support leaf of a
+    /// supports entry is supports anyway and is left out, as are the models
+    /// of supports and hollows entries (`models`), which hold no role.
+    fn roles(
+        &self,
+        models: impl Iterator<Item = usize>,
+        hollow_models: &[usize],
+    ) -> Vec<bf::RoleEntry> {
+        let models: HashSet<usize> = models.chain(hollow_models.iter().copied()).collect();
+        let mut roles: Vec<bf::RoleEntry> = self
+            .nodes
+            .iter()
+            .filter(|(id, index)| !self.emptied.contains(id) && !models.contains(index))
+            .filter_map(|(&id, &leaf)| {
+                let role = match self.scene.leaf_mesh_arc(id)?.meta().as_ref()?.role? {
+                    MeshRole::Supports | MeshRole::ImportedSupports => bf::ROLE_SUPPORTS,
+                    MeshRole::Raft => bf::ROLE_RAFT,
+                };
+                Some(bf::RoleEntry { leaf, role })
+            })
+            .collect();
+        roles.sort_by_key(|entry| entry.leaf);
+        roles
+    }
+
     /// The paint of the stored leaves that keep their mesh, in leaf and kind
     /// order.
     fn surface(&self) -> Vec<bf::SurfaceEntry> {
@@ -342,6 +388,7 @@ pub(crate) struct Opened {
     pub(crate) supports: Vec<SupportDocument>,
     pub(crate) hollows: Vec<HollowDocument>,
     pub(crate) surface_notes: Vec<SurfaceNote>,
+    pub(crate) metadata: Vec<FileMetadata>,
 }
 
 /// Builds Breadslicer's scene from `file`, which the crate already checked.
@@ -357,13 +404,19 @@ pub(crate) fn from_file(
         supports,
         hollows,
         surface,
+        roles,
+        metadata,
         ..
     } = file;
-    let meshes: Vec<Arc<IndexedMesh>> = stored
-        .meshes
-        .into_par_iter()
-        .map(|mesh| Arc::new(mesh_in(mesh)))
-        .collect();
+    let mut meshes: Vec<IndexedMesh> = stored.meshes.into_par_iter().map(mesh_in).collect();
+    give_roles(
+        &mut meshes,
+        &stored.nodes,
+        &stored.mesh_resources,
+        &roles,
+        &supports,
+    );
+    let meshes: Vec<Arc<IndexedMesh>> = meshes.into_iter().map(Arc::new).collect();
     let mut scene = Scene::new();
     scene.set_meta(stored.meta.map(meta_in));
     let resources: Vec<MeshResourceId> = stored
@@ -412,6 +465,14 @@ pub(crate) fn from_file(
     }
 
     let surface_notes = paint(&mut scene, &nodes, surface);
+    let metadata = metadata
+        .into_iter()
+        .map(|entry| FileMetadata {
+            node: entry.node.map(|index| nodes[index]),
+            key: entry.key,
+            value: entry.value,
+        })
+        .collect();
     let mut supports: Vec<SupportDocument> = supports
         .into_iter()
         .map(|entry| SupportDocument {
@@ -464,7 +525,74 @@ pub(crate) fn from_file(
         supports,
         hollows,
         surface_notes,
+        metadata,
     })
+}
+
+/// Gives each stored mesh a leaf shows the role of its leaf (#228): from the
+/// file's roles, or, in a file that keeps none, from the names supports and
+/// rafts carried before roles were kept. The support leaf of a supports entry
+/// is supports either way.
+fn give_roles(
+    meshes: &mut [IndexedMesh],
+    nodes: &[bf::Node],
+    resources: &[usize],
+    roles: &[bf::RoleEntry],
+    supports: &[bf::SupportEntry],
+) {
+    let mesh_of = |leaf: usize| match &nodes.get(leaf)?.kind {
+        bf::NodeKind::Leaf { mesh } => Some(*mesh),
+        bf::NodeKind::SharedLeaf { resource } => resources.get(*resource).copied(),
+        _ => None,
+    };
+    let name = |mesh: &IndexedMesh| mesh.meta().as_ref().and_then(|m| m.name.clone());
+    let mut given: Vec<(usize, MeshRole)> = Vec::new();
+    if roles.is_empty() {
+        for leaf in 0..nodes.len() {
+            if let Some(mesh) = mesh_of(leaf)
+                && let Some(role) = meshes
+                    .get(mesh)
+                    .and_then(name)
+                    .and_then(|n| MeshRole::from_legacy_name(&n))
+            {
+                given.push((mesh, role));
+            }
+        }
+    } else {
+        for entry in roles {
+            let Some(mesh) = mesh_of(entry.leaf) else {
+                continue;
+            };
+            let role = match entry.role {
+                bf::ROLE_RAFT => MeshRole::Raft,
+                // Supports kept as a mesh: generated ones keep their name,
+                // the rest came with a pre-supported file.
+                bf::ROLE_SUPPORTS => match meshes
+                    .get(mesh)
+                    .and_then(name)
+                    .and_then(|n| MeshRole::from_legacy_name(&n))
+                {
+                    Some(MeshRole::Supports) => MeshRole::Supports,
+                    _ => MeshRole::ImportedSupports,
+                },
+                // Reserved values mean a model.
+                _ => continue,
+            };
+            given.push((mesh, role));
+        }
+    }
+    given.extend(
+        supports
+            .iter()
+            .filter_map(|entry| Some((mesh_of(entry.support)?, MeshRole::Supports))),
+    );
+    for (mesh, role) in given {
+        if let Some(mesh) = meshes.get_mut(mesh) {
+            let mut meta = mesh.meta().clone().unwrap_or_default();
+            meta.role = Some(role);
+            mesh.set_meta(Some(meta));
+        }
+    }
 }
 
 /// One entry of a supports or hollows chunk of version 1, which files saved
@@ -678,6 +806,7 @@ fn mesh_in(mesh: bf::Mesh) -> IndexedMesh {
             name: meta.name,
             header_comment: meta.comment,
             declared_facet_normals: None,
+            role: None,
         }),
         mesh.vertices.into_iter().map(Vertex::new).collect(),
         mesh.triangles

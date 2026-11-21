@@ -84,6 +84,7 @@ fn payload_with_ids() -> ProjectPayload {
         groups: Vec::new(),
         hidden: Vec::new(),
         locked: Vec::new(),
+        metadata: Vec::new(),
     }
 }
 

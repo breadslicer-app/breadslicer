@@ -29,5 +29,7 @@
     "sha256": "3e713e13627f861db5535862b85cb1f6f89cfc89489afa3975946062329e770b"
   },
   "support_previews": [],
-  "surface": []
+  "surface": [],
+  "roles": [],
+  "metadata": []
 }

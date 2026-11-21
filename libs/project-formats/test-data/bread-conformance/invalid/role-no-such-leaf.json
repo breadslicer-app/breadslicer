@@ -1,0 +1,5 @@
+{
+  "description": "The roles file with its raft entry naming node 9, which the scene does not have.",
+  "reason": "malformed",
+  "chunk": "ROLE"
+}

@@ -1,0 +1,107 @@
+{
+  "description": "A triangle on supports kept as data, beside supports made by another program and a raft, both kept as meshes. The role chunk names the posts leaf as supports and the plate leaf as a raft; the triangle is a model, and the supports leaf shows supports because a supports entry names it.",
+  "meta": null,
+  "meshes": [
+    {
+      "meta": null,
+      "vertex_count": 3,
+      "triangle_count": 1,
+      "vertices_sha256": "75ef72d281ec5cbb6d86239b2f8956db59daac39d371832a721ab8c502aedfe2",
+      "triangles_sha256": "ad5dc1478de06a4c2728ea528bd9361a4b945e92a414bf4d180cedaaeaa5f4cc"
+    },
+    {
+      "meta": null,
+      "vertex_count": 0,
+      "triangle_count": 0,
+      "vertices_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "triangles_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "meta": {
+        "name": "imported",
+        "comment": null
+      },
+      "vertex_count": 8,
+      "triangle_count": 12,
+      "vertices_sha256": "00a243bc525d6c1ddfbb802ecb7d85ef371044606da877d1061e873f4f2bdab3",
+      "triangles_sha256": "c8879e3b5eeb2c47ce8bca379dd5a5a11942d446290fd735efa3ddb2b2714117"
+    },
+    {
+      "meta": {
+        "name": "plate",
+        "comment": null
+      },
+      "vertex_count": 8,
+      "triangle_count": 12,
+      "vertices_sha256": "00a243bc525d6c1ddfbb802ecb7d85ef371044606da877d1061e873f4f2bdab3",
+      "triangles_sha256": "c8879e3b5eeb2c47ce8bca379dd5a5a11942d446290fd735efa3ddb2b2714117"
+    }
+  ],
+  "mesh_resources": [],
+  "nodes": [
+    {
+      "kind": "leaf",
+      "meta": {
+        "name": "model",
+        "comment": null
+      },
+      "transform": null,
+      "mesh": 0
+    },
+    {
+      "kind": "leaf",
+      "meta": {
+        "name": "supports",
+        "comment": null
+      },
+      "transform": null,
+      "mesh": 1
+    },
+    {
+      "kind": "leaf",
+      "meta": {
+        "name": "posts",
+        "comment": null
+      },
+      "transform": null,
+      "mesh": 2
+    },
+    {
+      "kind": "leaf",
+      "meta": {
+        "name": "plate",
+        "comment": null
+      },
+      "transform": null,
+      "mesh": 3
+    }
+  ],
+  "subtrees": [],
+  "roots": [0, 1, 2, 3],
+  "settings": null,
+  "supports": [
+    {
+      "model": 0,
+      "support": 1,
+      "generator": "example",
+      "version": 1,
+      "document_size": 17,
+      "document_sha256": "8362b07d1bbff5d2e6a08f44315021910a28598a2a2f362e8fab1d2f3514fc4f"
+    }
+  ],
+  "hollows": [],
+  "thumbnail": null,
+  "support_previews": [],
+  "surface": [],
+  "roles": [
+    {
+      "leaf": 2,
+      "role": 1
+    },
+    {
+      "leaf": 3,
+      "role": 2
+    }
+  ],
+  "metadata": []
+}
