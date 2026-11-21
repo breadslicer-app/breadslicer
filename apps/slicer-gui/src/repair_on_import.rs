@@ -337,20 +337,18 @@ mod tests {
             .expect("a scene")
     }
 
-    /// Opens `graph` as a model file in a window with the setting `on`, and
-    /// runs the window until nothing is left to check or repair. Returns the
-    /// models before and after, and the Undo steps.
-    fn import(
-        graph: Scene,
-        on: bool,
-        project: bool,
-        left_out: Option<usize>,
-    ) -> (
+    /// The models before and after, the Undo steps and the card shown.
+    type Imported = (
         Vec<(bool, Arc<IndexedMesh>)>,
         Vec<(bool, Arc<IndexedMesh>)>,
         usize,
         Option<String>,
-    ) {
+    );
+
+    /// Opens `graph` as a model file in a window with the setting `on`, and
+    /// runs the window until nothing is left to check or repair. Returns the
+    /// models before and after, and the Undo steps.
+    fn import(graph: Scene, on: bool, project: bool, left_out: Option<usize>) -> Imported {
         let window = MainWindow::new().expect("the headless platform creates a main window");
         let bus = PreferencesBus::new(PreferencesSnapshot {
             repair_on_import: on,
@@ -396,7 +394,7 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(5));
         }
-        let _ = bus.update(|_| PreferencesChange::RepairOnImport);
+        bus.update(|_| PreferencesChange::RepairOnImport);
         let card = window
             .get_message_open()
             .then(|| window.get_message().heading.to_string());
