@@ -624,6 +624,16 @@ fn machine_picture(variant: AnycubicZipVariant, name: &str) -> String {
     }
 }
 
+/// The firmware's top Z acceleration, mm/s², as Photon Workshop writes it for
+/// each machine (#272): 20 on the M7 Max, 160 on the others. The rest of the
+/// firmware's timing block is the same on all six.
+fn max_z_acceleration(variant: AnycubicZipVariant) -> f32 {
+    match variant {
+        AnycubicZipVariant::Pm7m => 20.0,
+        _ => 160.0,
+    }
+}
+
 fn settings_manifest(variant: AnycubicZipVariant, program: &PrintProgram) -> SettingsManifest {
     let resolution = program.raster.panel_resolution();
     let plate = program.raster.build_volume();
@@ -688,7 +698,12 @@ fn settings_manifest(variant: AnycubicZipVariant, program: &PrintProgram) -> Set
                 MACHINE_DEFAULT_XYJERK: Num(20.0),
                 MACHINE_DEFAULT_ZJERK: Num(0.2),
                 MACHINE_GENERATE_FRAME_TIME: Num(450.0),
-                MACHINE_MAX_ACCELERATION: nums([1000.0, 1000.0, 160.0, 1000.0]),
+                MACHINE_MAX_ACCELERATION: nums([
+                    1000.0,
+                    1000.0,
+                    max_z_acceleration(variant),
+                    1000.0,
+                ]),
                 MACHINE_MAX_FEEDRATE: nums([200.0, 200.0, 20.0, 45.0]),
                 MACHINE_MAX_STEP_FREQUENCY: Num(256_000.0),
                 MACHINE_MINIMUM_PLANNER_SPEED: Num(0.05),
