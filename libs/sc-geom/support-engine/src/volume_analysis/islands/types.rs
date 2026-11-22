@@ -1,5 +1,4 @@
-//! DragonFruit `src/volumeAnalysis/Islands/types.ts`: the detected island
-//! auto-support is handed, with the wire shapes it carries.
+//! An island as placing reads it.
 
 use serde::{Deserialize, Serialize};
 
@@ -7,17 +6,20 @@ use super::voxel_footprint::VoxelFootprint;
 use crate::native::islands::body::IslandBody;
 use crate::supports::types::Vec3;
 
-/// Which detector produced an island.
+/// What found an island.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum IslandSource {
+    /// A layer that starts with nothing under it.
     #[default]
     Voxel,
+    /// A low point of the surface.
     Minima,
+    /// A face looking down past the overhang angle.
     Overhang,
 }
 
-/// Classification once the voxel and minima sets are intersected.
+/// Whether a layer island and a low point turned out to be one place.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum IslandClass {
@@ -26,81 +28,47 @@ pub enum IslandClass {
     MinimaOnly,
 }
 
-/// A closed perimeter loop, `[x, y, z]` per point (world mm).
+/// A closed loop of points `[x, y, z]`, mm.
 pub type Vec3Loop = Vec<[f64; 3]>;
 
-/// One island, from whichever detector found it. All coordinates are world /
-/// build-plate space (Z-up, mm).
+/// One island, on the plate (Z up, mm).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DetectedIsland {
-    /// Stable unique id across sources, e.g. "v12" (voxel) or "m7" (minima).
+    /// Unique across what found them: "v12", "m7", "o3".
     pub id: String,
     pub source: IslandSource,
-    /// Representative contact point (world mm).
+    /// Where it is held.
     pub contact: Vec3,
-    /// Z-ordering sort key, equal to `contact.z` (world mm).
+    /// Its height, for order: the contact's.
     pub base_z: f64,
-    /// Contact footprint area at the island's base layer (mm²).
+    /// Its area where it starts, mm².
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub area_mm2: Option<f64>,
-    /// Mean surface angle from horizontal (degrees), from the overhang detector.
+    /// An overhang's mean angle from horizontal, degrees.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub overhang_angle_deg: Option<f64>,
-    /// Peel-drag moment this overhang patch carries (mm³).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub drag_moment_mm3: Option<f64>,
-    /// Direction its drag pushes the part (deg) — the side that lifts.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub drag_dir_deg: Option<f64>,
-    /// 3D surface area of the patch (mm²).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub surface_area_mm2: Option<f64>,
-    /// Highest point of the patch (mm).
+    /// An overhang's top, mm.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_z: Option<f64>,
-    /// A large planar face past the self-support angle: a toppling patch.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub steep_flat: Option<bool>,
-    /// Model-triangle indices of the overhang region.
+    /// An overhang's faces, numbered as the model's tree names them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub triangle_ids: Option<Vec<usize>>,
-    /// Region mean surface normal (world space, away from the model).
+    /// An overhang's mean normal, away from the model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface_normal: Option<Vec3>,
-    /// Inclusive [firstLayer, lastLayer] of the unsupported contact region.
+    /// The first and last layer it stays bare.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layer_span: Option<[f64; 2]>,
-    /// Contact voxel positions at the base layer (overhang regions carry Z).
+    /// The cells where it starts (an overhang's with their height).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contact_voxels: Option<VoxelFootprint>,
-    /// Triangle-accurate perimeter loops, inset by 0.25 mm (world mm).
+    /// An overhang's edge loops, 0.25 mm inside it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub perimeter_loops: Option<Vec<Vec3Loop>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub vertex_index: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seed_triangle_id: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub supported: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub grounded: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub matched_with: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub class: Option<IslandClass>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cluster_id: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub support_count: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fully_supported: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub members: Option<Vec<DetectedIsland>>,
-    /// SoulCrafted (#360): the island's body, from a scan that measured it.
+    /// Its body, from a scan that measured it (#360).
     #[serde(skip)]
     pub body: Option<std::sync::Arc<IslandBody>>,
 }
-
-/// Default proximity (mm) for the "already supported" dedupe.
-pub const SUPPORTED_RADIUS_MM: f64 = 0.3;

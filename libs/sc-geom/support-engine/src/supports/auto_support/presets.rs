@@ -414,7 +414,6 @@ pub fn apply_zone_preset(zones: &ZonePreset, settings: &mut PipelineSettings, on
         .stabilization
         .enabled
         .then_some(STABILIZATION_MAX_ANGLE_DEG as f32);
-    settings.panel.keep_covered_voxel_islands = true;
 }
 
 #[cfg(test)]

@@ -59,7 +59,7 @@ use crate::supports::settings::types::SupportSettings;
 use crate::supports::types::SupportState;
 use crate::volume_analysis::islands::types::{DetectedIsland, IslandSource};
 use crate::volume_analysis::islands::use_islands::{
-    DerivedIslands, IslandPanelSettings, derive_islands, overhang_region_to_island,
+    DerivedIslands, IslandSettings, derive_islands, overhang_region_to_island,
 };
 
 /// A model of the scene: its loaded geometry (model space) and placement.
@@ -111,7 +111,7 @@ pub struct PipelineSettings {
     /// The slicing layer height (`slicing.layerHeightMm`).
     pub layer_height_mm: f64,
     pub scan: IslandScanSettings,
-    pub panel: IslandPanelSettings,
+    pub islands: IslandSettings,
     /// The support settings store (`getSettings()`); its `autoSupport` is the
     /// plan's override.
     pub supports: SupportSettings,
@@ -147,7 +147,7 @@ impl PipelineSettings {
         let mut settings = PipelineSettings {
             layer_height_mm,
             scan: IslandScanSettings::default(),
-            panel: IslandPanelSettings::defaults(layer_height_mm),
+            islands: IslandSettings::defaults(layer_height_mm),
             supports: SupportSettings::default(),
             raft: DEFAULT_RAFT_SETTINGS,
             sdf_cell_mm: 0.5,
@@ -724,7 +724,7 @@ fn run_pipeline(
         step(progress, Stage::DeriveIslands, i);
         let mut islands = {
             let _perf = perf::scope("stage:derive-islands");
-            derive_islands(&combined, &overhang, &[], &settings.panel)
+            derive_islands(&combined, &overhang, &settings.islands)
         };
         // SoulCrafted (#235): an island that starts on the material of
         // another part of its model (a figure sunk into its base) is held

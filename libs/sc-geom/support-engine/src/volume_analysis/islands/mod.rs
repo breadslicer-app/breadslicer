@@ -1,8 +1,7 @@
-//! DragonFruit `src/volumeAnalysis/Islands/`.
+//! A model's islands: where a print starts in the air (by layer, at a low
+//! point of the surface, or under an overhang), each with its contact.
 
-pub mod filtering;
 pub mod intersection;
-pub mod spatial_hash_grid_2d;
 pub mod types;
 pub mod use_islands;
 pub mod voxel_footprint;
