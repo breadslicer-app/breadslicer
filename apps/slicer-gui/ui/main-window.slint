@@ -785,15 +785,14 @@ export component MainWindow inherits Window {
     in-out property <bool> overhang-map-on;
     in property <string> overhang-map-limit;
 
-    // support-generatoin run state (Menu: Tools > Generate Support (trivial for test)):
-    // set when the job is submitted and cleared on
+    // The support run's state (Generate Supports): set when the job is
+    // submitted and cleared on
     // completion, error, or submission failure. `support-gen-phase` /
     // `support-gen-progress` are polled from Rust while it is true.
     in-out property <bool> support-gen-in-progress: false;
     in property <string> support-gen-phase: "";
     in property <float> support-gen-progress: 0.0;
-    // Whether the run in progress can be stopped from its panel (the
-    // support engine can; the trivial one cannot).
+    // Whether the run in progress can be stopped from its panel.
     in property <bool> support-gen-cancelable: false;
 
     in property <int> slice-completed: 0;
@@ -1147,15 +1146,6 @@ export component MainWindow inherits Window {
     callback orient-option-hovered(int, bool);
     callback orient-option-picked(int);
     callback orient-apply();
-    // Tools > Generate Support (trivial): runs `sc-geom`'s
-    // support-generation trivial (stub) algorithm end to end against the loaded scene.
-    // Each generated component (mesh) is pasted into the scene as a real object (see
-    // `support-gen-in-progress` above) and the run is reported through
-    // an info dialog. It is for end-to-end testing of integration.
-    // N ot a real support-generation feature yet.
-    // It proves the crate's interface works inside the GUI.
-
-    callback support-gen-requested();
     // Tools > Generate Supports: the auto-support (islands, placement,
     // bracing, raft), run on
     // the scene as a cancellable job. The supports and raft are pasted as one
