@@ -623,7 +623,6 @@ pub fn place_one_candidate(
                 tip_normal,
                 model_id: &candidate.model_id,
                 mesh: field.as_deref().map(|f| f as &dyn CollisionField),
-                is_preview: None,
             },
             live,
             &mut || ctx.id(),
