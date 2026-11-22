@@ -7,8 +7,8 @@
 
 use std::collections::HashSet;
 
-use support_model::tips::ContactCone;
-use support_model::types::{
+use bread_support_model::tips::ContactCone;
+use bread_support_model::types::{
     BezierCurve, ContactDisk, Quaternion, Segment, SupportCollections, SupportEntity, Vec3,
 };
 

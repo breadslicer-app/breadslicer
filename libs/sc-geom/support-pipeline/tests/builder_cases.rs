@@ -1,16 +1,16 @@
 //! The bridge, twig and kickstand builders on known cases: how far a hand
 //! bridge may cant, a twig's lean and size, a kickstand column's shape.
 
-use support_model::settings::types::SupportSettings;
-use support_model::support_kinds::SupportTypeId;
-use support_placement::support_types::contact_bridge::*;
-use support_placement::support_types::kickstand::kickstand_builder::*;
-use support_placement::support_types::kickstand::types::KickstandHostTarget;
-use support_placement::support_types::shaft_verticality::shaft_vertical_cos;
-use support_placement::support_types::stick::stick_verticality::MAX_SHAFT_ANGLE_DEG;
-use support_placement::support_types::twig::twig_builder::*;
-use support_placement::support_types::twig::twig_verticality::MAX_TWIG_SHAFT_ANGLE_DEG;
-use support_model::types::{LimitationCode, Segment, Vec3};
+use bread_support_model::settings::types::SupportSettings;
+use bread_support_model::support_kinds::SupportTypeId;
+use bread_support_placement::support_types::contact_bridge::*;
+use bread_support_placement::support_types::kickstand::kickstand_builder::*;
+use bread_support_placement::support_types::kickstand::types::KickstandHostTarget;
+use bread_support_placement::support_types::shaft_verticality::shaft_vertical_cos;
+use bread_support_placement::support_types::stick::stick_verticality::MAX_SHAFT_ANGLE_DEG;
+use bread_support_placement::support_types::twig::twig_builder::*;
+use bread_support_placement::support_types::twig::twig_verticality::MAX_TWIG_SHAFT_ANGLE_DEG;
+use bread_support_model::types::{LimitationCode, Segment, Vec3};
 
 fn ids() -> impl FnMut() -> String {
     let mut next = 0;

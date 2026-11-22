@@ -17,20 +17,20 @@ use super::types::{KickstandBuildResult, KickstandHostTarget};
 use crate::auto_support::types::js_compare;
 use crate::placement_logic::grid::grid_math::snap_to_grid_index;
 use crate::volume_analysis::islands::voxel_footprint::number_key;
-use support_geom::geom::math_utils::{js_atan2, js_cos, js_max, js_min, js_sin};
-use support_model::auto_bracing::mesh_clearance::{
+use bread_support_geom::geom::math_utils::{js_atan2, js_cos, js_max, js_min, js_sin};
+use bread_support_model::auto_bracing::mesh_clearance::{
     BraceMesh, BraceMeshes, line_passes_mesh_clearance,
 };
-use support_model::auto_bracing::settings::{AutoBracingSettings, auto_bracing_hard_rules};
-use support_model::auto_bracing::two_axis_detection::{
+use bread_support_model::auto_bracing::settings::{AutoBracingSettings, auto_bracing_hard_rules};
+use bread_support_model::auto_bracing::two_axis_detection::{
     additional_axes_needed_for_two_axis_bracing, has_qualified_two_axis_bracing,
     normalize_axis_angle_rad,
 };
-use support_model::settings::types::SupportSettings;
-use support_model::shafts::{EndpointHosts, ShaftEntity, resolve_segment_endpoints};
-use support_model::support_kinds::store_type_of;
-use support_model::support_kinds::{SupportTypeId, is_kickstand_host_type};
-use support_model::types::{Kickstand, Knot, Roots, SupportState, Trunk, Vec3};
+use bread_support_model::settings::types::SupportSettings;
+use bread_support_model::shafts::{EndpointHosts, ShaftEntity, resolve_segment_endpoints};
+use bread_support_model::support_kinds::store_type_of;
+use bread_support_model::support_kinds::{SupportTypeId, is_kickstand_host_type};
+use bread_support_model::types::{Kickstand, Knot, Roots, SupportState, Trunk, Vec3};
 
 /// Trunks shorter than this need no kickstand, in mm.
 const MIN_TRUNK_HEIGHT_MM: f64 = 15.0;
@@ -680,9 +680,9 @@ impl TrialContext<'_, '_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use support_geom::bvh::MeshBvh;
-    use support_geom::geom::Matrix4;
-    use support_model::types::{Joint, Segment, SupportEntity, Transform};
+    use bread_support_geom::bvh::MeshBvh;
+    use bread_support_geom::geom::Matrix4;
+    use bread_support_model::types::{Joint, Segment, SupportEntity, Transform};
 
     /// A closed box from `min` to `max`.
     fn block(min: [f32; 3], max: [f32; 3]) -> MeshBvh {

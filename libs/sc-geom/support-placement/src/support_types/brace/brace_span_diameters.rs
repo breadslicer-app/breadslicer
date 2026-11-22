@@ -2,9 +2,9 @@
 
 use serde::Serialize;
 
-use support_geom::geom::math_utils::{js_max, js_min};
-use support_model::constants::JOINT_DIAMETER_OFFSET_MM;
-use support_model::types::BraceProfile;
+use bread_support_geom::geom::math_utils::{js_max, js_min};
+use bread_support_model::constants::JOINT_DIAMETER_OFFSET_MM;
+use bread_support_model::types::BraceProfile;
 
 /// The narrowest a brace end gets, in mm.
 const MIN_DIAMETER_MM: f64 = 0.001;

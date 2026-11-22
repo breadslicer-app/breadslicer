@@ -3,8 +3,8 @@
 
 use std::f64::consts::PI;
 
-use support_geom::geom::math_utils::{js_atan2, js_max, js_min};
-use support_model::types::Vec3;
+use bread_support_geom::geom::math_utils::{js_atan2, js_max, js_min};
+use bread_support_model::types::Vec3;
 
 /// Distance between two points seen from above, mm.
 pub fn distance_xy(a: Vec3, b: Vec3) -> f64 {

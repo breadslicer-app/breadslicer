@@ -17,10 +17,10 @@ use super::polygon_set_2d::{
 use super::raft_meshes::generate_chamfered_base_from_polygons;
 use crate::rafts::crenelated::geometry::polygon_set_2d::PolygonError;
 use crate::rafts::crenelated::raft_types::RaftSettings;
-use support_geom::geom::Vector2;
-use support_geom::geom::buffer_geometry::BufferGeometry;
-use support_geom::geom::extrude_geometry::{ExtrudeOptions, extrude_geometry};
-use support_geom::geom::math_utils::{clamp, js_acos, js_max, js_min};
+use bread_support_geom::geom::Vector2;
+use bread_support_geom::geom::buffer_geometry::BufferGeometry;
+use bread_support_geom::geom::extrude_geometry::{ExtrudeOptions, extrude_geometry};
+use bread_support_geom::geom::math_utils::{clamp, js_acos, js_max, js_min};
 
 /// `generateCrenelatedWallManual`'s straight-edge test and gap placement: one
 /// gap centred on every edge longer than 5 mm that turns less than 15° from

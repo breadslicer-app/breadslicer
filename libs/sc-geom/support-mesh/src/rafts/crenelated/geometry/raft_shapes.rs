@@ -13,7 +13,7 @@ use super::polygon_set_2d::{
 use super::raft_body::compute_footprint;
 use crate::rafts::crenelated::geometry::polygon_set_2d::PolygonError;
 use crate::rafts::crenelated::raft_types::SupportBaseCircle;
-use support_geom::geom::Vector2;
+use bread_support_geom::geom::Vector2;
 
 /// How far a hole keeps from a support's base circle, and from the raft's
 /// edge, as a share of the hole's diameter.

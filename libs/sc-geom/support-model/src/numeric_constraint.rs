@@ -1,7 +1,7 @@
 //! The range, step and default of a numeric setting, and a value brought
 //! into it.
 
-use support_geom::geom::math_utils::{js_round, js_to_fixed_number};
+use bread_support_geom::geom::math_utils::{js_round, js_to_fixed_number};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NumericConstraint {

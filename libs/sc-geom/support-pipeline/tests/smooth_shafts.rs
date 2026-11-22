@@ -7,16 +7,16 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 
-use support_mesh::features::slicing::smooth_shafts::{
+use bread_support_mesh::features::slicing::smooth_shafts::{
     ChainPoint, ShaftStyle, SmoothShaftParams, append_smooth_chain,
 };
-use support_mesh::features::slicing::support_world_triangles::{
+use bread_support_mesh::features::slicing::support_world_triangles::{
     SupportSliceInput, TriangleSink, build_support_and_raft_world_triangles,
 };
-use support_mesh::rafts::crenelated::raft_types::{
+use bread_support_mesh::rafts::crenelated::raft_types::{
     DEFAULT_RAFT_SETTINGS, RaftBottomMode, RaftSettings,
 };
-use support_model::types::{SupportCollections, Vec3};
+use bread_support_model::types::{SupportCollections, Vec3};
 
 /// Each undirected edge of the welded soup and how many triangles use it,
 /// plus the signed volume.

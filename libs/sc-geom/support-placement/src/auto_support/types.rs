@@ -4,9 +4,9 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-use support_geom::bvh::Side;
-use support_model::model_mesh::ModelMesh;
-use support_model::types::Vec3;
+use bread_support_geom::bvh::Side;
+use bread_support_model::model_mesh::ModelMesh;
+use bread_support_model::types::Vec3;
 
 /// The model as the auto-support passes read it: its distance field and
 /// rays, the side rays hit, and its faces painted to take no support.

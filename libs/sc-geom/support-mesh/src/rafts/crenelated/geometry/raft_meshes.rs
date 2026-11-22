@@ -13,9 +13,9 @@ use super::raft_body::{
     inset_convex_polygon, signed_area_2d,
 };
 use super::raft_shapes;
-use support_geom::geom::Vector2;
-use support_geom::geom::buffer_geometry::{BufferGeometry, merge_geometries};
-use support_geom::geom::shape_utils::triangulate_shape;
+use bread_support_geom::geom::Vector2;
+use bread_support_geom::geom::buffer_geometry::{BufferGeometry, merge_geometries};
+use bread_support_geom::geom::shape_utils::triangulate_shape;
 
 /// `ring` moved `distance` toward the solid (a hole grows), each point at
 /// most four distances from where it was; the ring as it is when the move

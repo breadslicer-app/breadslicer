@@ -1,4 +1,4 @@
-//! Runs the DragonFruit hollowing port (`hollow-engine`) on one leaf of a
+//! Runs the DragonFruit hollowing port (`bread-hollow-engine`) on one leaf of a
 //! SoulCrafted scene as a cancellable background job (BS-8, BS-29).
 //!
 //! The leaf keeps its mesh and its transform. The hollow is computed in the
@@ -25,8 +25,8 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use hollow_engine::engine::{DrainReport, HollowStats};
-use hollow_engine::{
+use bread_hollow_engine::engine::{DrainReport, HollowStats};
+use bread_hollow_engine::{
     Control, DrainHole, GridRequest, HollowError, HollowSettings, Session, SolidArea, Stage,
 };
 use sc_geom_transport_inprocess::{JobError, JobHandle, JobProgress, JobWorker};
@@ -34,7 +34,7 @@ use sc_mesh_core::transform::Transform3D;
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_scene::{NodeId, Scene, SceneError};
 
-pub use hollow_engine;
+pub use bread_hollow_engine;
 
 /// The cavity this build's engine makes, as a number saved with each hollow
 /// (#446). A later build that changes the cavity bumps it, so it can tell a
@@ -258,7 +258,7 @@ pub struct WorldDrain {
     pub direction: [f32; 3],
     pub radius_mm: f32,
     pub radius_y_mm: Option<f32>,
-    pub depth: hollow_engine::DrainDepth,
+    pub depth: bread_hollow_engine::DrainDepth,
     pub outside_mm: f32,
     /// A cone's radius at the drain's end (#317); `None` a cylinder.
     pub inner_radius_mm: Option<f32>,
@@ -346,7 +346,7 @@ fn turn_onto(from: [f64; 3], to: [f64; 3]) -> M3 {
 /// out), turned so `drain`'s direction points down, its axis on `z` and
 /// its lowest point on `z = 0`.
 fn standing_plug(
-    plug: &hollow_engine::IndexedMesh,
+    plug: &bread_hollow_engine::IndexedMesh,
     drain: &DrainHole,
     frame: &LeafFrame,
 ) -> IndexedMesh {
@@ -397,7 +397,7 @@ pub enum WorldSolidArea {
     },
     /// What lies behind a curve drawn on screen (#179): its `origin` a
     /// world point, its `u`, `v`, `w` world directions, at the current pose.
-    Lasso(hollow_engine::LassoRegion),
+    Lasso(bread_hollow_engine::LassoRegion),
 }
 
 /// Preview (the cavity, as apply builds it) or apply (printable).
@@ -467,13 +467,13 @@ pub enum HollowResult {
 }
 
 /// The engine's mesh of a leaf mesh, in the physical frame.
-fn engine_mesh(mesh: &IndexedMesh, frame: &LeafFrame) -> hollow_engine::IndexedMesh {
-    hollow_engine::IndexedMesh::new(
+fn engine_mesh(mesh: &IndexedMesh, frame: &LeafFrame) -> bread_hollow_engine::IndexedMesh {
+    bread_hollow_engine::IndexedMesh::new(
         mesh.vertices()
             .iter()
             .map(|v| {
                 let p = frame.local_to_frame(*v.as_array());
-                hollow_engine::Vec3::new(p[0], p[1], p[2])
+                bread_hollow_engine::Vec3::new(p[0], p[1], p[2])
             })
             .collect(),
         mesh.faces()
@@ -485,7 +485,7 @@ fn engine_mesh(mesh: &IndexedMesh, frame: &LeafFrame) -> hollow_engine::IndexedM
 
 /// A leaf mesh of an engine mesh, back in the local frame.
 fn leaf_mesh(
-    mesh: &hollow_engine::IndexedMesh,
+    mesh: &bread_hollow_engine::IndexedMesh,
     frame: &LeafFrame,
     meta: Option<MeshMetadata>,
 ) -> IndexedMesh {
@@ -627,7 +627,7 @@ fn run_hollow(
                 center: frame.world_to_frame(*center),
                 radius_mm: *radius_mm,
             },
-            WorldSolidArea::Lasso(region) => SolidArea::Lasso(hollow_engine::LassoRegion {
+            WorldSolidArea::Lasso(region) => SolidArea::Lasso(bread_hollow_engine::LassoRegion {
                 origin: frame.world_to_frame(region.origin),
                 u: frame.world_dir_to_frame(region.u),
                 v: frame.world_dir_to_frame(region.v),
@@ -689,12 +689,12 @@ fn run_hollow(
 }
 
 /// A mesh posed by a world transform, ready to measure drains drilled into
-/// it as it is (#447): [`hollow_engine::DrillTarget`] in the leaf's physical
+/// it as it is (#447): [`bread_hollow_engine::DrillTarget`] in the leaf's physical
 /// frame. Building it walks the mesh once (a ray tree): do it off the UI
 /// thread.
 #[derive(Debug)]
 pub struct DrillProbe {
-    target: hollow_engine::DrillTarget,
+    target: bread_hollow_engine::DrillTarget,
     stretch: [i64; 9],
 }
 
@@ -708,7 +708,7 @@ impl DrillProbe {
     pub fn new(mesh: &IndexedMesh, world: &Transform3D) -> Result<Self, SceneError> {
         let frame = LeafFrame::of(world)?;
         Ok(Self {
-            target: hollow_engine::DrillTarget::new(engine_mesh(mesh, &frame)),
+            target: bread_hollow_engine::DrillTarget::new(engine_mesh(mesh, &frame)),
             stretch: frame.stretch_key(),
         })
     }
@@ -740,7 +740,7 @@ impl DrillProbe {
             return None;
         }
         let mesh = self.target.mesh();
-        let to_world = |p: hollow_engine::Vec3| {
+        let to_world = |p: bread_hollow_engine::Vec3| {
             let q = apply(&frame.rotation, [p.x, p.y, p.z].map(f64::from));
             [0, 1, 2].map(|k| (q[k] + frame.translation[k]) as f32)
         };
@@ -817,7 +817,7 @@ impl DrillProbe {
 /// How many cavities of `mesh` are closed all round (#130): each traps the
 /// resin in it until a drain opens it.
 pub fn sealed_cavities(mesh: &IndexedMesh) -> usize {
-    hollow_engine::sealed_cavities(&engine_mesh(
+    bread_hollow_engine::sealed_cavities(&engine_mesh(
         mesh,
         &LeafFrame::of(&Transform3D::Identity).unwrap_or_else(|_| unreachable!()),
     ))
@@ -869,7 +869,7 @@ pub fn start_drill_mesh(
         let target = match &probe {
             Some(probe) => &probe.target,
             None => {
-                built = hollow_engine::DrillTarget::new(engine_mesh(&mesh, &frame));
+                built = bread_hollow_engine::DrillTarget::new(engine_mesh(&mesh, &frame));
                 &built
             }
         };

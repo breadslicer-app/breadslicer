@@ -8,12 +8,12 @@ use super::kickstand_settings::{
     resolve_kickstand_layout,
 };
 use super::types::{KickstandBuildResult, KickstandHostTarget};
-use support_geom::geom::Quaternion;
-use support_geom::geom::math_utils::{clamp, js_acos, js_max, rad_to_deg};
-use support_model::collision_avoidance::{CollisionField, is_shaft_blocked};
-use support_model::constants::get_joint_diameter;
-use support_model::settings::types::SupportSettings;
-use support_model::types::{
+use bread_support_geom::geom::Quaternion;
+use bread_support_geom::geom::math_utils::{clamp, js_acos, js_max, rad_to_deg};
+use bread_support_model::collision_avoidance::{CollisionField, is_shaft_blocked};
+use bread_support_model::constants::get_joint_diameter;
+use bread_support_model::settings::types::SupportSettings;
+use bread_support_model::types::{
     Joint, Kickstand, KickstandProfile, Knot, LimitationCode, Roots, Segment, SupportEntity,
     Transform, Vec3,
 };

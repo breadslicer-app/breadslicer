@@ -7,21 +7,23 @@ use std::collections::HashSet;
 use super::ladder::{BraceWriter, lay_ladder};
 use super::pairing::{Edge, bracing_grid, is_cardinal_delta, min_pair_span_mm, plan_point};
 use super::samples::{EPS, Shaft, anchor_at, collect_shafts, plan_distance};
-use support_geom::geom::math_utils::{js_atan2, js_max, js_min};
-use support_model::auto_bracing::mesh_clearance::{
+use bread_support_geom::geom::math_utils::{js_atan2, js_max, js_min};
+use bread_support_model::auto_bracing::mesh_clearance::{
     BraceMeshes, line_passes_mesh_clearance, line_stays_off_mesh,
 };
-use support_model::auto_bracing::settings::{
+use bread_support_model::auto_bracing::settings::{
     AutoBracingSettings, auto_bracing_hard_rules, normalize_auto_bracing_settings,
 };
-use support_model::auto_bracing::two_axis_detection::{
+use bread_support_model::auto_bracing::two_axis_detection::{
     axis_separation_deg, normalize_axis_angle_rad,
 };
-use support_model::constants::JOINT_DIAMETER_OFFSET_MM;
-use support_model::settings::types::SupportSettings;
-use support_model::support_kinds::is_auto_braceable_shaft_type;
-use support_model::types::{Brace, BraceDebugSection, Knot, SupportCollections, SupportState};
-use support_placement::auto_support::types::js_compare;
+use bread_support_model::constants::JOINT_DIAMETER_OFFSET_MM;
+use bread_support_model::settings::types::SupportSettings;
+use bread_support_model::support_kinds::is_auto_braceable_shaft_type;
+use bread_support_model::types::{
+    Brace, BraceDebugSection, Knot, SupportCollections, SupportState,
+};
+use bread_support_placement::auto_support::types::js_compare;
 
 /// The shafts of `c` a brace may join.
 fn braceable_shafts(c: &SupportCollections) -> Vec<Shaft> {

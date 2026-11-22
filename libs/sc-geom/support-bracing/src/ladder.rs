@@ -9,24 +9,24 @@ use indexmap::IndexMap;
 
 use super::pairing::{Edge, is_cardinal_delta, min_pair_span_mm, pair_key};
 use super::samples::{Anchor, EPS, Shaft, anchor_at, plan_distance, span_at};
-use support_geom::geom::math_utils::{js_atan2, js_max, js_min};
-use support_model::auto_bracing::mesh_clearance::{
+use bread_support_geom::geom::math_utils::{js_atan2, js_max, js_min};
+use bread_support_model::auto_bracing::mesh_clearance::{
     BraceMeshes, line_passes_mesh_clearance, line_stays_off_mesh,
 };
-use support_model::auto_bracing::settings::{
+use bread_support_model::auto_bracing::settings::{
     AutoBracingPattern, AutoBracingSettings, GridDiagonal, StackedBracing, auto_bracing_hard_rules,
 };
-use support_model::auto_bracing::two_axis_detection::{
+use bread_support_model::auto_bracing::two_axis_detection::{
     axis_separation_deg, normalize_axis_angle_rad,
 };
-use support_model::auto_support::zone_rules::BRACE_SHARE_OF_TRUNK;
-use support_model::constants::JOINT_DIAMETER_OFFSET_MM;
-use support_model::support_kinds::{SupportTypeId, is_auto_braceable_shaft_type};
-use support_model::types::{
+use bread_support_model::auto_support::zone_rules::BRACE_SHARE_OF_TRUNK;
+use bread_support_model::constants::JOINT_DIAMETER_OFFSET_MM;
+use bread_support_model::support_kinds::{SupportTypeId, is_auto_braceable_shaft_type};
+use bread_support_model::types::{
     Brace, BraceDebugSection, BraceProfile, Knot, SupportEntity, SupportGeneratedBy,
 };
-use support_placement::auto_support::types::js_compare;
-use support_placement::support_types::kickstand::kickstand_stabiliser::GridSnap;
+use bread_support_placement::auto_support::types::js_compare;
+use bread_support_placement::support_types::kickstand::kickstand_stabiliser::GridSnap;
 
 /// Ids `{prefix}-1`, `{prefix}-2`, ... skipping those already taken.
 struct IdPool {

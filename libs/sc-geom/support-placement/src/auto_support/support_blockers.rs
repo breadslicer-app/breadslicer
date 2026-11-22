@@ -2,9 +2,9 @@
 
 use std::collections::HashSet;
 
-use support_geom::bvh::{BvhMesh, Side};
-use support_geom::geom::Ray;
-use support_geom::geom::vector3::Vec3;
+use bread_support_geom::bvh::{BvhMesh, Side};
+use bread_support_geom::geom::Ray;
+use bread_support_geom::geom::vector3::Vec3;
 
 /// Whether a contact at `point` lands on a face of `blocked` (the model's
 /// faces painted to take no support). With the face known it is that face;

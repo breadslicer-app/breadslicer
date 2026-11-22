@@ -1,10 +1,10 @@
 //! How wide each support is, for sizing the trunk that carries it.
 
-use support_geom::geom::math_utils::js_max;
-use support_model::support_kinds::{
+use bread_support_geom::geom::math_utils::js_max;
+use bread_support_model::support_kinds::{
     SupportEntityValue, SupportTypeId, get_support_type_descriptor,
 };
-use support_model::types::Segment;
+use bread_support_model::types::Segment;
 
 /// The widest segment, or 0 for none.
 fn widest(segments: &[Segment]) -> f64 {

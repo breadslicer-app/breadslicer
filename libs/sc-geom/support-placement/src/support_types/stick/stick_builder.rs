@@ -5,19 +5,19 @@
 use serde::Serialize;
 
 use crate::placement_logic::collision_utils::check_shaft_collision;
-use support_geom::geom::math_utils::{js_hypot, js_max, js_min};
-use support_model::collision_avoidance::is_shaft_blocked;
-use support_model::cone_axis_policy::{
+use bread_support_geom::geom::math_utils::{js_hypot, js_max, js_min};
+use bread_support_model::collision_avoidance::is_shaft_blocked;
+use bread_support_model::cone_axis_policy::{
     MAX_CONE_AXIS_DEVIATION_FROM_SURFACE_NORMAL_DEG, clamp_cone_axis_deviation_from_surface_normal,
 };
-use support_model::constants::get_joint_diameter;
-use support_model::model_mesh::ModelMesh;
-use support_model::settings::types::SupportSettings;
-use support_model::tips::{
+use bread_support_model::constants::get_joint_diameter;
+use bread_support_model::model_mesh::ModelMesh;
+use bread_support_model::settings::types::SupportSettings;
+use bread_support_model::tips::{
     ContactCone, ContactDiskProfile, SupportTipProfile, TipPrimitive, get_socket_position,
     nib_length,
 };
-use support_model::types::{Joint, LimitationCode, Segment, Stick, SupportEntity, Vec3};
+use bread_support_model::types::{Joint, LimitationCode, Segment, Stick, SupportEntity, Vec3};
 
 #[derive(Clone, Copy, Debug)]
 pub struct StickBuildInput<'a> {

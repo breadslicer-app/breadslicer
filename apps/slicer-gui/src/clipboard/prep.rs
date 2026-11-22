@@ -120,13 +120,13 @@ impl Prep {
             }
             let mut reach = query.transformed_aabb(query.world_transform());
             for leaf in supports.into_iter().chain(imported) {
-                let (Some(support), Some(support_mesh)) =
+                let (Some(support), Some(bread_support_mesh)) =
                     (spatial.leaf(leaf), graph.leaf_mesh_arc(leaf))
                 else {
                     continue;
                 };
                 let piece = Piece {
-                    mesh: support_mesh.clone(),
+                    mesh: bread_support_mesh.clone(),
                     world: affine(&support.world_transform()),
                     meta: graph.node(leaf).and_then(|n| n.meta.clone()),
                 };

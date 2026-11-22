@@ -26,17 +26,19 @@ use crate::rafts::crenelated::geometry::robust_wall::{
     robust_chamfered_base, robust_wall_from_polygons,
 };
 use crate::rafts::crenelated::raft_types::{RaftBottomMode, RaftSettings, SupportBaseCircle};
-use support_geom::geom::buffer_geometry::BufferGeometry;
-use support_geom::geom::math_utils::js_max;
-use support_geom::geom::primitive_geometry::{cylinder_geometry, sphere_geometry};
-use support_geom::geom::{Matrix4, Quaternion, Vector2};
-use support_model::bezier::get_bezier_point_at_t;
-use support_model::constants::JOINT_DIAMETER_OFFSET_MM;
-use support_model::shafts::{EndpointHosts, ShaftEntity, resolve_segment_endpoints, root_top};
-use support_model::tips::ContactCone;
-use support_model::tips::get_final_socket_position;
-use support_model::tips::{get_disk_center, get_disk_rotation, nib_length};
-use support_model::types::{
+use bread_support_geom::geom::buffer_geometry::BufferGeometry;
+use bread_support_geom::geom::math_utils::js_max;
+use bread_support_geom::geom::primitive_geometry::{cylinder_geometry, sphere_geometry};
+use bread_support_geom::geom::{Matrix4, Quaternion, Vector2};
+use bread_support_model::bezier::get_bezier_point_at_t;
+use bread_support_model::constants::JOINT_DIAMETER_OFFSET_MM;
+use bread_support_model::shafts::{
+    EndpointHosts, ShaftEntity, resolve_segment_endpoints, root_top,
+};
+use bread_support_model::tips::ContactCone;
+use bread_support_model::tips::get_final_socket_position;
+use bread_support_model::tips::{get_disk_center, get_disk_rotation, nib_length};
+use bread_support_model::types::{
     BezierCurve, ContactDisk, Joint, Knot, Roots, Segment, SegmentShape, SupportCollections, Vec3,
 };
 
@@ -1186,7 +1188,7 @@ type Chain = (Vec<ChainPoint>, Vec<(f64, f64)>);
 /// tube. Returns whether a tube was drawn (and so the cones with it).
 fn append_smooth_shaft(
     sink: &mut TriangleSink,
-    resolved: &[(&Segment, support_model::shafts::SegmentEndpoints)],
+    resolved: &[(&Segment, bread_support_model::shafts::SegmentEndpoints)],
     cones: (Option<&ContactCone>, Option<&ContactCone>),
     (penetration_mm, tip_scale, drawing): (f64, f64, TipDrawing),
     tessellation: &SupportSliceTessellation,

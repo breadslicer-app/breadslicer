@@ -5,7 +5,7 @@
 //! The contact bridge applies it, so every automatic path is held to it.
 
 use crate::support_types::shaft_verticality::leans_at_most;
-use support_model::types::Segment;
+use bread_support_model::types::Segment;
 
 pub const MAX_TWIG_SHAFT_ANGLE_DEG: f64 = 45.0;
 

@@ -8,7 +8,7 @@ use sc_geom_transport_inprocess::JobError;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_scene::{LeafPayload, Scene};
-use support_session::{
+use bread_support_session::{
     SUPPORT_MESH_NAME, SupportRequest, RaftMode, scene_models, start_prescan,
     start_supports,
 };
@@ -272,7 +272,7 @@ fn supports_are_added_and_removed_by_hand() {
         .join()
         .unwrap();
     let mut session = outcome.sets.into_iter().next().unwrap().session;
-    let count = |s: &support_session::SupportSession| {
+    let count = |s: &bread_support_session::SupportSession| {
         let c = &s.state().collections;
         c.roots.len() + c.trunks.len() + c.branches.len() + c.leaves.len() + c.knots.len()
     };
@@ -508,7 +508,7 @@ fn hand_edits_on_a_real_model() {
 /// hover preview (a worker computes it) and, apart, drawing the whole set
 /// again once the click takes the previewed edit (`mesh`, the slow part of
 /// a click, made off the UI thread), plus a click with no preview ready. `cargo test
-/// --release -p support-session --test supports_scene -- --ignored
+/// --release -p bread-support-session --test supports_scene -- --ignored
 /// --nocapture click_cost_on_a_real_model`.
 #[test]
 #[ignore = "needs SC_STRESS_STL"]
@@ -644,7 +644,7 @@ fn click_cost_on_a_real_model() {
 /// mouse goes, every kind of surface (faces that look down, walls, faces
 /// that look up), with and without Shift. `SC_STRESS_STL` is the model
 /// (scaled to `SC_STRESS_HEIGHT_MM` tall when set). `cargo test --release
-/// -p support-session --test supports_scene -- --ignored --nocapture
+/// -p bread-support-session --test supports_scene -- --ignored --nocapture
 /// hover_cost_over_every_surface`.
 #[test]
 #[ignore = "needs SC_STRESS_STL"]
@@ -722,7 +722,7 @@ fn hover_cost_over_every_surface() {
         .remove(0)
         .session;
     for attach in [false, true] {
-        let how = support_session::AddOptions {
+        let how = bread_support_session::AddOptions {
             attach,
             size: None,
             shape: None,

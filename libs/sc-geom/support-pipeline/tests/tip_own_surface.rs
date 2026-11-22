@@ -13,16 +13,16 @@
 use std::cell::RefCell;
 use std::sync::Arc;
 
-use support_placement::auto_support::auto_place::helpers::{
+use bread_support_placement::auto_support::auto_place::helpers::{
     PlanMesh, contact_cone_crosses_model, resolve_surface_normal,
 };
-use support_placement::placement_logic::pathfinding::sdf_cache::SdfCache;
-use support_model::tips::{
+use bread_support_placement::placement_logic::pathfinding::sdf_cache::SdfCache;
+use bread_support_model::tips::{
     ContactCone, DEFAULT_TIP_PROFILE,
 };
-use support_geom::geom::buffer_geometry::BufferGeometry;
-use support_geom::geom::{Matrix4, Vec3};
-use support_geom::bvh::{MeshBvh, Side};
+use bread_support_geom::geom::buffer_geometry::BufferGeometry;
+use bread_support_geom::geom::{Matrix4, Vec3};
+use bread_support_geom::bvh::{MeshBvh, Side};
 
 /// The 12 triangles of a closed box, each face looking out.
 fn closed_box(lo: [f32; 3], hi: [f32; 3]) -> Vec<[f32; 3]> {

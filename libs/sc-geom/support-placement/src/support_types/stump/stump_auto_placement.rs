@@ -7,15 +7,15 @@ use indexmap::IndexMap;
 use serde::Serialize;
 
 use super::stump_builder::{StumpBuildInput, build_stump_data};
-use support_geom::geom::math_utils::{js_cos, js_hypot, js_max, js_min, js_sin};
-use support_model::collision_avoidance::CollisionField;
-use support_model::rendering::support_builder::SupportData;
-use support_model::settings::types::SupportSettings;
-use support_model::support_kinds::{
+use bread_support_geom::geom::math_utils::{js_cos, js_hypot, js_max, js_min, js_sin};
+use bread_support_model::collision_avoidance::CollisionField;
+use bread_support_model::rendering::support_builder::SupportData;
+use bread_support_model::settings::types::SupportSettings;
+use bread_support_model::support_kinds::{
     PlacedSupport, SupportEntityValue, SupportTypeId, placement_of_resolved,
 };
-use support_model::tips::get_final_socket_position;
-use support_model::types::{LimitationCode, Stump, Vec3};
+use bread_support_model::tips::get_final_socket_position;
+use bread_support_model::types::{LimitationCode, Stump, Vec3};
 
 /// The closest the stump's surface may come to the model, in mm.
 const CLEARANCE_MM: f64 = 0.05;

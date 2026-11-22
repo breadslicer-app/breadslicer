@@ -16,7 +16,7 @@ const COVER_GROWTH: [(f64, f64); 4] = [(0.0, 3.0), (3.9, 4.0), (15.0, 5.0), (40.
 
 /// The radius a tip covers `diff_z_mm` above it, mm.
 pub fn influence_radius_mm(diff_z_mm: f64) -> f64 {
-    let z = support_geom::geom::math_utils::js_max(0.0, diff_z_mm);
+    let z = bread_support_geom::geom::math_utils::js_max(0.0, diff_z_mm);
     if z <= COVER_GROWTH[0].0 {
         return COVER_GROWTH[0].1;
     }

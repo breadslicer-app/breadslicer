@@ -14,15 +14,15 @@ use super::helpers::{
 };
 use crate::auto_support::support_draft::{draft_add_entity, draft_add_primitive};
 use crate::support_types::leaf::leaf_builder::{LeafBuildInput, build_leaf_data};
-use support_geom::geom::math_utils::{js_atan2, js_hypot, js_min, js_sin};
-use support_model::auto_support::constants::{
+use bread_support_geom::geom::math_utils::{js_atan2, js_hypot, js_min, js_sin};
+use bread_support_model::auto_support::constants::{
     FAN_LINK_TIP_INSET_MM, MAX_LEAF_SPAN_BEFORE_BRANCH_MM,
 };
-use support_model::collision_avoidance::CollisionField;
-use support_model::support_kinds::{
+use bread_support_model::collision_avoidance::CollisionField;
+use bread_support_model::support_kinds::{
     PlacementPrimitive, SupportEntityValue, SupportOriginId, SupportTypeId,
 };
-use support_model::types::{Knot, SupportState, Vec3};
+use bread_support_model::types::{Knot, SupportState, Vec3};
 
 /// Why a tip could not be hung.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

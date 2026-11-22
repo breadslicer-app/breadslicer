@@ -5,7 +5,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::raft_body::convex_hull_2d;
-use support_geom::geom::Vector2;
+use bread_support_geom::geom::Vector2;
 
 /// The Delaunay triangles of `points` (indices), built by inserting the
 /// points in order into a triangle far larger than them all and re-fanning

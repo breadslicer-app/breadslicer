@@ -21,10 +21,10 @@ use std::sync::{Arc, Mutex};
 use rayon::prelude::*;
 
 use super::column_clearance_map::{ColumnClearanceMap, ColumnVerdict};
-use support_geom::bvh::MeshBvh;
-use support_geom::geom::math_utils::{js_max, js_min, js_round};
-use support_geom::geom::{Box3, Matrix4, Vec3};
-use support_model::collision_avoidance::CollisionField;
+use bread_support_geom::bvh::MeshBvh;
+use bread_support_geom::geom::math_utils::{js_max, js_min, js_round};
+use bread_support_geom::geom::{Box3, Matrix4, Vec3};
+use bread_support_model::collision_avoidance::CollisionField;
 
 /// The cell edge used when none is given, mm.
 const DEFAULT_CELL_MM: f64 = 0.5;

@@ -5,16 +5,16 @@
 
 use std::sync::Arc;
 
-use support_model::model_mesh::ModelMesh;
-use support_placement::placement_logic::pathfinding::sdf_cache::SdfCache;
-use support_model::settings::types::SupportSettings;
-use support_placement::support_types::contact_bridge::BridgeEntity;
-use support_placement::support_types::trunk::cavity_bridge::{
+use bread_support_model::model_mesh::ModelMesh;
+use bread_support_placement::placement_logic::pathfinding::sdf_cache::SdfCache;
+use bread_support_model::settings::types::SupportSettings;
+use bread_support_placement::support_types::contact_bridge::BridgeEntity;
+use bread_support_placement::support_types::trunk::cavity_bridge::{
     BridgeAttempt, BridgeRefusal, attempt_cavity_bridge,
 };
-use support_model::types::Vec3;
-use support_geom::geom::Matrix4;
-use support_geom::bvh::{BvhMesh, MeshBvh, Side};
+use bread_support_model::types::Vec3;
+use bread_support_geom::geom::Matrix4;
+use bread_support_geom::bvh::{BvhMesh, MeshBvh, Side};
 
 /// The two triangles of a quad, counter-clockwise from where it looks.
 fn quad(corners: [[f32; 3]; 4]) -> Vec<[f32; 3]> {

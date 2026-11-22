@@ -13,8 +13,8 @@
 
 use rayon::prelude::*;
 
-use support_geom::geom::math_utils::{js_max, js_min};
-use support_geom::geom::{Matrix4, Vec3};
+use bread_support_geom::geom::math_utils::{js_max, js_min};
+use bread_support_geom::geom::{Matrix4, Vec3};
 
 /// What a column check can tell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

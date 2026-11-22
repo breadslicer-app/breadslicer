@@ -5,7 +5,7 @@
 
 use std::f64::consts::PI;
 
-use support_geom::geom::math_utils::js_min;
+use bread_support_geom::geom::math_utils::js_min;
 
 /// `angle_rad` folded into `[0, π)`.
 pub fn normalize_axis_angle_rad(angle_rad: f64) -> f64 {

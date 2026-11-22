@@ -14,20 +14,20 @@
 use std::cell::RefCell;
 use std::sync::Arc;
 
-use support_placement::native::overhang::{OverhangScan, overhang_and_stability_from_soup};
-use support_pipeline::regions_on_tree_faces;
-use support_placement::auto_support::grid_placement::{SurfaceSampler, face_normal_at};
-use support_placement::auto_support::types::AutoSupportMesh;
-use support_placement::auto_support::zone_candidates::{
+use bread_support_placement::native::overhang::{OverhangScan, overhang_and_stability_from_soup};
+use bread_support_pipeline::regions_on_tree_faces;
+use bread_support_placement::auto_support::grid_placement::{SurfaceSampler, face_normal_at};
+use bread_support_placement::auto_support::types::AutoSupportMesh;
+use bread_support_placement::auto_support::zone_candidates::{
     ZoneInput, generate_zone_candidates,
 };
-use support_model::auto_support::zone_rules::{OverhangRule, SupportSize, ZoneRules};
-use support_model::model_mesh::ModelMesh;
-use support_placement::placement_logic::pathfinding::sdf_cache::SdfCache;
-use support_geom::geom::Matrix4;
-use support_geom::bvh::{BvhMesh, MeshBvh, Side};
-use support_placement::volume_analysis::islands::types::DetectedIsland;
-use support_placement::volume_analysis::islands::use_islands::overhang_region_to_island;
+use bread_support_model::auto_support::zone_rules::{OverhangRule, SupportSize, ZoneRules};
+use bread_support_model::model_mesh::ModelMesh;
+use bread_support_placement::placement_logic::pathfinding::sdf_cache::SdfCache;
+use bread_support_geom::geom::Matrix4;
+use bread_support_geom::bvh::{BvhMesh, MeshBvh, Side};
+use bread_support_placement::volume_analysis::islands::types::DetectedIsland;
+use bread_support_placement::volume_analysis::islands::use_islands::overhang_region_to_island;
 
 /// The 12 triangles of a closed box, each face looking out, its underside
 /// first.

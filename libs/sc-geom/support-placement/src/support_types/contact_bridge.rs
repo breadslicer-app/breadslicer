@@ -12,10 +12,10 @@ use super::stick::stick_builder::{StickBuildInput, build_stick};
 use super::stick::stick_verticality::is_shaft_vertical_enough;
 use super::twig::twig_builder::{TwigBuildInput, build_twig};
 use super::twig::twig_verticality::is_twig_shaft_vertical_enough;
-use support_model::model_mesh::ModelMesh;
-use support_model::settings::types::SupportSettings;
-use support_model::support_kinds::SupportTypeId;
-use support_model::types::{LimitationCode, Segment, Stick, Twig, Vec3};
+use bread_support_model::model_mesh::ModelMesh;
+use bread_support_model::settings::types::SupportSettings;
+use bread_support_model::support_kinds::SupportTypeId;
+use bread_support_model::types::{LimitationCode, Segment, Stick, Twig, Vec3};
 
 #[derive(Clone, Copy, Debug)]
 pub struct ContactBridgeRequest<'a> {

@@ -36,20 +36,20 @@ use crate::placement_logic::smart_placement_search_utils::{
 use crate::placement_logic::standard_placement::{
     TrunkPlacementInput, TrunkPlacementResult, calculate_standard_placement,
 };
-use support_geom::geom::Matrix4;
-use support_geom::geom::math_utils::{
+use bread_support_geom::geom::Matrix4;
+use bread_support_geom::geom::math_utils::{
     deg_to_rad, js_cos, js_hypot, js_max, js_min, js_round, js_sin,
 };
-use support_model::collision_avoidance::{
+use bread_support_model::collision_avoidance::{
     CollisionField, ContactConeSweep, is_contact_cone_blocked,
 };
-use support_model::cone_axis_policy::{
+use bread_support_model::cone_axis_policy::{
     MAX_CONE_AXIS_DEVIATION_FROM_SURFACE_NORMAL_DEG, clamp_cone_axis_deviation_from_surface_normal,
     cone_keeps_contact_highest,
 };
-use support_model::settings::types::SupportSettings;
-use support_model::tips::{SupportTipProfile, get_socket_position, nib_length};
-use support_model::types::{LimitationCode, Vec3};
+use bread_support_model::settings::types::SupportSettings;
+use bread_support_model::tips::{SupportTipProfile, get_socket_position, nib_length};
+use bread_support_model::types::{LimitationCode, Vec3};
 
 /// What the router asked the model, counted, for the run report: its cost
 /// is the number of questions put to the distance field.
@@ -458,14 +458,14 @@ pub fn calculate_smart_placement_v3(
     settings: &SupportSettings,
     context: SmartPlacementV3Context,
 ) -> TrunkPlacementResult {
-    let _perf = support_geom::perf::scope("router:v3");
+    let _perf = bread_support_geom::perf::scope("router:v3");
     stats.placements += 1;
     let plain = calculate_standard_placement(&input.placement, settings);
     if plain.error.is_some() {
         return plain;
     }
     {
-        let _p = support_geom::perf::scope("router:setup");
+        let _p = bread_support_geom::perf::scope("router:setup");
         sdf.refresh_matrix(matrix_world);
         sdf.enable_column_map(
             column_clearance_mm(settings.shaft.diameter_mm),
@@ -629,7 +629,7 @@ fn route(
         let field: &dyn CollisionField = checks.sdf;
         let found = {
             let mut root_fits = |x: f64, y: f64| !checks.root_blocked(x, y);
-            let _p = support_geom::perf::scope("router:joint-search");
+            let _p = bread_support_geom::perf::scope("router:joint-search");
             if grid {
                 // The drop must land on a node: the node first, the joint
                 // over it.

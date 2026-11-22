@@ -1,5 +1,5 @@
 [package]
-name = "support-session"
+name = "bread-support-session"
 version = "0.0.1"
 edition = "2024"
 license = "AGPL-3.0-or-later"
@@ -22,12 +22,12 @@ rayon = "1.12"
 indexmap = { version = "2.14.2", features = ["serde"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
-support-bracing = { path = "../support-bracing", version = "0.1.0" }
-support-geom = { path = "../support-geom", version = "0.1.0" }
-support-mesh = { path = "../support-mesh", version = "0.1.0" }
-support-model = { path = "../support-model", version = "0.1.0" }
-support-pipeline = { path = "../support-pipeline", version = "0.1.0" }
-support-placement = { path = "../support-placement", version = "0.1.0" }
+bread-support-bracing = { path = "../support-bracing", version = "0.1.0" }
+bread-support-geom = { path = "../support-geom", version = "0.1.0" }
+bread-support-mesh = { path = "../support-mesh", version = "0.1.0" }
+bread-support-model = { path = "../support-model", version = "0.1.0" }
+bread-support-pipeline = { path = "../support-pipeline", version = "0.1.0" }
+bread-support-placement = { path = "../support-placement", version = "0.1.0" }
 
 [dev-dependencies]
 sc-mesh-formats = { path = "../../mesh-formats" }

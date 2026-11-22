@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use sc_geom::hollow::hollow_engine::LassoRegion;
+use sc_geom::hollow::bread_hollow_engine::LassoRegion;
 use sc_mesh_core::transform::Transform3D;
 use slint::ComponentHandle;
 use slint::wgpu_30::wgpu;
@@ -6847,7 +6847,7 @@ mod lasso_region_tests {
             let at = |px: [f32; 2], depth: f32| {
                 let ray = picking::ray_from_pixel(&camera, fov, size[0], size[1], px[0], px[1]);
                 let p = ray.origin + ray.direction * depth;
-                sc_geom::hollow::hollow_engine::Vec3::new(p.x, p.y, p.z)
+                sc_geom::hollow::bread_hollow_engine::Vec3::new(p.x, p.y, p.z)
             };
             for depth in [20.0, 60.0, 140.0] {
                 assert!(region.contains(at([360.0, 310.0], depth)));

@@ -6,8 +6,8 @@
 //! overhang lattice, though it prints without a tip. The zone rules give each
 //! down-facing face its rule by angle, and a face that steep takes none.
 
-use support_placement::native::overhang::{OverhangScan, overhang_and_stability_from_soup};
-use support_pipeline::without_steep_flats;
+use bread_support_placement::native::overhang::{OverhangScan, overhang_and_stability_from_soup};
+use bread_support_pipeline::without_steep_flats;
 
 /// The 12 triangles of the box `[0, 20] x [0, 20] x [0, 2]`, each face
 /// looking out, turned `deg` about x and lifted 30 mm.

@@ -4,9 +4,9 @@ use std::collections::HashMap;
 
 use crate::volume_analysis::islands::types::DetectedIsland;
 use crate::volume_analysis::islands::voxel_footprint::cell_key_bits;
-use support_geom::geom::math_utils::js_max;
-use support_model::auto_support::constants::influence_radius_mm;
-use support_model::types::Vec3;
+use bread_support_geom::geom::math_utils::js_max;
+use bread_support_model::auto_support::constants::influence_radius_mm;
+use bread_support_model::types::Vec3;
 
 /// The radius a tip covers on its own surface, mm.
 pub const TIP_COVERAGE_RADIUS_MM: f64 = 3.0;

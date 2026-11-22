@@ -1,8 +1,8 @@
 Breadslicer support crates
 ==========================
 
-support-geom, support-model, support-mesh, support-placement, support-bracing
-and support-pipeline (with support-session, which runs them for a scene).
+bread-support-geom, bread-support-model, bread-support-mesh, bread-support-placement, bread-support-bracing
+and bread-support-pipeline (with bread-support-session, which runs them for a scene).
 
 The support system of these crates was first ported to Rust from the support
 system of:
