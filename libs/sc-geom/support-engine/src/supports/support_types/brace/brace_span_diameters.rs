@@ -1,10 +1,13 @@
-//! DragonFruit `src/supports/SupportTypes/Brace/braceSpanDiameters.ts`.
+//! How wide a brace is at each end.
 
 use serde::Serialize;
 
+use crate::geom::math_utils::{js_max, js_min};
 use crate::supports::constants::JOINT_DIAMETER_OFFSET_MM;
 use crate::supports::types::BraceProfile;
-use crate::geom::math_utils::{js_max, js_min};
+
+/// The narrowest a brace end gets, in mm.
+const MIN_DIAMETER_MM: f64 = 0.001;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -14,31 +17,28 @@ pub struct BraceSpanDiameters {
     pub is_tapered: bool,
 }
 
-/// How wide a brace is at each knot it spans: the knot's width less the joint
-/// offset, capped by the brace's profile. Differing ends are what makes it
-/// taper. The renderer, the proxy layer and the exporter all draw the same brace.
+/// The brace's width where it meets each knot: the knot's width less the
+/// joint offset, never wider than the brace's own profile. Ends of different
+/// widths make it taper. Drawing, picking and export all size it from here.
 ///
-/// `profile` is `brace.profile` (absent on a legacy brace); the knots are the
-/// spanned knots' diameters, `None` for a missing knot or one without a width.
+/// `profile` is the brace's (older braces have none, and are 1 mm); a knot
+/// diameter is `None` for a missing knot or one with no width, and such an
+/// end takes the profile's width.
 pub fn brace_span_diameters(
     profile: Option<BraceProfile>,
     start_knot_diameter: Option<f64>,
     end_knot_diameter: Option<f64>,
 ) -> BraceSpanDiameters {
-    let profile_diameter = js_max(0.001, profile.map_or(1.0, |p| p.diameter));
-    let at_knot = |diameter: Option<f64>| {
+    let widest = js_max(MIN_DIAMETER_MM, profile.map_or(1.0, |p| p.diameter));
+    let end_width = |knot: Option<f64>| {
+        let knot = knot.unwrap_or(widest + JOINT_DIAMETER_OFFSET_MM);
         js_min(
-            profile_diameter,
-            js_max(
-                0.001,
-                diameter.unwrap_or(profile_diameter + JOINT_DIAMETER_OFFSET_MM)
-                    - JOINT_DIAMETER_OFFSET_MM,
-            ),
+            widest,
+            js_max(MIN_DIAMETER_MM, knot - JOINT_DIAMETER_OFFSET_MM),
         )
     };
-
-    let start_diameter_mm = at_knot(start_knot_diameter);
-    let end_diameter_mm = at_knot(end_knot_diameter);
+    let start_diameter_mm = end_width(start_knot_diameter);
+    let end_diameter_mm = end_width(end_knot_diameter);
     BraceSpanDiameters {
         start_diameter_mm,
         end_diameter_mm,

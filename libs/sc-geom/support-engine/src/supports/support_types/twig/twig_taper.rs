@@ -1,17 +1,10 @@
-//! DragonFruit `src/supports/SupportTypes/Twig/twigTaper.ts`.
-//!
-//! Linear taper between the two contact disks. Parameterized by cumulative
-//! straight-line segment length so taper is continuous across joints — the
-//! twig behaves as one logical body from disk A to disk B.
-//!
-//! s = 0 at disk A's socket joint, s = 1 at disk B's socket joint.
+//! Joint sizing along a twig. A twig is one body from disk to disk, and every
+//! joint or knot that sits on it is drawn a little wider than the twig there.
 
-
-
-/// Any joint/knot that sits on the twig is 10% larger than the twig's local
-/// contact diameter. Renderer, builder and live knot drag all agree on this.
+/// How much wider than the twig a joint on it is.
 pub const TWIG_JOINT_DISK_DIAMETER_MULTIPLIER: f64 = 1.10;
 
+/// The diameter of a joint on a twig `twig_diameter_mm` wide.
 pub fn twig_joint_diameter_for_local_diameter(twig_diameter_mm: f64) -> f64 {
     twig_diameter_mm * TWIG_JOINT_DISK_DIAMETER_MULTIPLIER
 }
