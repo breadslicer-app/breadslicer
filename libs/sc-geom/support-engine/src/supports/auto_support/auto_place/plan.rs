@@ -43,16 +43,9 @@ use crate::supports::auto_support::constants::{
     GRID_HOST_FAN_RADIUS_MM, MIN_LEAF_FAN_RADIUS_MM,
 };
 use crate::supports::auto_support::coverage::{compute_region_coverage, coverage_radius_for_area};
-use crate::supports::auto_support::load_budget::{
-    LoadBudgetInput, PlacedContact, compute_load_budget,
-};
 use crate::supports::auto_support::parameter_sizing::{
     ModelSizingContext, RESIN_DENSITY_G_PER_MM3, model_sizing_factors, preset_for_area,
     size_parameters,
-};
-use crate::supports::auto_support::pose_stability::{
-    PoseStability, is_slender_part, measure_pose_stability, needs_topple_coverage, posed_positions,
-    steep_flat_needs_coverage,
 };
 use crate::supports::auto_support::settings::{
     AutoSupportSettings, SizingPreset, create_default_auto_support_settings,
@@ -388,7 +381,6 @@ struct RunState {
     /// coverage-fill one, so the map reduces to a set).
     grid_infill_ids: HashSet<String>,
     forest_ledger: Vec<ForestLedgerEntry>,
-    placed_contacts: Vec<PlacedContact>,
     presets: PresetCounts,
     rejection_reasons: IndexMap<String, usize>,
     /// The candidate each placed support came from, by its id: a support
@@ -471,14 +463,6 @@ impl RunState {
         }
         if let Some(preset) = result.preset {
             self.presets.bump(preset);
-        }
-        if result.kind.is_some() {
-            self.placed_contacts.push(PlacedContact {
-                tip: candidate.tip_pos,
-                preset: result
-                    .preset
-                    .unwrap_or_else(|| preset_for_area(candidate.island_area_mm2)),
-            });
         }
 
         bump_source(&mut self.diagnostics.candidates_by_source, candidate.source);
@@ -670,9 +654,6 @@ pub fn compute_auto_support_plan(
 ) -> Option<AutoSupportPlan> {
     let defaults = create_default_auto_support_settings();
     let auto = normalize_auto_support_settings(input.settings_override.unwrap_or(&defaults));
-    if !auto.enabled {
-        return None;
-    }
     let live = ctx.live();
     let islands = input.islands;
     let model_id = input.model_id;
@@ -707,28 +688,7 @@ pub fn compute_auto_support_plan(
 
     perf::mark("auto:candidates");
     // ── 1. Candidates ────────────────────────────────────────────────
-    let pose_stability: Option<PoseStability> = mesh.map(|m| {
-        measure_pose_stability(
-            &posed_positions(m.bvh.positions(), &m.matrix),
-            Some(m.bvh.index()),
-            0.0,
-            0.0,
-            None,
-            input.has_raft,
-        )
-    });
-    let topple_coverage_needed = pose_stability.as_ref().is_none_or(needs_topple_coverage);
-    let islands_to_cover: Vec<DetectedIsland> = islands
-        .iter()
-        .filter(|i| {
-            i.steep_flat != Some(true)
-                || steep_flat_needs_coverage(i.surface_area_mm2, topple_coverage_needed)
-        })
-        .cloned()
-        .collect();
-    let _slender_part = pose_stability
-        .as_ref()
-        .is_some_and(|p| is_slender_part(p.height_mm, p.volume_mm3, p.bearing_area_mm2));
+    let islands_to_cover = islands;
 
     // The zone rules (#360) make every candidate.
     let rules = &auto.zone_rules;
@@ -807,7 +767,6 @@ pub fn compute_auto_support_plan(
         diagnostics: PlacementDiagnostics::default(),
         grid_infill_ids: HashSet::new(),
         forest_ledger: Vec::new(),
-        placed_contacts: Vec::new(),
         presets: PresetCounts::default(),
         rejection_reasons: IndexMap::new(),
         candidate_of: std::collections::HashMap::new(),
@@ -1455,16 +1414,6 @@ pub fn compute_auto_support_plan(
             consolidation_refusals: con_refusals.clone(),
             cavity_fallbacks: d.cavity_fallbacks.clone(),
         });
-        forest_report.load_budget = Some(compute_load_budget(
-            &LoadBudgetInput {
-                islands,
-                contacts: &run.placed_contacts,
-                area_per_support_mm2: live.auto_support.area_per_support_mm2,
-                pose_drag_moment_mm3: pose_stability.as_ref().map(|p| p.drag_moment_mm3),
-                topple_coverage_needed,
-            },
-            ctx.bands,
-        ));
         analytics.forest_report = Some(forest_report);
     }
 

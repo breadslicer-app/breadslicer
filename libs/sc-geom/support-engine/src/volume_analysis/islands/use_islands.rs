@@ -22,12 +22,11 @@ use super::types::{DetectedIsland, IslandClass, IslandSource};
 use super::voxel_footprint::{
     VoxelFootprint, VoxelFootprintBuilder, concat_footprints, is_empty_footprint, number_key,
 };
+use crate::geom::math_utils::{js_max, js_min, js_round};
 use crate::native::mesh_minima::CombinedIslandScanResult;
 use crate::native::overhang::{OverhangRegion, OverhangScan};
-use crate::supports::auto_support::pose_stability::CONSERVATIVE_P_SIGMA;
 use crate::supports::auto_support::types::js_compare;
 use crate::supports::types::Vec3;
-use crate::geom::math_utils::{js_max, js_min, js_round};
 
 /// An `f32` as the frontend receives it: serde_json writes it (ryu's shortest
 /// decimal, whose tie choice can differ from `Display`'s) and JavaScript parses
@@ -55,6 +54,9 @@ fn ipc_null_as_zero(v: f64) -> f64 {
 
 /// `scanNeedsCoverage`: no report reads as "needs coverage", and neither does
 /// an undefined adhesion ratio (`null < p/σ` holds in JavaScript).
+/// Below this adhesion ratio a pose needs contacts against toppling.
+const CONSERVATIVE_P_SIGMA: f64 = 0.05;
+
 pub fn scan_needs_coverage(scan: &OverhangScan) -> bool {
     scan.stability
         .as_ref()

@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use super::fan::FanLeafRefusal;
 use super::helpers::{OrphanInfo, collect_host_entities};
 use crate::geom::math_utils::{js_atan2, js_hypot, js_max, js_min, js_to_fixed};
-use crate::supports::auto_support::load_budget::LoadBudgetReport;
 use crate::supports::auto_support::settings::SizingPreset;
 use crate::supports::support_kinds::{
     SHAFT_HOSTED_MEMBER_TYPE_ORDER, SupportEntityValue, SupportTypeId,
@@ -171,8 +170,6 @@ pub struct ForestReport {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub orphans: Option<Vec<OrphanInfo>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub load_budget: Option<LoadBudgetReport>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diagnostics: Option<ReportDiagnostics>,
 }
 
@@ -329,7 +326,6 @@ pub fn build_forest_report(draft: &SupportState, ledger: &[ForestLedgerEntry]) -
         bare_hosts,
         scan: None,
         orphans: None,
-        load_budget: None,
         diagnostics: None,
     }
 }

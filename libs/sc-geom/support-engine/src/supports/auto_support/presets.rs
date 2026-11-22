@@ -382,7 +382,6 @@ pub fn apply_zone_preset(zones: &ZonePreset, settings: &mut PipelineSettings, on
     auto.overhang_self_support_angle_deg = zone_self_support_angle_deg(&rules);
     // The sizes are drawn as written: no model scaling.
     auto.model_scale_enabled = false;
-    auto.size_scale = 1.0;
     auto.zone_rules = rules.clone();
     if let Some(i) = rules.default_size_index() {
         apply_zone_size(supports, &rules, i);
