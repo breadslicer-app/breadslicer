@@ -1661,7 +1661,6 @@ impl SupportSession {
                             &mut state,
                             &PlaceArgs {
                                 grid_host_ids: None,
-                                sizing_ctx: None,
                             },
                             &ctx,
                             false,

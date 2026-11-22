@@ -366,7 +366,6 @@ impl RunState {
             &mut self.draft,
             &PlaceArgs {
                 grid_host_ids: Some(&self.grid_host_ids),
-                sizing_ctx,
             },
             ctx,
             false,
@@ -423,9 +422,6 @@ impl RunState {
                 }
             }
         }
-        if let Some(preset) = result.preset {
-            self.presets.bump(preset);
-        }
 
         bump_source(&mut self.diagnostics.candidates_by_source, candidate.source);
         if placed_a_grid_host && let Some(id) = &result.entity_id {
@@ -435,12 +431,6 @@ impl RunState {
             } else {
                 self.diagnostics.hosts_by_kind.standalone += 1;
             }
-        }
-        if let Some(refusal) = result.fan_refusal {
-            bump(&mut self.diagnostics.fan_refusals, fan_key(refusal));
-        }
-        if let Some(refusal) = result.merge_refusal {
-            bump(&mut self.diagnostics.merge_refusals, refusal);
         }
         result.kind
     }
@@ -725,7 +715,7 @@ pub fn compute_auto_support_plan(
             .drain(..)
             .map(|c| {
                 ctx.set_zone(c.zone_size);
-                let join = grid_join_height(&c, model_ctx.as_ref(), ctx);
+                let join = grid_join_height(&c, ctx);
                 ctx.set_zone(None);
                 (join.unwrap_or(f64::NEG_INFINITY), c)
             })
