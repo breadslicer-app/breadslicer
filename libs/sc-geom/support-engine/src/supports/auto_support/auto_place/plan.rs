@@ -30,10 +30,7 @@ use super::helpers::{
     validate_and_cull_orphans,
 };
 use super::place::{PlaceArgs, PlaceOutcome, RejectReason, grid_join_height, place_one_candidate};
-use super::report::{
-    BySource, CavityFallback, ForestLedgerEntry, ForestReport, ForestScanMetrics,
-    PlacementDiagnostics, ReportDiagnostics, build_forest_report, bump, fan_key,
-};
+use super::report::{CavityFallback, ForestReport, PlacementDiagnostics, bump, fan_key};
 use crate::geom::Box3;
 use crate::geom::math_utils::{js_max, js_min, js_round};
 use crate::supports::auto_bracing::auto_brace::build_auto_braced_snapshot;
@@ -43,26 +40,22 @@ use crate::supports::auto_support::constants::{
     GRID_HOST_FAN_RADIUS_MM, MIN_LEAF_FAN_RADIUS_MM,
 };
 use crate::supports::auto_support::coverage::{compute_region_coverage, coverage_radius_for_area};
-use crate::supports::auto_support::parameter_sizing::{
-    ModelSizingContext, RESIN_DENSITY_G_PER_MM3, model_sizing_factors, preset_for_area,
-    size_parameters,
-};
+use crate::supports::auto_support::parameter_sizing::ModelSizingContext;
 use crate::supports::auto_support::settings::{
     AutoSupportSettings, SizingPreset, create_default_auto_support_settings,
     normalize_auto_support_settings,
 };
 use crate::supports::auto_support::support_draft::{draft_add_entity, draft_add_primitive};
 use crate::supports::auto_support::types::{
-    AutoSupportMesh, CandidatePoint, CandidateSource, js_compare,
+    AutoSupportMesh, CandidatePoint, CandidateSource,
 };
 use crate::supports::auto_support::zone_candidates::{ZoneInput, generate_zone_candidates};
 use crate::supports::model_mesh::ModelMesh;
 use crate::supports::support_kinds::{
     PlacementPrimitive, SupportEntityValue, SupportOriginId, SupportTypeId, contact_bridge_types,
-    get_support_type_descriptor, is_auto_placed_type, is_origin_convertible_to_tree,
+    get_support_type_descriptor, is_origin_convertible_to_tree,
 };
 use crate::supports::types::{Knot, SupportState, Vec3};
-use crate::utils::math::quantize_to_scale;
 use crate::volume_analysis::islands::types::{DetectedIsland, IslandSource};
 
 /// What a run did, as a code the UI resolves into text.
@@ -94,31 +87,6 @@ impl PresetCounts {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct SizeRange {
-    pub min: f64,
-    pub max: f64,
-    pub avg: f64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SizingDebugInfo {
-    pub model_volume_mm3: f64,
-    pub estimated_weight_g: f64,
-    pub total_candidates: f64,
-    pub weight_per_support_g: f64,
-    pub model_size_mm: f64,
-    pub load_share_g: f64,
-    pub size_factor: f64,
-    pub load_factor: f64,
-    pub avg_island_area_mm2: f64,
-    pub standalone_hosts: i64,
-    pub grid_infill_hosts: i64,
-    pub shaft_diameter_range: SizeRange,
-    pub tip_contact_range: SizeRange,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AutoPlaceAnalytics {
@@ -129,8 +97,6 @@ pub struct AutoPlaceAnalytics {
     pub area_coverage: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub placement: Option<PlacementDiagnostics>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub sizing_debug: Option<SizingDebugInfo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forest_report: Option<ForestReport>,
 }
@@ -247,9 +213,6 @@ fn empty_placed_counts() -> IndexMap<SupportTypeId, i64> {
     SupportTypeId::ALL.into_iter().map(|t| (t, 0)).collect()
 }
 
-fn round2_mm(v: f64) -> f64 {
-    quantize_to_scale(v, 100.0)
-}
 
 fn bump_reason(map: &mut IndexMap<String, usize>, reason: RejectReason) {
     *map.entry(reason.as_str().to_owned()).or_insert(0) += 1;
@@ -380,7 +343,6 @@ struct RunState {
     /// Grid-infill hosts (`hostOriginById`; DragonFruit never records a
     /// coverage-fill one, so the map reduces to a set).
     grid_infill_ids: HashSet<String>,
-    forest_ledger: Vec<ForestLedgerEntry>,
     presets: PresetCounts,
     rejection_reasons: IndexMap<String, usize>,
     /// The candidate each placed support came from, by its id: a support
@@ -480,21 +442,6 @@ impl RunState {
         if let Some(refusal) = result.merge_refusal {
             bump(&mut self.diagnostics.merge_refusals, refusal);
         }
-        if let (Some(kind), Some(entity_id)) = (result.kind, &result.entity_id)
-            && is_auto_placed_type(Some(kind))
-        {
-            self.forest_ledger.push(ForestLedgerEntry {
-                display_id: candidate.id.clone(),
-                kind,
-                entity_id: entity_id.clone(),
-                area_mm2: candidate.island_area_mm2,
-                z_height: candidate.z_height,
-                preset: result
-                    .preset
-                    .unwrap_or_else(|| preset_for_area(candidate.island_area_mm2)),
-                band_shaft_mm: ctx.bands.active(ctx.live()).shaft_diameter_mm,
-            });
-        }
         result.kind
     }
 
@@ -517,14 +464,6 @@ impl RunState {
         *self.placed.get_mut(&kind).expect("every type") += 1;
         if let Some(candidate) = self.candidate_of.get(host_id).cloned() {
             self.candidate_of.insert(entity_id.to_owned(), candidate);
-        }
-        if let Some(entry) = self.forest_ledger.iter().find(|e| e.entity_id == host_id) {
-            let entry = ForestLedgerEntry {
-                kind,
-                entity_id: entity_id.to_owned(),
-                ..entry.clone()
-            };
-            self.forest_ledger.push(entry);
         }
     }
 }
@@ -667,7 +606,6 @@ pub fn compute_auto_support_plan(
             rejection_reasons: IndexMap::new(),
             area_coverage: 0.0,
             placement: None,
-            sizing_debug: None,
             forest_report: None,
         };
         Some(AutoSupportPlan {
@@ -728,14 +666,14 @@ pub fn compute_auto_support_plan(
     perf::measure("auto:candidates");
     perf::mark("auto:dedup-filter");
     // ── 2. Dedup, then the already-supported filter ─────────────────
-    let before_dedup = candidates.len();
-    let deduped_candidates = candidates.len();
+    let _before_dedup = candidates.len();
+    let _deduped_candidates = candidates.len();
     if candidates.is_empty() {
         return noop_plan(before.clone(), AutoPlaceStatus::AllDeduplicated);
     }
-    let before_support_filter = candidates.len();
+    let _before_support_filter = candidates.len();
     candidates = filter_already_supported(candidates, &before);
-    let filtered_candidates = candidates.len();
+    let _filtered_candidates = candidates.len();
     if candidates.is_empty() {
         return noop_plan(before.clone(), AutoPlaceStatus::AlreadySupported);
     }
@@ -766,13 +704,12 @@ pub fn compute_auto_support_plan(
         rejected_count: 0,
         diagnostics: PlacementDiagnostics::default(),
         grid_infill_ids: HashSet::new(),
-        forest_ledger: Vec::new(),
         presets: PresetCounts::default(),
         rejection_reasons: IndexMap::new(),
         candidate_of: std::collections::HashMap::new(),
         last_placed: None,
     };
-    let placed_host_count = |placed: &IndexMap<SupportTypeId, i64>| -> i64 {
+    let _placed_host_count = |placed: &IndexMap<SupportTypeId, i64>| -> i64 {
         SupportTypeId::ALL
             .into_iter()
             .filter(|t| get_support_type_descriptor(*t).can_be_grid_host)
@@ -975,66 +912,6 @@ pub fn compute_auto_support_plan(
         total_area,
     } = island_coverage(islands, &collect_contact_positions(&run.draft));
 
-    let sizing_debug = model_ctx
-        .as_ref()
-        .filter(|_| !candidates.is_empty())
-        .map(|mctx| {
-            let weight_g = mctx.model_volume_mm3 * RESIN_DENSITY_G_PER_MM3;
-            let factors = model_sizing_factors(Some(mctx), live);
-            let mut areas: Vec<f64> = candidates.iter().map(|c| c.island_area_mm2).collect();
-            areas.sort_by(|a, b| js_compare(a - b));
-            let min_area = areas[0];
-            let max_area = areas[areas.len() - 1];
-            let avg_area = areas.iter().fold(0.0, |s, a| s + a) / areas.len() as f64;
-            let z_max = candidates.iter().fold(1.0, |m, c| js_max(m, c.z_height));
-            let sample = |area: f64, z: f64| CandidatePoint {
-                id: "dbg".to_owned(),
-                tip_pos: Vec3::new(0.0, 0.0, 0.0),
-                tip_normal: Vec3::new(0.0, 0.0, -1.0),
-                model_id: String::new(),
-                source: CandidateSource::Voxel,
-                island_area_mm2: area,
-                z_height: z,
-                priority: 0.0,
-                tip_diameter_mm: None,
-                grid_point: None,
-                zone_size: None,
-                enclosed: false,
-            };
-            let s_min = size_parameters(&sample(min_area, 10.0), live, ctx.bands);
-            let s_max = size_parameters(&sample(max_area, z_max), live, ctx.bands);
-            let s_avg = size_parameters(&sample(avg_area, z_max / 2.0), live, ctx.bands);
-            let hosts = placed_host_count(&run.placed);
-            let kinds = run.diagnostics.hosts_by_kind;
-            SizingDebugInfo {
-                model_volume_mm3: js_round(mctx.model_volume_mm3),
-                estimated_weight_g: round2_mm(weight_g),
-                total_candidates: mctx.total_candidates,
-                weight_per_support_g: round2_mm(if hosts > 0 {
-                    weight_g / hosts as f64
-                } else {
-                    0.0
-                }),
-                model_size_mm: round2_mm(factors.size_mm),
-                load_share_g: round2_mm(factors.load_share_g),
-                size_factor: round2_mm(factors.size_factor),
-                load_factor: round2_mm(factors.load_factor),
-                avg_island_area_mm2: round2_mm(avg_area),
-                standalone_hosts: kinds.standalone,
-                grid_infill_hosts: kinds.grid_infill + kinds.coverage_fill,
-                shaft_diameter_range: SizeRange {
-                    min: round2_mm(s_min.shaft_diameter_mm.unwrap_or(0.0)),
-                    max: round2_mm(s_max.shaft_diameter_mm.unwrap_or(0.0)),
-                    avg: round2_mm(s_avg.shaft_diameter_mm.unwrap_or(0.0)),
-                },
-                tip_contact_range: SizeRange {
-                    min: round2_mm(s_min.tip_contact_diameter_mm.unwrap_or(0.0)),
-                    max: round2_mm(s_max.tip_contact_diameter_mm.unwrap_or(0.0)),
-                    avg: round2_mm(s_avg.tip_contact_diameter_mm.unwrap_or(0.0)),
-                },
-            }
-        });
-
     let mut analytics = AutoPlaceAnalytics {
         islands_covered: supported_ids.len() as i64,
         islands_uncovered: islands.len() as i64 - supported_ids.len() as i64,
@@ -1046,7 +923,6 @@ pub fn compute_auto_support_plan(
             0.0
         },
         placement: Some(run.diagnostics.clone()),
-        sizing_debug,
         forest_report: None,
     };
 
@@ -1095,7 +971,7 @@ pub fn compute_auto_support_plan(
                 kind,
                 parent_knot,
                 member,
-                entity_id,
+                entity_id: _,
                 ..
             } = fan
             else {
@@ -1106,15 +982,6 @@ pub fn compute_auto_support_plan(
             *run.placed.get_mut(&kind).expect("every type") += 1;
             supported_ids.insert(island.id.clone());
             covered_area += island.area_mm2.unwrap_or(0.0);
-            run.forest_ledger.push(ForestLedgerEntry {
-                display_id: island.id.clone(),
-                kind,
-                entity_id,
-                area_mm2: island.area_mm2.unwrap_or(0.0),
-                z_height: island.contact.z,
-                preset: preset_for_area(island.area_mm2.unwrap_or(0.0)),
-                band_shaft_mm: ctx.bands.active(live).shaft_diameter_mm,
-            });
         }
         if fanned_count == 0 {
             break;
@@ -1372,48 +1239,9 @@ pub fn compute_auto_support_plan(
         }
         run.draft = sync_contact_cone_diameters_with(&run.draft, auto.member_host_shaft_ratio);
 
-        let mut forest_report = build_forest_report(&run.draft, &run.forest_ledger);
-        let mut by_source = BySource::default();
-        for island in islands {
-            match island.source {
-                IslandSource::Voxel => by_source.voxel += 1,
-                IslandSource::Minima => by_source.minima += 1,
-                IslandSource::Overhang => by_source.overhang += 1,
-            }
-        }
-        forest_report.scan = Some(ForestScanMetrics {
-            islands: islands.len(),
-            by_source,
-            overhang_regions: islands_to_cover
-                .iter()
-                .filter(|i| i.source == IslandSource::Overhang)
-                .count(),
-            anchor_clusters: 0,
-            anchor_regions: 0,
-            candidates: candidates.len(),
-            total_area_mm2: islands
-                .iter()
-                .fold(0.0, |s, i| s + i.area_mm2.unwrap_or(0.0)),
-            coverage_percent: analytics.area_coverage * 100.0,
-            uncovered_islands: analytics.islands_uncovered.max(0) as usize,
-            rejected: run.rejected_count,
-            deduped_away: Some(before_dedup - deduped_candidates),
-            already_supported: Some(before_support_filter - filtered_candidates),
-            rejection_reasons: Some(run.rejection_reasons.clone()),
-        });
-        if !orphan_infos.is_empty() {
-            forest_report.orphans = Some(orphan_infos);
-        }
-        let d = &run.diagnostics;
-        forest_report.diagnostics = Some(ReportDiagnostics {
-            candidates_by_source: d.candidates_by_source,
-            hosts_by_kind: d.hosts_by_kind,
-            fan_refusals: d.fan_refusals.clone(),
-            merge_refusals: d.merge_refusals.clone(),
-            grid_fallbacks: d.grid_fallbacks,
-            consolidation_refusals: con_refusals.clone(),
-            cavity_fallbacks: d.cavity_fallbacks.clone(),
-        });
+        let forest_report = ForestReport {
+            orphans: (!orphan_infos.is_empty()).then_some(orphan_infos),
+        };
         analytics.forest_report = Some(forest_report);
     }
 
@@ -1441,15 +1269,6 @@ pub fn compute_auto_support_plan(
     analytics.islands_uncovered = islands.len() as i64 - end.supported_ids.len() as i64;
     analytics.area_coverage = end.area_fraction();
     analytics.rejection_reasons = run.rejection_reasons.clone();
-    if let Some(scan) = analytics
-        .forest_report
-        .as_mut()
-        .and_then(|f| f.scan.as_mut())
-    {
-        scan.coverage_percent = analytics.area_coverage * 100.0;
-        scan.uncovered_islands = analytics.islands_uncovered.max(0) as usize;
-        scan.rejection_reasons = Some(run.rejection_reasons.clone());
-    }
     perf::measure("auto:final-coverage");
 
     let result = AutoPlaceResult {

@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use super::settings::{SizingBand, SizingPreset};
 use super::types::CandidatePoint;
 use super::zone_rules::ZoneRules;
-use crate::geom::math_utils::{js_min, js_pow};
 use crate::supports::settings::types::SupportSettings;
 
 /// A support's own sizes; `None` keeps the settings' value.
@@ -72,39 +71,8 @@ impl SizingBands {
     }
 }
 
-/// The model size (box diagonal, mm) up to which a model takes no size term.
-pub const SIZE_REFERENCE_MM: f64 = 60.0;
-pub const SIZE_EXPONENT: f64 = 0.3;
-
-/// The resin per support (g) up to which a model takes no load term.
-pub const SHARE_REFERENCE_G: f64 = 0.6;
-pub const SHARE_EXPONENT: f64 = 0.25;
-
 /// Resin density, g/mm³ (1.1 g/cm³).
 pub const RESIN_DENSITY_G_PER_MM3: f64 = 0.0011;
-
-fn power_factor(ratio: f64, exponent: f64, max_factor: f64) -> f64 {
-    if !(ratio > 1.0) {
-        return 1.0;
-    }
-    js_min(max_factor, js_pow(ratio, exponent))
-}
-
-/// The model-wide size terms and what they came from.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ModelSizingFactors {
-    /// The model's size, mm.
-    pub size_mm: f64,
-    /// The resin each support carries, g.
-    pub load_share_g: f64,
-    /// The size term, from 1 to its cap.
-    pub size_factor: f64,
-    /// The load term, from 1 to its cap.
-    pub load_factor: f64,
-    /// The two together.
-    pub trunk_scale: f64,
-}
 
 /// What the model-wide terms are worked out from.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
@@ -120,48 +88,6 @@ pub struct ModelSizingContext {
     /// The model's size (box diagonal), mm.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_size_mm: Option<f64>,
-}
-
-/// The model-wide terms: each a power law of its input past its reference,
-/// capped, and 1 without a context or with model scaling off.
-pub fn model_sizing_factors(
-    ctx: Option<&ModelSizingContext>,
-    settings: &SupportSettings,
-) -> ModelSizingFactors {
-    let auto = &settings.auto_support;
-    let enabled = auto.model_scale_enabled;
-    let size_mm = ctx.and_then(|c| c.model_size_mm).unwrap_or(0.0);
-    let share_g = match ctx {
-        Some(c) if c.total_candidates > 0.0 => {
-            (c.model_volume_mm3 * RESIN_DENSITY_G_PER_MM3) / c.total_candidates
-        }
-        _ => 0.0,
-    };
-    let size_factor = if enabled && size_mm > 0.0 {
-        power_factor(
-            size_mm / SIZE_REFERENCE_MM,
-            SIZE_EXPONENT,
-            auto.model_size_factor_cap,
-        )
-    } else {
-        1.0
-    };
-    let load_factor = if enabled && share_g > 0.0 {
-        power_factor(
-            share_g / SHARE_REFERENCE_G,
-            SHARE_EXPONENT,
-            auto.model_load_factor_cap,
-        )
-    } else {
-        1.0
-    };
-    ModelSizingFactors {
-        size_mm,
-        load_share_g: share_g,
-        size_factor,
-        load_factor,
-        trunk_scale: size_factor * load_factor,
-    }
 }
 
 /// The base size a region of `area_mm2` counts as, for the run's records and
