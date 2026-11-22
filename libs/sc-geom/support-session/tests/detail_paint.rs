@@ -7,8 +7,8 @@ use std::sync::Arc;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_scene::{LeafPayload, NodeId, Scene};
-use support_session::zone_presets::minis_30;
-use support_session::{SupportOptions, SupportRequest, start_supports};
+use bread_support_session::zone_presets::minis_30;
+use bread_support_session::{SupportOptions, SupportRequest, start_supports};
 
 /// A slab 20 x 20 x 4 mm; its first two faces are its underside, split
 /// along the diagonal x + y = 20.

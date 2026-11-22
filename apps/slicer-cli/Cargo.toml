@@ -41,12 +41,12 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage
 sc-3mf.workspace = true
 sc-mesh-fixtures.workspace = true
 # The support scorecard reads the support engine's plan directly.
-support-bracing = { path = "../../libs/sc-geom/support-bracing" }
-support-geom = { path = "../../libs/sc-geom/support-geom" }
-support-mesh = { path = "../../libs/sc-geom/support-mesh" }
-support-model = { path = "../../libs/sc-geom/support-model" }
-support-pipeline = { path = "../../libs/sc-geom/support-pipeline" }
-support-placement = { path = "../../libs/sc-geom/support-placement" }
+bread-support-bracing = { path = "../../libs/sc-geom/support-bracing" }
+bread-support-geom = { path = "../../libs/sc-geom/support-geom" }
+bread-support-mesh = { path = "../../libs/sc-geom/support-mesh" }
+bread-support-model = { path = "../../libs/sc-geom/support-model" }
+bread-support-pipeline = { path = "../../libs/sc-geom/support-pipeline" }
+bread-support-placement = { path = "../../libs/sc-geom/support-placement" }
 
 assert_cmd = "2.0.18"
 png = "0.18.1"

@@ -3,11 +3,11 @@
 
 use indexmap::IndexMap;
 
-use support_model::support_kinds::{
+use bread_support_model::support_kinds::{
     PlacementPrimitive, SupportCollectionKey, SupportEdgeTarget, SupportEntityValue, SupportTypeId,
     get_support_type_descriptor,
 };
-use support_model::types::SupportState;
+use bread_support_model::types::SupportState;
 
 /// Puts `entity` into the draft as a `type_id`, replacing one of its id.
 pub fn draft_add_entity(

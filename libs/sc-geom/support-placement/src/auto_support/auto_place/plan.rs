@@ -5,7 +5,7 @@
 //! takes placed again), the tip cones sized to their hosts, and the braces.
 
 use std::collections::{HashMap, HashSet};
-use support_geom::perf;
+use bread_support_geom::perf;
 
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -29,19 +29,19 @@ use crate::auto_support::support_draft::{draft_add_entity, draft_add_primitive};
 use crate::auto_support::types::{AutoSupportMesh, CandidatePoint, CandidateSource};
 use crate::auto_support::zone_candidates::{KeepOut, ZoneInput, generate_zone_candidates};
 use crate::volume_analysis::islands::types::{DetectedIsland, IslandSource};
-use support_geom::geom::math_utils::{js_max, js_min, js_round};
-use support_model::auto_bracing::mesh_clearance::BraceMeshes;
-use support_model::auto_support::constants::{
+use bread_support_geom::geom::math_utils::{js_max, js_min, js_round};
+use bread_support_model::auto_bracing::mesh_clearance::BraceMeshes;
+use bread_support_model::auto_support::constants::{
     CONSOLIDATION_BRANCH_MIN_HEIGHT_MM, CONSOLIDATION_FAN_RADIUS_MM, CONSOLIDATION_MAX_ANGLE_DEG,
     GRID_HOST_FAN_RADIUS_MM, MIN_LEAF_FAN_RADIUS_MM,
 };
-use support_model::auto_support::settings::{AutoSupportSettings, normalize_auto_support_settings};
-use support_model::model_mesh::ModelMesh;
-use support_model::support_kinds::{
+use bread_support_model::auto_support::settings::{AutoSupportSettings, normalize_auto_support_settings};
+use bread_support_model::model_mesh::ModelMesh;
+use bread_support_model::support_kinds::{
     PlacementPrimitive, SupportEntityValue, SupportOriginId, SupportTypeId, contact_bridge_types,
     get_support_type_descriptor, is_origin_convertible_to_tree,
 };
-use support_model::types::{Knot, SupportState, Vec3};
+use bread_support_model::types::{Knot, SupportState, Vec3};
 
 /// What a run tells: islands it left bare, why contacts got nothing, how
 /// placement went and what the final check took.
@@ -104,7 +104,7 @@ impl std::fmt::Debug for PlanInput<'_> {
 /// How a run's supports are braced.
 pub type Brace<'a> = dyn Fn(
         &SupportState,
-        &support_model::settings::types::SupportSettings,
+        &bread_support_model::settings::types::SupportSettings,
         &SupportState,
         &mut dyn FnMut() -> String,
     ) -> SupportState

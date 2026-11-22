@@ -1,4 +1,4 @@
-//! Supports for a SoulCrafted scene (`support_pipeline`), as a
+//! Supports for a SoulCrafted scene (`bread_support_pipeline`), as a
 //! cancellable background job.
 //!
 //! Every mesh leaf of the scene (CSG refused, as the slicer refuses it) is one
@@ -19,14 +19,14 @@ use sc_geom_transport_inprocess::{JobError, JobHandle, JobProgress, JobWorker};
 pub use sc_mesh_core::MeshRole;
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_scene::{CsgPolicy, NodeId, Scene, SceneError, bake_mesh_to_world};
-use support_geom::geom::Vec3;
-use support_geom::geom::buffer_geometry::BufferGeometry;
-use support_geom::perf::{PerfEntry, PerfFrame};
-use support_mesh::features::slicing::smooth_shafts::{ShaftStyle, SmoothShaftParams};
-use support_mesh::rafts::crenelated::geometry::model_plate_footprint::ModelTransform;
-use support_model::support_kinds::get_support_type_descriptor;
-use support_model::types::SupportState;
-use support_pipeline::{
+use bread_support_geom::geom::Vec3;
+use bread_support_geom::geom::buffer_geometry::BufferGeometry;
+use bread_support_geom::perf::{PerfEntry, PerfFrame};
+use bread_support_mesh::features::slicing::smooth_shafts::{ShaftStyle, SmoothShaftParams};
+use bread_support_mesh::rafts::crenelated::geometry::model_plate_footprint::ModelTransform;
+use bread_support_model::support_kinds::get_support_type_descriptor;
+use bread_support_model::types::SupportState;
+use bread_support_pipeline::{
     ModelInput, PipelineError, PipelineSettings, Stage, plan_supports_with, prescan_models,
 };
 
@@ -38,8 +38,8 @@ mod session;
 mod shift;
 /// The zone presets that ship, and how one is applied.
 pub mod zone_presets {
-    pub use support_model::auto_support::presets::*;
-    pub use support_pipeline::apply_zone_preset;
+    pub use bread_support_model::auto_support::presets::*;
+    pub use bread_support_pipeline::apply_zone_preset;
 }
 
 pub use document::{
@@ -53,13 +53,13 @@ pub use session::{
     HandShape, ImportedPlan, PartSizes, REVIEW_NUDGE_MM, SupportContact, SupportJoint,
     SupportParts, SupportPiece, SupportPieceKind, SupportSession,
 };
-pub use support_bracing::auto_brace::HandBraceRefusal;
-pub use support_model::auto_bracing::settings::{AutoBracingPattern, GridDiagonal};
-pub use support_model::auto_support::zone_rules::{
+pub use bread_support_bracing::auto_brace::HandBraceRefusal;
+pub use bread_support_model::auto_bracing::settings::{AutoBracingPattern, GridDiagonal};
+pub use bread_support_model::auto_support::zone_rules::{
     AreaBand, BaseTip, OverhangRule, StabilizationRule, SupportSize, ZoneRules,
 };
-pub use support_pipeline::{KeepOut, ScanCache};
-pub use support_placement::native::overhang::{
+pub use bread_support_pipeline::{KeepOut, ScanCache};
+pub use bread_support_placement::native::overhang::{
     is_overhang_normal_z, overhang_and_stability_from_soup, overhang_normal_z_limit,
 };
 
@@ -99,7 +99,7 @@ pub fn plate_raft(
     // The same scene draws the same raft whatever order its sets come in.
     circles.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
     let sink =
-        support_mesh::features::slicing::support_world_triangles::plate_raft_parts(&circles, &raft)
+        bread_support_mesh::features::slicing::support_world_triangles::plate_raft_parts(&circles, &raft)
             .ok()?;
     weld_parts(&sink.floats, &sink.parts, PLATE_RAFT_NAME)
 }
@@ -399,7 +399,7 @@ pub fn model_from_scene_mesh(
             }
         }
     };
-    let c = support_pipeline::bounding_box_center(&geometry);
+    let c = bread_support_pipeline::bounding_box_center(&geometry);
     let position = Vec3::new(
         cos * c.x - sin * c.y + translation[0],
         sin * c.x + cos * c.y + translation[1],

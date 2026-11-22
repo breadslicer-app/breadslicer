@@ -11,14 +11,14 @@
 //! units). Binary STL only. Prints each run's report and a digest of the support
 //! state, so an optimisation can show it left the result unchanged.
 
-use support_mesh::features::slicing::smooth_shafts::{ShaftStyle, SmoothShaftParams};
-use support_pipeline::{
+use bread_support_mesh::features::slicing::smooth_shafts::{ShaftStyle, SmoothShaftParams};
+use bread_support_pipeline::{
     CancelToken, ModelInput, PipelineSettings, generate_supports_with, prescan_models,
 };
-use support_mesh::rafts::crenelated::geometry::model_plate_footprint::ModelTransform;
-use support_model::types::SupportState;
-use support_geom::geom::Vec3;
-use support_geom::geom::buffer_geometry::BufferGeometry;
+use bread_support_mesh::rafts::crenelated::geometry::model_plate_footprint::ModelTransform;
+use bread_support_model::types::SupportState;
+use bread_support_geom::geom::Vec3;
+use bread_support_geom::geom::buffer_geometry::BufferGeometry;
 
 fn read_binary_stl(path: &str) -> Vec<f32> {
     let bytes = std::fs::read(path).expect("read STL");

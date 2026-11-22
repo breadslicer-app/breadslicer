@@ -3,7 +3,7 @@
 //! collisions), together.
 
 use crate::collision_avoidance::CollisionField;
-use support_geom::bvh::BvhMesh;
+use bread_support_geom::bvh::BvhMesh;
 
 #[derive(Clone, Copy, Debug)]
 pub struct ModelMesh<'a> {

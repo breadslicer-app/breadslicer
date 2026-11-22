@@ -5,10 +5,10 @@
 //! hand-edited preset cannot push the planner outside what it was built for.
 
 use serde::{Deserialize, Serialize};
-use support_mesh::features::slicing::smooth_shafts::{ShaftStyle, SmoothShaftParams};
-use support_mesh::rafts::crenelated::geometry::compute_raft_footprint::raft_band_top_mm;
-use support_mesh::rafts::crenelated::raft_types::{RaftBottomMode, RaftSettings};
-use support_pipeline::PipelineSettings;
+use bread_support_mesh::features::slicing::smooth_shafts::{ShaftStyle, SmoothShaftParams};
+use bread_support_mesh::rafts::crenelated::geometry::compute_raft_footprint::raft_band_top_mm;
+use bread_support_mesh::rafts::crenelated::raft_types::{RaftBottomMode, RaftSettings};
+use bread_support_pipeline::PipelineSettings;
 
 use crate::zone_presets::{ZonePreset, apply_zone_preset, zone_self_support_angle_deg};
 
@@ -253,8 +253,8 @@ impl SupportOptions {
 #[cfg(test)]
 mod options_tests {
     use super::*;
-    use support_model::auto_support::settings::AutoSupportSettings;
-    use support_model::settings::types::GridSettings;
+    use bread_support_model::auto_support::settings::AutoSupportSettings;
+    use bread_support_model::settings::types::GridSettings;
 
     #[test]
     fn defaults_change_nothing() {

@@ -4,7 +4,7 @@
 //! one up, so the build is dropped and the caller tries something else.
 
 use crate::support_types::shaft_verticality::leans_at_most;
-use support_model::types::Segment;
+use bread_support_model::types::Segment;
 
 /// The steepest lean a stick keeps, in degrees off plumb.
 pub const MAX_SHAFT_ANGLE_DEG: f64 = 20.0;

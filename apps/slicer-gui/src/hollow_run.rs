@@ -62,9 +62,9 @@ use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::time::Duration;
 
-use sc_geom::hollow::hollow_engine::LassoRegion;
-use sc_geom::hollow::hollow_engine::engine::{DEFAULT_PLUG_CLEARANCE_MM, DRAIN_PAST_WALL_MM};
-use sc_geom::hollow::hollow_engine::{
+use sc_geom::hollow::bread_hollow_engine::LassoRegion;
+use sc_geom::hollow::bread_hollow_engine::engine::{DEFAULT_PLUG_CLEARANCE_MM, DRAIN_PAST_WALL_MM};
+use sc_geom::hollow::bread_hollow_engine::{
     DrainDepth, GridRequest, HollowFill, HollowSettings, InfillMode, ResolutionBound, Stage,
 };
 use sc_geom::hollow::{

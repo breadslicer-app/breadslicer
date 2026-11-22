@@ -22,7 +22,7 @@
 //! brace at those ends away.
 
 use serde::{Deserialize, Serialize};
-use support_geom::geom::Vec3;
+use bread_support_geom::geom::Vec3;
 
 use crate::shift::PlaneMotion;
 
@@ -47,7 +47,7 @@ pub(crate) struct HandPlaced {
     /// The numbers it was drawn with, when they are the person's own (the
     /// hand sizes) and not a size of the run's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) shape: Option<support_model::auto_support::zone_rules::SupportSize>,
+    pub(crate) shape: Option<bread_support_model::auto_support::zone_rules::SupportSize>,
     /// For a support of the run the person moved: where its tip was.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) moved_from: Option<[f64; 3]>,
@@ -274,7 +274,7 @@ pub enum LostWhy {
     BraceEndsGone,
     /// The brace no longer fits between the supports there, for this
     /// reason.
-    BraceRefused(support_bracing::auto_brace::HandBraceRefusal),
+    BraceRefused(bread_support_bracing::auto_brace::HandBraceRefusal),
 }
 
 /// A hand edit a set made again could not keep.

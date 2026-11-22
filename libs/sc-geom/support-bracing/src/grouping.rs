@@ -12,8 +12,8 @@ use std::collections::{HashMap, HashSet};
 
 use indexmap::IndexMap;
 
-use support_geom::geom::math_utils::{clamp, js_max, js_sin};
-use support_placement::volume_analysis::islands::voxel_footprint::number_key;
+use bread_support_geom::geom::math_utils::{clamp, js_max, js_sin};
+use bread_support_placement::volume_analysis::islands::voxel_footprint::number_key;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct Vec2 {

@@ -20,9 +20,9 @@ use std::sync::Arc;
 use sc_mesh_core::IndexedMesh;
 use sc_scene::{LeafPayload, NodeId, NodeKind, Scene};
 use serde::{Deserialize, Serialize};
-use support_geom::geom::Vec3;
-use support_model::types::SupportState;
-use support_pipeline::ModelInput;
+use bread_support_geom::geom::Vec3;
+use bread_support_model::types::SupportState;
+use bread_support_pipeline::ModelInput;
 
 use crate::hand_log::HandLog;
 use crate::{SettingsRecipe, SupportSession, scene_model_leaves, scene_models};
@@ -119,8 +119,8 @@ pub(crate) fn model_world_bounds(model: &ModelInput) -> ([f32; 3], [f32; 3]) {
         // the model's transform, as the pipeline places it. A model shared
         // by copies carries its turn there (#561), and one moved in the
         // session (#119) its move.
-        let c = support_pipeline::bounding_box_center(&model.geometry);
-        let m = support_pipeline::model_matrix(&model.transform);
+        let c = bread_support_pipeline::bounding_box_center(&model.geometry);
+        let m = bread_support_pipeline::model_matrix(&model.transform);
         let mut min = [f64::INFINITY; 3];
         let mut max = [f64::NEG_INFINITY; 3];
         for v in position.as_chunks::<3>().0 {
@@ -424,8 +424,8 @@ pub struct Drawings(Vec<Drawing>);
 
 #[derive(Debug)]
 struct Drawing {
-    geometry: Arc<support_geom::geom::buffer_geometry::BufferGeometry>,
-    model: support_mesh::rafts::crenelated::geometry::model_plate_footprint::ModelTransform,
+    geometry: Arc<bread_support_geom::geom::buffer_geometry::BufferGeometry>,
+    model: bread_support_mesh::rafts::crenelated::geometry::model_plate_footprint::ModelTransform,
     shape: (Vec<[f64; 3]>, [usize; 9]),
     leaf: sc_mesh_core::transform::Transform3D,
     mesh: Arc<IndexedMesh>,

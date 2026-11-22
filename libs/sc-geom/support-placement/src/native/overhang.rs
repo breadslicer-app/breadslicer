@@ -1,10 +1,10 @@
 //! The overhang scan of a posed model, as the support stages read it: the
-//! `surface-analysis` crate's regions and stability report on this engine's
+//! `bread-surface-analysis` crate's regions and stability report on this engine's
 //! mesh.
 
 use serde::{Deserialize, Serialize};
 
-pub use surface_analysis::{
+pub use bread_surface_analysis::{
     FootprintMask, OverhangRegion, StabilityReport, is_overhang_normal_z, overhang_normal_z_limit,
 };
 
@@ -24,7 +24,7 @@ pub fn overhang_and_stability_from_soup(
     has_raft: bool,
 ) -> (Vec<OverhangRegion>, Option<StabilityReport>) {
     let mesh = {
-        let _p = support_geom::perf::scope("ovh:weld");
+        let _p = bread_support_geom::perf::scope("ovh:weld");
         WeldedMesh::weld(positions, OVERHANG_WELD_EPSILON)
     };
     overhang_and_stability(&mesh, self_support_angle_deg, px_mm, has_raft)
@@ -38,17 +38,17 @@ pub fn overhang_and_stability(
     px_mm: f32,
     has_raft: bool,
 ) -> (Vec<OverhangRegion>, Option<StabilityReport>) {
-    let surface = surface_analysis::Surface {
+    let surface = bread_surface_analysis::Surface {
         positions: &mesh.positions,
         triangles: &mesh.triangles,
     };
     let regions = {
-        let _p = support_geom::perf::scope("ovh:regions");
-        surface_analysis::overhang_regions(&surface, self_support_angle_deg, px_mm)
+        let _p = bread_support_geom::perf::scope("ovh:regions");
+        bread_surface_analysis::overhang_regions(&surface, self_support_angle_deg, px_mm)
     };
     let report = {
-        let _p = support_geom::perf::scope("ovh:stability");
-        surface_analysis::stability(&surface, has_raft)
+        let _p = bread_support_geom::perf::scope("ovh:stability");
+        bread_surface_analysis::stability(&surface, has_raft)
     };
     (regions, report)
 }
@@ -59,11 +59,11 @@ pub fn classify_overhangs(
     self_support_angle_deg: f32,
     px_mm: f32,
 ) -> Vec<OverhangRegion> {
-    let surface = surface_analysis::Surface {
+    let surface = bread_surface_analysis::Surface {
         positions: &mesh.positions,
         triangles: &mesh.triangles,
     };
-    surface_analysis::overhang_regions(&surface, self_support_angle_deg, px_mm)
+    bread_surface_analysis::overhang_regions(&surface, self_support_angle_deg, px_mm)
 }
 
 /// One scan's answer: the regions, and the stability report for the pose

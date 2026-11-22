@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::support_kinds::{SupportOriginId, SupportTypeId};
 use super::tips::{ContactCone, ContactDiskProfile};
-pub use support_geom::geom::{Quaternion, Vec3};
+pub use bread_support_geom::geom::{Quaternion, Vec3};
 
 /// Why a support could not be placed where it was asked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

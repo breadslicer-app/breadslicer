@@ -7,7 +7,7 @@ use std::sync::Arc;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_scene::{LeafPayload, Scene};
-use support_session::{
+use bread_support_session::{
     RestoreError, SUPPORT_DOCUMENT_VERSION, SupportRequest, SupportSession, start_supports,
 };
 
@@ -397,7 +397,7 @@ fn other_settings_edits_or_models_are_other_supports() {
     let outright = start_supports(
         &scene,
         SupportRequest {
-            settings: Some(support_pipeline::PipelineSettings::defaults(0.05)),
+            settings: Some(bread_support_pipeline::PipelineSettings::defaults(0.05)),
             ..Default::default()
         },
     )

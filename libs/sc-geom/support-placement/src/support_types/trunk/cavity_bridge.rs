@@ -7,19 +7,19 @@ use super::super::contact_bridge::{BridgeEntity, ContactBridgeRequest, build_con
 use crate::placement_logic::collision_utils::{
     check_short_bridge_collision, tip_cone_crosses_model,
 };
-use support_geom::bvh::Side;
-use support_geom::geom::math_utils::{js_cos, js_sin};
-use support_geom::geom::{Matrix3, Ray};
-use support_model::collision_avoidance::is_shaft_blocked;
-use support_model::model_mesh::ModelMesh;
-use support_model::rendering::support_builder::{SupportData, support_data_for_entity};
-use support_model::settings::types::SupportSettings;
-use support_model::shafts::ShaftEntity;
-use support_model::support_kinds::{
+use bread_support_geom::bvh::Side;
+use bread_support_geom::geom::math_utils::{js_cos, js_sin};
+use bread_support_geom::geom::{Matrix3, Ray};
+use bread_support_model::collision_avoidance::is_shaft_blocked;
+use bread_support_model::model_mesh::ModelMesh;
+use bread_support_model::rendering::support_builder::{SupportData, support_data_for_entity};
+use bread_support_model::settings::types::SupportSettings;
+use bread_support_model::shafts::ShaftEntity;
+use bread_support_model::support_kinds::{
     SupportPlacementMetric, SupportPlacementSettingPath, SupportTypeId, bridge_may_land_sideways,
     get_support_type_descriptor, select_type_for_placement,
 };
-use support_model::types::Vec3;
+use bread_support_model::types::Vec3;
 
 /// How far off the surface the downward search starts, so it does not hit
 /// the contact's own face.

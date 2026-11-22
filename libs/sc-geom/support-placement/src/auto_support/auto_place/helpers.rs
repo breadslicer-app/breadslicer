@@ -19,24 +19,24 @@ use crate::placement_logic_v3::smart_placement_v3::RouterStats;
 use crate::support_types::branch::branch_builder::{
     BranchBuildInput, BranchBuildResult, build_branch_data,
 };
-use support_geom::bvh::{BvhMesh, Intersection, MeshBvh, Side};
-use support_geom::geom::math_utils::{
+use bread_support_geom::bvh::{BvhMesh, Intersection, MeshBvh, Side};
+use bread_support_geom::geom::math_utils::{
     js_atan2, js_cos, js_hypot, js_max, js_min, js_sin, js_to_fixed,
 };
-use support_geom::geom::{Matrix4, Ray};
-use support_model::auto_support::constants::{
+use bread_support_geom::geom::{Matrix4, Ray};
+use bread_support_model::auto_support::constants::{
     ALREADY_SUPPORTED_RADIUS_MM, GRIDLESS_MERGE_RADIUS_MM, MERGE_HOST_LOAD_WEIGHT,
 };
-use support_model::auto_support::zone_rules::{SupportSize, zone_lives};
-use support_model::collision_avoidance::{CollisionField, is_shaft_blocked};
-use support_model::constants::member_shaft_diameter_mm;
-use support_model::settings::types::SupportSettings;
-use support_model::support_kinds::{
+use bread_support_model::auto_support::zone_rules::{SupportSize, zone_lives};
+use bread_support_model::collision_avoidance::{CollisionField, is_shaft_blocked};
+use bread_support_model::constants::member_shaft_diameter_mm;
+use bread_support_model::settings::types::SupportSettings;
+use bread_support_model::support_kinds::{
     SupportEntityValue, SupportOriginId, SupportTypeId, get_support_type_descriptor,
     near_plate_origin,
 };
-use support_model::tips::ContactCone;
-use support_model::types::{Branch, Knot, Segment, SupportEntity, SupportState, Trunk, Vec3};
+use bread_support_model::tips::ContactCone;
+use bread_support_model::types::{Branch, Knot, Segment, SupportEntity, SupportState, Trunk, Vec3};
 
 /// The model as placing reads it.
 #[derive(Clone, Copy, Debug)]

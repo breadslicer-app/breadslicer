@@ -102,24 +102,24 @@ use sc_scene::node::{LeafPayload, SceneMetadata};
 use sc_sl1cer::profile::AaLevel;
 use sc_sl1cer::{CancelToken as SliceCancel, sliceable_leaves};
 use serde_json::Value;
-use support_geom::bvh::{MeshBvh, Side};
-use support_mesh::features::slicing::support_world_triangles::{
+use bread_support_geom::bvh::{MeshBvh, Side};
+use bread_support_mesh::features::slicing::support_world_triangles::{
     SupportSliceInput, build_support_and_raft_world_parts,
 };
-use support_geom::geom::Matrix4;
-use support_geom::geom::ray::Ray;
-use support_pipeline::{
+use bread_support_geom::geom::Matrix4;
+use bread_support_geom::geom::ray::Ray;
+use bread_support_pipeline::{
     CancelToken, ModelInput, PipelineOutput, PipelineSettings, plan_supports_with, world_soup,
 };
-use support_placement::auto_support::auto_place::plan::SUPPORT_COVERAGE_RADIUS_MM;
-use support_placement::auto_support::coverage::{
+use bread_support_placement::auto_support::auto_place::plan::SUPPORT_COVERAGE_RADIUS_MM;
+use bread_support_placement::auto_support::coverage::{
     compute_region_coverage, coverage_radius_for_area,
 };
-use support_placement::placement_logic::pathfinding::sdf_cache::SdfCache;
-use support_mesh::rafts::crenelated::raft_types::RaftBottomMode;
-use support_model::tips::ContactCone;
-use support_model::types::{Segment, SupportCollections, SupportState, Vec3};
-use support_placement::volume_analysis::islands::types::DetectedIsland;
+use bread_support_placement::placement_logic::pathfinding::sdf_cache::SdfCache;
+use bread_support_mesh::rafts::crenelated::raft_types::RaftBottomMode;
+use bread_support_model::tips::ContactCone;
+use bread_support_model::types::{Segment, SupportCollections, SupportState, Vec3};
+use bread_support_placement::volume_analysis::islands::types::DetectedIsland;
 
 /// The printer and material every scene is measured with.
 const PRINTER: &str = "printers/anycubic-photon-mono-m7-pro.toml";

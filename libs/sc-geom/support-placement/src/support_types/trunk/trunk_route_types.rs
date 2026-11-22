@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use support_model::types::{LimitationCode, Vec3, WarningCode};
+use bread_support_model::types::{LimitationCode, Vec3, WarningCode};
 
 /// Whether the trunk goes straight up or bends around the model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

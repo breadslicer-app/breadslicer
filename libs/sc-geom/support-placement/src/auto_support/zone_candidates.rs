@@ -1,6 +1,6 @@
 //! The zone rules' candidates (#360):
 //! every support a zone preset asks for, with the size and spacing of its
-//! zone. See [`support_model::auto_support::zone_rules`] for the zones.
+//! zone. See [`bread_support_model::auto_support::zone_rules`] for the zones.
 //!
 //! The candidates come back ordered by urgency (islands first, then their
 //! reinforcement, overhangs and stabilization; lower first within a zone)
@@ -18,10 +18,10 @@ use super::types::{AutoSupportMesh, CandidatePoint, CandidateSource, js_compare}
 use crate::native::islands::body::BODY_CELL_MM;
 use crate::volume_analysis::islands::types::{DetectedIsland, IslandClass, IslandSource, Vec3Loop};
 use crate::volume_analysis::islands::voxel_footprint::FootprintPoint;
-use support_geom::bvh::Side;
-use support_geom::geom::math_utils::js_to_fixed;
-use support_geom::geom::{Ray, Vec3};
-use support_model::auto_support::zone_rules::ZoneRules;
+use bread_support_geom::bvh::Side;
+use bread_support_geom::geom::math_utils::js_to_fixed;
+use bread_support_geom::geom::{Ray, Vec3};
+use bread_support_model::auto_support::zone_rules::ZoneRules;
 
 /// Which zone a candidate serves, most urgent first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -38,7 +38,7 @@ pub struct ZoneInput<'a> {
     /// The islands to cover, overhang regions included.
     pub islands: &'a [DetectedIsland],
     /// The down-facing regions up to
-    /// [`support_model::auto_support::zone_rules::STABILIZATION_MAX_ANGLE_DEG`].
+    /// [`bread_support_model::auto_support::zone_rules::STABILIZATION_MAX_ANGLE_DEG`].
     pub steep: &'a [DetectedIsland],
     pub rules: &'a ZoneRules,
     pub layer_height_mm: f64,

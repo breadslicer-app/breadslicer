@@ -4,10 +4,10 @@
 use serde::{Deserialize, Serialize};
 
 use super::types::KickstandPlacementLayout;
-use support_geom::geom::math_utils::{clamp, js_max, js_min};
-use support_model::constants::JOINT_DIAMETER_OFFSET_MM;
-use support_model::numeric_constraint::NumericConstraint;
-use support_model::settings::types::SupportSettings;
+use bread_support_geom::geom::math_utils::{clamp, js_max, js_min};
+use bread_support_model::constants::JOINT_DIAMETER_OFFSET_MM;
+use bread_support_model::numeric_constraint::NumericConstraint;
+use bread_support_model::settings::types::SupportSettings;
 
 /// Height of the first column joint, as a share of the rise to the host.
 pub const FIRST_JOINT_HEIGHT_RATIO: NumericConstraint =

@@ -2,22 +2,22 @@
 //! model contact. Its shaft runs from the knot to the socket of the contact
 //! cone, with a joint halfway, or two when the cone had to be turned aside.
 
-use support_geom::geom::math_utils::{
+use bread_support_geom::geom::math_utils::{
     deg_to_rad, js_atan2, js_cos, js_hypot, js_max, js_min, js_sin,
 };
-use support_model::collision_avoidance::{CollisionField, is_collision_frustum_blocked};
-use support_model::cone_axis_policy::{
+use bread_support_model::collision_avoidance::{CollisionField, is_collision_frustum_blocked};
+use bread_support_model::cone_axis_policy::{
     ConeAngleMode, ConeAxisPolicyInput, normalize_vector_or_fallback, resolve_cone_axis_policy,
 };
-use support_model::constants::get_joint_diameter;
-use support_model::rendering::support_builder::SupportData;
-use support_model::settings::types::SupportSettings;
-use support_model::support_kinds::SupportTypeId;
-use support_model::tips::{
+use bread_support_model::constants::get_joint_diameter;
+use bread_support_model::rendering::support_builder::SupportData;
+use bread_support_model::settings::types::SupportSettings;
+use bread_support_model::support_kinds::SupportTypeId;
+use bread_support_model::tips::{
     ContactCone, SupportTipProfile, TipPrimitive, get_final_socket_position, nib_length,
     recompute_contact_cone_for_moved_disk,
 };
-use support_model::types::{Branch, Joint, Knot, Segment, SupportEntity, Vec3};
+use bread_support_model::types::{Branch, Joint, Knot, Segment, SupportEntity, Vec3};
 
 /// Air kept around a cone when testing it against the model, in mm.
 const CONE_CLEARANCE_MM: f64 = 0.3;
@@ -211,7 +211,7 @@ struct PlacedCone {
 /// Find the cone for the contact: the stock cone when it clears, otherwise
 /// the cheapest of a fan of tilted and stretched ones that does.
 fn place_cone(contact: Contact, mesh: Option<&dyn CollisionField>) -> PlacedCone {
-    let _perf = support_geom::perf::scope("branch:cone-search");
+    let _perf = bread_support_geom::perf::scope("branch:cone-search");
     let stock_socket = get_final_socket_position(&contact.draft());
     let stock = contact.cone_to(stock_socket);
     let stock_end = get_final_socket_position(&stock);
@@ -315,7 +315,7 @@ pub fn build_branch_data(
     live_settings: &SupportSettings,
     new_id: &mut dyn FnMut() -> String,
 ) -> BranchBuildResult {
-    let _perf = support_geom::perf::scope("branch:build");
+    let _perf = bread_support_geom::perf::scope("branch:build");
     let knot = input.parent_knot;
     let settings = input.settings.unwrap_or(live_settings);
     let tip = &settings.tip;

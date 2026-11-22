@@ -3,7 +3,7 @@
 //! A hollow runs as a cancellable job: every stage reports itself and every
 //! long loop polls the token.
 
-pub use engine_base::{CancelToken, Cancelled};
+pub use bread_engine_base::{CancelToken, Cancelled};
 
 /// The stages a hollow passes through, in order. Session construction covers
 /// the first three, a preview or an apply the rest.
@@ -50,4 +50,4 @@ impl Stage {
 }
 
 /// What a hollowing stage reports to.
-pub type Control<'a> = engine_base::Control<'a, Stage>;
+pub type Control<'a> = bread_engine_base::Control<'a, Stage>;

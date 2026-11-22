@@ -1,14 +1,14 @@
 //! A leaf: a bare contact cone that hangs off a knot of another support, with
 //! no shaft of its own. The cone runs from the model contact to the knot.
 
-use support_model::collision_avoidance::CollisionField;
-use support_model::rendering::support_builder::SupportData;
-use support_model::settings::types::SupportSettings;
-use support_model::support_kinds::SupportTypeId;
-use support_model::tips::{
+use bread_support_model::collision_avoidance::CollisionField;
+use bread_support_model::rendering::support_builder::SupportData;
+use bread_support_model::settings::types::SupportSettings;
+use bread_support_model::support_kinds::SupportTypeId;
+use bread_support_model::tips::{
     ContactCone, SupportTipProfile, TipPrimitive, recompute_contact_cone_for_moved_disk,
 };
-use support_model::types::{Knot, Leaf, SupportEntity, Vec3};
+use bread_support_model::types::{Knot, Leaf, SupportEntity, Vec3};
 
 #[derive(Clone, Copy, Debug)]
 pub struct LeafBuildInput<'a> {

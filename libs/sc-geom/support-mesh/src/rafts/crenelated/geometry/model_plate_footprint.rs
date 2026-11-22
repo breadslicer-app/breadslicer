@@ -6,8 +6,8 @@ use super::polygon_set_2d::{
     PolygonError, PolygonWithHoles, offset_polygon_set, orient_ring, ring_to_polygon,
     union_polygon_sets,
 };
-use support_geom::geom::buffer_geometry::BufferGeometry;
-use support_geom::geom::{Matrix4, Quaternion, Vec3, Vector2};
+use bread_support_geom::geom::buffer_geometry::BufferGeometry;
+use bread_support_geom::geom::{Matrix4, Quaternion, Vec3, Vector2};
 
 /// How far a raft stays from a model standing on the plate (mm).
 pub const MODEL_PLATE_CLEARANCE_MM: f64 = 1.0;

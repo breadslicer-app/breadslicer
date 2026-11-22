@@ -9,7 +9,7 @@ use sc_sl1cer::profile::{
 use super::*;
 
 fn sphere_leaf_mesh(radius: f32) -> IndexedMesh {
-    let s = hollow_engine::shapes::icosphere(radius, 3);
+    let s = bread_hollow_engine::shapes::icosphere(radius, 3);
     IndexedMesh::new(
         Some(MeshMetadata {
             name: Some("sphere".into()),
@@ -45,7 +45,7 @@ fn run(scene: &Scene, leaf: NodeId, request: HollowRequest) -> HollowOutcome {
     start_hollow(scene, leaf, request).unwrap().join().unwrap()
 }
 
-fn as_engine(mesh: &IndexedMesh) -> hollow_engine::IndexedMesh {
+fn as_engine(mesh: &IndexedMesh) -> bread_hollow_engine::IndexedMesh {
     engine_mesh(mesh, &LeafFrame::of(&Transform3D::Identity).unwrap())
 }
 
@@ -221,7 +221,7 @@ fn a_memory_limited_hollow_keeps_the_previewed_voxel() {
     let (scene, leaf) = scene_with(sphere_leaf_mesh(12.0), Transform3D::Identity);
     let grid = GridRequest {
         voxel_size_mm: 0.1,
-        max_memory_bytes: 200_000 * hollow_engine::engine::BYTES_PER_CELL,
+        max_memory_bytes: 200_000 * bread_hollow_engine::engine::BYTES_PER_CELL,
         ..GridRequest::default()
     };
     let preview = run(
@@ -234,7 +234,7 @@ fn a_memory_limited_hollow_keeps_the_previewed_voxel() {
     );
     assert!(matches!(
         preview.stats.grid.bound,
-        Some(hollow_engine::ResolutionBound::MemoryLimited { .. })
+        Some(bread_hollow_engine::ResolutionBound::MemoryLimited { .. })
     ));
     let applied = run(
         &scene,
@@ -299,7 +299,7 @@ fn an_applied_hollow_with_a_drain_slices_with_a_hole() {
         mesh.meta().as_ref().and_then(|m| m.name.as_deref()),
         Some("sphere")
     );
-    assert!(hollow_engine::topology::is_edge_manifold(&as_engine(mesh)));
+    assert!(bread_hollow_engine::topology::is_edge_manifold(&as_engine(mesh)));
     let removed = out.stats.removed_volume_mm3.unwrap();
     assert!(
         removed > 0.5 * out.stats.source_volume_mm3,
@@ -316,7 +316,7 @@ fn an_applied_hollow_with_a_drain_slices_with_a_hole() {
 /// slicer takes, and the drain from below is a hole in the floor.
 #[test]
 fn an_applied_hollow_with_infill_and_drains_slices() {
-    use hollow_engine::{HollowFill, InfillMode};
+    use bread_hollow_engine::{HollowFill, InfillMode};
     let (scene, leaf) = scene_with(sphere_leaf_mesh(15.0), affine(IDENTITY, [50.0, 50.0, 15.0]));
     for pattern in [InfillMode::Lattice, InfillMode::Pillar] {
         let out = run(
@@ -427,7 +427,7 @@ fn has_every_triangle(whole: &IndexedMesh, part: &IndexedMesh) -> bool {
 /// infill with their channels cleared, exactly as the apply carries it.
 #[test]
 fn a_preview_with_drains_shows_the_infill_the_hollow_gets() {
-    use hollow_engine::{HollowFill, InfillMode};
+    use bread_hollow_engine::{HollowFill, InfillMode};
     let (scene, leaf) = scene_with(sphere_leaf_mesh(15.0), affine(IDENTITY, [50.0, 50.0, 15.0]));
     for pattern in [InfillMode::Lattice, InfillMode::Pillar] {
         let settings = HollowSettings {
@@ -598,7 +598,7 @@ fn a_plug_comes_back_standing_and_slices() {
         assert_eq!(plugs[0].drain, 0);
         let plug = plugs[0].mesh.clone().expect("a plug");
         let engine = as_engine(&plug);
-        assert!(hollow_engine::topology::is_edge_manifold(&engine));
+        assert!(bread_hollow_engine::topology::is_edge_manifold(&engine));
         assert!(engine.signed_volume() > 0.0, "it faces out");
         let bbox = engine.bbox();
         assert!(bbox.min.z.abs() < 1e-5, "{bbox:?}");
@@ -624,7 +624,7 @@ fn a_plug_comes_back_standing_and_slices() {
 #[test]
 fn a_drawn_region_stays_solid_where_it_was_drawn() {
     // Looking down -z from above, the region's side across x = 2.
-    let region = hollow_engine::LassoRegion {
+    let region = bread_hollow_engine::LassoRegion {
         perspective: true,
         origin: [0.0, 0.0, 80.0],
         u: [1.0, 0.0, 0.0],
@@ -669,7 +669,7 @@ fn a_drawn_region_stays_solid_where_it_was_drawn() {
             .iter()
             .map(|v| {
                 let p = world.apply_to_vertex(*v).coords();
-                prepared.signed_distance_mm(hollow_engine::Vec3::new(p[0], p[1], p[2]))
+                prepared.signed_distance_mm(bread_hollow_engine::Vec3::new(p[0], p[1], p[2]))
             })
             .fold(f32::MIN, f32::max);
         assert!(deepest <= 0.06, "{deepest} mm into the region");
@@ -731,7 +731,7 @@ fn a_drawn_region_on_a_real_model() {
     let eye = [centre[0], lo[1] - 3.0 * height, centre[2]];
     let depth = centre[1] - eye[1];
     let top = (hi[2] - height / 3.0 - centre[2]) / depth;
-    let region = hollow_engine::LassoRegion {
+    let region = bread_hollow_engine::LassoRegion {
         perspective: true,
         origin: eye,
         u: [1.0, 0.0, 0.0],
@@ -783,7 +783,7 @@ fn a_drawn_region_on_a_real_model() {
             .iter()
             .map(|v| {
                 let p = v.as_array();
-                prepared.signed_distance_mm(hollow_engine::Vec3::new(p[0], p[1], p[2]))
+                prepared.signed_distance_mm(bread_hollow_engine::Vec3::new(p[0], p[1], p[2]))
             })
             .fold(f32::MIN, f32::max);
         println!(
@@ -864,7 +864,7 @@ fn drawn_regions_leave_the_cavity_closed() {
                 }
             })
             .collect();
-        let region = hollow_engine::LassoRegion {
+        let region = bread_hollow_engine::LassoRegion {
             perspective,
             origin: eye,
             u: right,
@@ -885,7 +885,7 @@ fn drawn_regions_leave_the_cavity_closed() {
         let HollowResult::Preview { cavity, .. } = &drawn.result else {
             panic!("preview");
         };
-        let defects = hollow_engine::topology::edge_manifold_defects(&as_engine(cavity));
+        let defects = bread_hollow_engine::topology::edge_manifold_defects(&as_engine(cavity));
         if !defects.is_clean() {
             open += 1;
             println!("OPEN attempt {attempt}: {defects:?} region {region:?}");
@@ -908,7 +908,7 @@ fn a_real_model_hollows_without_regions() {
     }
     println!(
         "source defects: {:?}",
-        hollow_engine::topology::edge_manifold_defects(&as_engine(&mesh))
+        bread_hollow_engine::topology::edge_manifold_defects(&as_engine(&mesh))
     );
     let (scene, leaf) = scene_with(mesh, Transform3D::Identity);
     let preview = run(&scene, leaf, HollowRequest::default());
@@ -916,7 +916,7 @@ fn a_real_model_hollows_without_regions() {
         let engine = as_engine(cavity);
         println!(
             "cavity defects: {:?}",
-            hollow_engine::topology::edge_manifold_defects(&engine)
+            bread_hollow_engine::topology::edge_manifold_defects(&engine)
         );
         let mut count = std::collections::HashMap::new();
         for t in &engine.triangles {
@@ -962,10 +962,10 @@ fn overlapping_parts_of_real_models() {
     };
     for path in paths.split('|') {
         let mesh = as_engine(&read_binary_stl(path));
-        let (_, parts) = hollow_engine::topology::face_shells(&mesh);
+        let (_, parts) = bread_hollow_engine::topology::face_shells(&mesh);
         println!("{path}: {parts} parts…");
         let started = std::time::Instant::now();
-        let joined = hollow_engine::overlap::joined_parts(&mesh);
+        let joined = bread_hollow_engine::overlap::joined_parts(&mesh);
         println!(
             "{path}: {} triangles, {parts} parts, volume {:.1}; joined {:?} in {:.2} s",
             mesh.triangles.len(),
@@ -1008,12 +1008,12 @@ fn narrowest_cavity_on_real_models() {
 /// A hollow as a file brings it (#447): a sphere and its cavity, facing in,
 /// with nothing recorded of how it was made.
 fn imported_hollow_leaf_mesh() -> IndexedMesh {
-    let outer = hollow_engine::shapes::icosphere(15.0, 3);
-    let mut inner = hollow_engine::shapes::icosphere(13.0, 3);
+    let outer = bread_hollow_engine::shapes::icosphere(15.0, 3);
+    let mut inner = bread_hollow_engine::shapes::icosphere(13.0, 3);
     for tri in &mut inner.triangles {
         tri.swap(1, 2);
     }
-    let both = hollow_engine::shapes::merged(&[outer, inner]);
+    let both = bread_hollow_engine::shapes::merged(&[outer, inner]);
     IndexedMesh::new(
         None,
         both.positions
@@ -1045,7 +1045,7 @@ fn a_drain_is_drilled_into_an_imported_hollow_under_a_stretch() {
         .join()
         .unwrap();
     assert_eq!(out.drains, vec![report]);
-    assert!(hollow_engine::topology::is_edge_manifold(&as_engine(
+    assert!(bread_hollow_engine::topology::is_edge_manifold(&as_engine(
         &out.mesh
     )));
     let (scene, leaf) = scene_with(out.mesh.clone(), world);
@@ -1154,9 +1154,9 @@ fn drilling_a_real_hollow_against_hollowing_it_again() {
     println!("drill on the hollow: {:?}", probe.report(&world, &drain));
     {
         let target =
-            hollow_engine::DrillTarget::new(engine_mesh(&hollow, &LeafFrame::of(&world).unwrap()));
+            bread_hollow_engine::DrillTarget::new(engine_mesh(&hollow, &LeafFrame::of(&world).unwrap()));
         let started = std::time::Instant::now();
-        let _ = hollow_engine::DrillTarget::new(target.mesh().clone());
+        let _ = bread_hollow_engine::DrillTarget::new(target.mesh().clone());
         println!("target {:.0} ms", started.elapsed().as_secs_f64() * 1e3);
         let hole = drain.in_frame(&LeafFrame::of(&world).unwrap());
         let started = std::time::Instant::now();
@@ -1168,13 +1168,13 @@ fn drilling_a_real_hollow_against_hollowing_it_again() {
         );
         println!(
             "shells {}",
-            hollow_engine::topology::edge_components(target.mesh()).1
+            bread_hollow_engine::topology::edge_components(target.mesh()).1
         );
-        let start = hollow_engine::Vec3::new(low[0], low[1], low[2] - 0.3);
-        let up = hollow_engine::Vec3::new(0.0, 0.0, 1.0);
+        let start = bread_hollow_engine::Vec3::new(low[0], low[1], low[2] - 0.3);
+        let up = bread_hollow_engine::Vec3::new(0.0, 0.0, 1.0);
         let source = as_engine(&mesh);
-        let hits = |m: &hollow_engine::IndexedMesh| {
-            hollow_engine::bvh::Bvh::build(m)
+        let hits = |m: &bread_hollow_engine::IndexedMesh| {
+            bread_hollow_engine::bvh::Bvh::build(m)
                 .ray_hit_distances_closed(m, start, up)
                 .iter()
                 .map(|t| (t * 100.0).round() / 100.0)

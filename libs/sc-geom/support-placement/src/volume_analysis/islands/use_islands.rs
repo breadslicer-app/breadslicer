@@ -10,7 +10,7 @@ use super::types::{DetectedIsland, IslandSource};
 use super::voxel_footprint::VoxelFootprintBuilder;
 use crate::native::mesh_minima::{CombinedIslandScanResult, ScanPoint};
 use crate::native::overhang::{OverhangRegion, OverhangScan};
-use support_model::types::Vec3;
+use bread_support_model::types::Vec3;
 
 /// An `f32` as its shortest decimal, read back as an `f64`; NaN for one not
 /// finite.

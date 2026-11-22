@@ -6,9 +6,9 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::types::CandidatePoint;
-use support_model::auto_support::settings::{SizingBand, SizingPreset};
-use support_model::auto_support::zone_rules::ZoneRules;
-use support_model::settings::types::SupportSettings;
+use bread_support_model::auto_support::settings::{SizingBand, SizingPreset};
+use bread_support_model::auto_support::zone_rules::ZoneRules;
+use bread_support_model::settings::types::SupportSettings;
 
 /// A support's own sizes; `None` keeps the settings' value.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
@@ -85,7 +85,7 @@ pub fn size_parameters(
     let band = bands.active(settings);
     let rules = &settings.auto_support.zone_rules;
     let base = if rules.adaptive_base {
-        support_model::auto_support::zone_rules::adaptive_base_factor(candidate.tip_pos.z)
+        bread_support_model::auto_support::zone_rules::adaptive_base_factor(candidate.tip_pos.z)
     } else {
         1.0
     };

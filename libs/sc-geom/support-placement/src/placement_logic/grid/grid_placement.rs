@@ -28,20 +28,20 @@ use crate::support_types::trunk::trunk_route_resolution::{
 use crate::support_types::trunk::trunk_route_types::{
     SnappedRoute, SnappedRouteValidity, TrunkRouteValidity,
 };
-use support_geom::geom::math_utils::{js_acos, js_hypot, js_max, js_min, rad_to_deg};
-use support_model::auto_support::constants::MAX_AUTO_LEAF_SPAN_MM;
-use support_model::collision_avoidance::{CollisionField, is_shaft_blocked};
-use support_model::constants::member_shaft_diameter_mm;
-use support_model::rendering::support_builder::SupportData;
-use support_model::settings::types::SupportSettings;
-use support_model::shafts::calculate_knot_position_on_segment_from_t;
-use support_model::support_kinds::{
+use bread_support_geom::geom::math_utils::{js_acos, js_hypot, js_max, js_min, rad_to_deg};
+use bread_support_model::auto_support::constants::MAX_AUTO_LEAF_SPAN_MM;
+use bread_support_model::collision_avoidance::{CollisionField, is_shaft_blocked};
+use bread_support_model::constants::member_shaft_diameter_mm;
+use bread_support_model::rendering::support_builder::SupportData;
+use bread_support_model::settings::types::SupportSettings;
+use bread_support_model::shafts::calculate_knot_position_on_segment_from_t;
+use bread_support_model::support_kinds::{
     CONTACT_OVERRIDE_REGISTRATIONS, HostRef, PlacedSupport, PlacementPrimitive, SupportEntityValue,
     SupportPlacementMetric, SupportPlacementSettingPath, SupportTypeId, grid_host_types,
     placement_of_resolved, select_type_for_placement,
 };
-use support_model::tips::get_final_socket_position;
-use support_model::types::{Joint, Knot, LimitationCode, Roots, SupportState, Trunk, Vec3};
+use bread_support_model::tips::get_final_socket_position;
+use bread_support_model::types::{Joint, Knot, LimitationCode, Roots, SupportState, Trunk, Vec3};
 
 /// The clearance a new pillar keeps from the model past its radius, mm: the
 /// same the final cull holds a trunk to, so a pillar placed here survives it.
@@ -331,7 +331,7 @@ fn member_blocked(
     mesh: &dyn CollisionField,
     shaft_mm: f64,
 ) -> bool {
-    let _perf = support_geom::perf::scope("grid:branch-collision");
+    let _perf = bread_support_geom::perf::scope("grid:branch-collision");
     let reach = h.live.tip.length_mm;
     let socket = Vec3::new(
         h.tip_pos.x + h.tip_normal.x * reach,
@@ -422,7 +422,7 @@ fn hang_on(
     h: &mut Hanging<'_, '_>,
     occupied: bool,
 ) -> Option<GridPlacementDecision> {
-    let _perf = support_geom::perf::scope("grid:attach-search");
+    let _perf = bread_support_geom::perf::scope("grid:attach-search");
     let tip = h.tip_pos;
     let band_mm = h.settings.shaft.diameter_mm;
     let base_lean = 90.0 - h.min_angle_deg;
@@ -615,7 +615,7 @@ fn pillar_blocked(
     settings: &SupportSettings,
     mesh: &dyn CollisionField,
 ) -> bool {
-    let _perf = support_geom::perf::scope("grid:trunk-collision");
+    let _perf = bread_support_geom::perf::scope("grid:trunk-collision");
     let trunk = &candidate.trunk;
     let widest = trunk
         .segments
@@ -674,7 +674,7 @@ pub fn decide_grid_placement(
     live: &SupportSettings,
     new_id: &mut dyn FnMut() -> String,
 ) -> GridPlacementDecision {
-    let _perf = support_geom::perf::scope("grid:decide");
+    let _perf = bread_support_geom::perf::scope("grid:decide");
     let &DecideGridPlacementArgs {
         settings,
         snapshot,

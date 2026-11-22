@@ -1,5 +1,5 @@
 [package]
-name = "support-pipeline"
+name = "bread-support-pipeline"
 version = "0.1.0"
 edition = "2024"
 license = "AGPL-3.0-or-later"
@@ -14,14 +14,14 @@ autotests = false
 workspace = true
 
 [dependencies]
-support-geom = { path = "../support-geom", version = "0.1.0" }
-support-model = { path = "../support-model", version = "0.1.0" }
-support-mesh = { path = "../support-mesh", version = "0.1.0" }
-support-placement = { path = "../support-placement", version = "0.1.0" }
-support-bracing = { path = "../support-bracing", version = "0.1.0" }
-engine-base = { path = "../engine-base", version = "0.1.0" }
-islands = { path = "../islands", version = "0.1.0" }
-surface-analysis = { path = "../surface-analysis", version = "0.1.0" }
+bread-support-geom = { path = "../support-geom", version = "0.1.0" }
+bread-support-model = { path = "../support-model", version = "0.1.0" }
+bread-support-mesh = { path = "../support-mesh", version = "0.1.0" }
+bread-support-placement = { path = "../support-placement", version = "0.1.0" }
+bread-support-bracing = { path = "../support-bracing", version = "0.1.0" }
+bread-engine-base = { path = "../engine-base", version = "0.1.0" }
+bread-islands = { path = "../islands", version = "0.1.0" }
+bread-surface-analysis = { path = "../surface-analysis", version = "0.1.0" }
 ahash = "0.8.12"
 earcutr = "0.5.0"
 glam = "0.32"

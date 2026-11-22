@@ -1,7 +1,7 @@
 //! Where a kickstand may attach.
 
-use support_geom::geom::math_utils::clamp;
-use support_model::support_kinds::{KICKSTAND_HOST_TYPES, SupportTypeId, is_kickstand_host_type};
+use bread_support_geom::geom::math_utils::clamp;
+use bread_support_model::support_kinds::{KICKSTAND_HOST_TYPES, SupportTypeId, is_kickstand_host_type};
 
 /// The host position `t` along its segment, kept between `min_t` and the top.
 pub fn clamp_kickstand_host_t(t: f64, min_t: f64) -> f64 {

@@ -18,24 +18,24 @@ use super::pairing::{
     Edge, bracing_grid, is_cardinal_delta, min_pair_span_mm, model_pairs, pair_key, plan_point,
 };
 use super::samples::{EPS, Shaft, collect_shafts, shared_mid_z, span_at};
-use support_geom::geom::math_utils::{js_atan2, js_max};
-use support_model::auto_bracing::mesh_clearance::BraceMeshes;
-use support_model::auto_bracing::settings::{
+use bread_support_geom::geom::math_utils::{js_atan2, js_max};
+use bread_support_model::auto_bracing::mesh_clearance::BraceMeshes;
+use bread_support_model::auto_bracing::settings::{
     AutoBracingSettings, auto_bracing_hard_rules, normalize_auto_bracing_settings,
 };
-use support_model::auto_bracing::two_axis_detection::{
+use bread_support_model::auto_bracing::two_axis_detection::{
     axis_separation_deg, has_qualified_two_axis_bracing, normalize_axis_angle_rad,
 };
-use support_model::settings::types::SupportSettings;
-pub use support_model::support_kinds::store_type_of;
-use support_model::support_kinds::{
+use bread_support_model::settings::types::SupportSettings;
+pub use bread_support_model::support_kinds::store_type_of;
+use bread_support_model::support_kinds::{
     is_auto_braceable_shaft_type, is_lateral_stabiliser_type, parse_prefixed_segment_id,
 };
-use support_model::types::{
+use bread_support_model::types::{
     Brace, Kickstand, Knot, SupportCollections, SupportGeneratedBy, SupportState,
 };
-use support_placement::auto_support::types::js_compare;
-use support_placement::support_types::kickstand::kickstand_stabiliser::{
+use bread_support_placement::auto_support::types::js_compare;
+use bread_support_placement::support_types::kickstand::kickstand_stabiliser::{
     BraceAxisEdge, GridSnap, StabiliserState, generate_required_kickstands,
 };
 
@@ -673,8 +673,8 @@ pub fn build_auto_braced_snapshot(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use support_model::support_kinds::SupportTypeId;
-    use support_model::types::{Joint, Roots, Segment, SupportEntity, Transform, Trunk, Vec3};
+    use bread_support_model::support_kinds::SupportTypeId;
+    use bread_support_model::types::{Joint, Roots, Segment, SupportEntity, Transform, Trunk, Vec3};
 
     /// Adds a trunk standing at (`x`, `y`) whose segments end at `joints`,
     /// bottom to top; its segments are `{id}-0`, `{id}-1`, ...

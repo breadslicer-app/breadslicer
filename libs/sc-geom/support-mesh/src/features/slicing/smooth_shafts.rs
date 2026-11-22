@@ -8,10 +8,10 @@
 //! Tubes are closed (flat caps at both ends) and outward-wound.
 
 use super::support_world_triangles::{TriangleSink, append_geometry_triangles};
-use support_geom::geom::Matrix4;
-use support_geom::geom::math_utils::js_max;
-use support_geom::geom::primitive_geometry::sphere_geometry;
-use support_model::types::Vec3;
+use bread_support_geom::geom::Matrix4;
+use bread_support_geom::geom::math_utils::js_max;
+use bread_support_geom::geom::primitive_geometry::sphere_geometry;
+use bread_support_model::types::Vec3;
 
 /// The bicone's proportions.
 #[derive(Debug, Clone, Copy, PartialEq)]

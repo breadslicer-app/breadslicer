@@ -49,7 +49,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-pub use engine_base::CancelToken;
+pub use bread_engine_base::CancelToken;
 
 /// Coarse progress of a job: a high-level stage (or phase), with a human-readable name plus a
 /// completed/total value for progress within that phase.

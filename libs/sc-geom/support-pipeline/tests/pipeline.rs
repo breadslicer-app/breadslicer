@@ -7,18 +7,18 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 
-use support_geom::bvh::MeshBvh;
-use support_geom::geom::Vec3;
-use support_geom::geom::buffer_geometry::BufferGeometry;
-use support_pipeline::{
+use bread_support_geom::bvh::MeshBvh;
+use bread_support_geom::geom::Vec3;
+use bread_support_geom::geom::buffer_geometry::BufferGeometry;
+use bread_support_pipeline::{
     CancelToken, ModelInput, PipelineError, PipelineSettings, Stage, generate_supports,
     generate_supports_with, plan_supports_with, prescan_models, world_soup,
 };
-use support_mesh::rafts::crenelated::geometry::model_plate_footprint::ModelTransform;
-use support_mesh::rafts::crenelated::raft_types::{
+use bread_support_mesh::rafts::crenelated::geometry::model_plate_footprint::ModelTransform;
+use bread_support_mesh::rafts::crenelated::raft_types::{
     DEFAULT_RAFT_SETTINGS, RaftBottomMode, RaftSettings,
 };
-use support_model::types::SupportState;
+use bread_support_model::types::SupportState;
 
 fn meshes() -> Value {
     let path = format!(
@@ -120,7 +120,7 @@ fn triples(soup: &[f32]) -> Vec<[f32; 3]> {
 }
 
 /// Everything a run hands back that a reused scan could change.
-fn run_digest(out: &support_pipeline::PipelineOutput) -> Value {
+fn run_digest(out: &bread_support_pipeline::PipelineOutput) -> Value {
     let models: Vec<Value> = out
         .models
         .iter()
@@ -243,7 +243,7 @@ fn planning_alone_gives_the_same_plans_without_drawing_them() {
                 &CancelToken::new(),
             )
             .unwrap();
-            let without_drawing = |out: &support_pipeline::PipelineOutput| {
+            let without_drawing = |out: &bread_support_pipeline::PipelineOutput| {
                 let mut digest = run_digest(out);
                 digest["soup"] = Value::Null;
                 digest["parts"] = Value::Null;

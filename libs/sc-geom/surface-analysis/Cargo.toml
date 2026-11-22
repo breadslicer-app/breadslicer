@@ -1,5 +1,5 @@
 [package]
-name = "surface-analysis"
+name = "bread-surface-analysis"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
