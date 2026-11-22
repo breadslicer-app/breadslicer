@@ -25,6 +25,7 @@
 //! by the surrounding [`crate::MeshSpatial`] / [`crate::SceneSpatial`]
 //! layer; the type itself has no notion of staleness.
 
+use rayon::prelude::*;
 use sc_mesh_core::{Aabb, IndexedMesh, IndexedTriangle, Vertex};
 
 /// Object-space AABBs over fixed-size runs of an [`IndexedMesh`]'s
@@ -74,30 +75,34 @@ impl TriangleClusters {
         if faces.is_empty() {
             return None;
         }
-        let mut centres = Vec::with_capacity(faces.len());
-        for face in faces {
-            let mut c = [0.0f32; 3];
-            for vidx in face.vertices {
-                let v = vertices.get(usize::from(vidx))?.coords();
-                for k in 0..3 {
-                    c[k] += v[k];
+        let centres: Vec<[f32; 3]> = faces
+            .par_iter()
+            .map(|face| {
+                let mut c = [0.0f32; 3];
+                for vidx in face.vertices {
+                    let v = vertices.get(usize::from(vidx))?.coords();
+                    for k in 0..3 {
+                        c[k] += v[k];
+                    }
                 }
-            }
-            centres.push(c);
-        }
+                Some(c)
+            })
+            .collect::<Option<_>>()?;
         let cluster_size = Self::CLUSTER_SIZE as usize;
         let mut order: Vec<u32> = (0..faces.len() as u32).collect();
         split_into_clusters(&centres, &mut order, cluster_size);
-        let mut aabbs = Vec::with_capacity(faces.len().div_ceil(cluster_size));
-        for chunk in order.chunks(cluster_size) {
-            let mut aabb = Aabb::empty();
-            for &f in chunk {
-                for vidx in faces[f as usize].vertices {
-                    aabb.extend(vertices[usize::from(vidx)]);
+        let aabbs: Vec<Aabb> = order
+            .par_chunks(cluster_size)
+            .map(|chunk| {
+                let mut aabb = Aabb::empty();
+                for &f in chunk {
+                    for vidx in faces[f as usize].vertices {
+                        aabb.extend(vertices[usize::from(vidx)]);
+                    }
                 }
-            }
-            aabbs.push(aabb);
-        }
+                aabb
+            })
+            .collect();
         let face_order = order;
         let mut order: Vec<u32> = (0..aabbs.len() as u32).collect();
         let mut nodes = Vec::with_capacity(2 * aabbs.len().div_ceil(LEAF_CLUSTERS));
@@ -232,8 +237,16 @@ fn split_into_clusters(centres: &[[f32; 3]], order: &mut [u32], size: usize) {
         centres[a as usize][axis].total_cmp(&centres[b as usize][axis])
     });
     let (left, right) = order.split_at_mut(mid);
-    split_into_clusters(centres, left, size);
-    split_into_clusters(centres, right, size);
+    // Halves of a big mesh are ordered at once (the order is the same).
+    if left.len() > 1 << 15 {
+        rayon::join(
+            || split_into_clusters(centres, left, size),
+            || split_into_clusters(centres, right, size),
+        );
+    } else {
+        split_into_clusters(centres, left, size);
+        split_into_clusters(centres, right, size);
+    }
 }
 
 /// Builds the tree over `aabbs[order[..]]` into `nodes`, splitting each
