@@ -953,7 +953,7 @@ pub fn build_support_and_raft_world_parts(
             js_max(0.05, s.root_top_diameter * 0.5),
             tessellation.root_radial_segments,
         );
-        if input.shaft_style == ShaftStyle::DragonFruit {
+        if input.shaft_style == ShaftStyle::Segmented {
             draw.joint(&mut sink, &mut seen_joints, Some(&s.joint));
         }
         let cone = Some(&s.contact_cone);

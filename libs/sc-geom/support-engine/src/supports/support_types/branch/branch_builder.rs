@@ -1,8 +1,8 @@
-//! DragonFruit `src/supports/SupportTypes/Branch/branchBuilder.ts`.
-//!
-//! Settings are passed in (DragonFruit's `input.settings ?? getSettings()`),
-//! ids come from `new_id` (`uuidv4()`), and the mesh is its collision field.
+//! A branch: a support that grows from a knot on another support up to a
+//! model contact. Its shaft runs from the knot to the socket of the contact
+//! cone, with a joint halfway, or two when the cone had to be turned aside.
 
+use crate::geom::math_utils::{deg_to_rad, js_atan2, js_cos, js_hypot, js_max, js_min, js_sin};
 use crate::supports::constants::get_joint_diameter;
 use crate::supports::placement_logic::collision_avoidance::{
     CollisionField, is_collision_frustum_blocked,
@@ -12,324 +12,31 @@ use crate::supports::placement_logic::cone_axis_policy::{
 };
 use crate::supports::rendering::support_builder::SupportData;
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::tips::get_final_socket_position;
-use crate::supports::tips::{
-    ContactCone, SupportTipProfile, TipPrimitive,
-};
-use crate::supports::tips::recompute_contact_cone_for_moved_disk;
-use crate::supports::tips::nib_length;
 use crate::supports::support_kinds::SupportTypeId;
+use crate::supports::tips::{
+    ContactCone, SupportTipProfile, TipPrimitive, get_final_socket_position, nib_length,
+    recompute_contact_cone_for_moved_disk,
+};
 use crate::supports::types::{Branch, Joint, Knot, Segment, SupportEntity, Vec3};
-use crate::geom::math_utils::{deg_to_rad, js_atan2, js_cos, js_hypot, js_max, js_min, js_sin};
 
-const BRANCH_CONE_COLLISION_SAFETY_MM: f64 = 0.3;
-/// Branch socket search: polar angles from surface normal. Capped at 30°
-/// to match the trunk cone axis deviation limit — branches should not bend
-/// the contact cone drastically away from the attachment surface.
-const BRANCH_SOCKET_POLAR_DEG: [f64; 4] = [0.0, 10.0, 20.0, 30.0];
-const BRANCH_SOCKET_AZIMUTH_DEG: [f64; 12] = [
+/// Air kept around a cone when testing it against the model, in mm.
+const CONE_CLEARANCE_MM: f64 = 0.3;
+/// How far a cone may tilt off the surface normal while the search looks for
+/// room, in degrees. A branch's cone stays near its surface, as a trunk's does.
+const TILTS_DEG: [f64; 4] = [0.0, 10.0, 20.0, 30.0];
+/// Headings tried around the normal, nearest the cone's own heading first.
+const HEADINGS_DEG: [f64; 12] = [
     0.0, 25.0, -25.0, 50.0, -50.0, 85.0, -85.0, 120.0, -120.0, 155.0, -155.0, 180.0,
 ];
-/// Stretch factors: how much to extend the cone beyond nominal length.
-/// Kept conservative — long stretched cones look unnatural on branches.
-const BRANCH_SOCKET_STRETCH_FACTORS: [f64; 4] = [1.0, 1.05, 1.12, 1.2];
-
-/// How flat a cone may lie and still be preferred. Past this the contact reads as
-/// a near-horizontal whisker: the socket has swung so far sideways of the tip
-/// that the cone runs along the surface instead of away from it.
+/// Lengths tried, as multiples of the stock cone. Long cones look wrong on a
+/// branch, so the stretch stays small.
+const STRETCHES: [f64; 4] = [1.0, 1.05, 1.12, 1.2];
+/// The flattest a cone may lie, in degrees off plumb, and still be preferred.
 ///
-/// A preference, not a filter — a cone past it is still used when no steeper one
-/// clears the mesh, which is what "if possible" means for a contact in a pocket.
-const MAX_PREFERRED_CONE_LEAN_FROM_VERTICAL_DEG: f64 = 75.0;
-
-/// The lean of the cone that ends at `socket_pos`, in degrees from vertical.
-fn cone_lean_from_vertical_deg(tip_pos: Vec3, socket_pos: Vec3) -> f64 {
-    let horizontal = js_hypot(&[socket_pos.x - tip_pos.x, socket_pos.y - tip_pos.y]);
-    let vertical = (socket_pos.z - tip_pos.z).abs();
-    (js_atan2(horizontal, js_max(0.001, vertical)) * 180.0) / std::f64::consts::PI
-}
-
-fn get_cone_start_position(cone: &ContactCone) -> Vec3 {
-    let surface_normal = cone.surface_normal.unwrap_or(cone.normal);
-    let thickness = cone.disk_length_override.unwrap_or_else(|| {
-        if cone.profile.is_disk() {
-            nib_length(
-                surface_normal,
-                cone.normal,
-                Some(&cone.profile.as_disk_profile()),
-            )
-        } else {
-            0.0
-        }
-    });
-
-    Vec3::new(
-        cone.pos.x + surface_normal.x * thickness,
-        cone.pos.y + surface_normal.y * thickness,
-        cone.pos.z + surface_normal.z * thickness,
-    )
-}
-
-fn is_cone_placement_clear(cone: &ContactCone, mesh: Option<&dyn CollisionField>) -> bool {
-    let Some(mesh) = mesh else { return true };
-
-    let cone_start = get_cone_start_position(cone);
-    let socket_pos = get_final_socket_position(cone);
-    let contact_radius = (cone.profile.contact_diameter_mm / 2.0) + BRANCH_CONE_COLLISION_SAFETY_MM;
-    let body_radius = (cone.profile.body_diameter_mm / 2.0) + BRANCH_CONE_COLLISION_SAFETY_MM;
-    !is_collision_frustum_blocked(
-        cone_start,
-        socket_pos,
-        contact_radius,
-        body_radius,
-        mesh,
-        None,
-    )
-}
-
-fn preview_cone(
-    tip_pos: Vec3,
-    tip_normal: Vec3,
-    effective_cone_axis: Vec3,
-    tip_profile: SupportTipProfile,
-) -> ContactCone {
-    ContactCone {
-        id: "preview-branch-cone".to_owned(),
-        pos: tip_pos,
-        normal: effective_cone_axis,
-        surface_normal: Some(tip_normal),
-        profile: tip_profile,
-        ..ContactCone::default()
-    }
-}
-
-fn build_authored_branch_cone(
-    tip_pos: Vec3,
-    tip_normal: Vec3,
-    effective_cone_axis: Vec3,
-    tip_profile: SupportTipProfile,
-    socket_target: Vec3,
-) -> ContactCone {
-    recompute_contact_cone_for_moved_disk(
-        &preview_cone(tip_pos, tip_normal, effective_cone_axis, tip_profile),
-        tip_pos,
-        tip_normal,
-        Some(socket_target),
-        None,
-    )
-}
-
-fn build_nominal_branch_socket_target(
-    tip_pos: Vec3,
-    tip_normal: Vec3,
-    effective_cone_axis: Vec3,
-    tip_profile: SupportTipProfile,
-) -> Vec3 {
-    get_final_socket_position(&preview_cone(
-        tip_pos,
-        tip_normal,
-        effective_cone_axis,
-        tip_profile,
-    ))
-}
-
-fn score_branch_cone_candidate(
-    socket_pos: Vec3,
-    desired_socket: Vec3,
-    cone: &ContactCone,
-    surface_normal: Vec3,
-    desired_direction: Vec3,
-    nominal_length_mm: f64,
-) -> f64 {
-    let axis = normalize_vector_or_fallback(cone.normal, surface_normal);
-
-    let surface_alignment_penalty =
-        (1.0 - js_max(-1.0, js_min(1.0, axis.dot(surface_normal)))) * 6.75;
-    let desired_direction_penalty =
-        (1.0 - js_max(-1.0, js_min(1.0, axis.dot(desired_direction)))) * 0.35;
-    let socket_distance_penalty = socket_pos.distance_to(desired_socket) * 0.95;
-    let extra_length_mm = js_max(0.0, cone.profile.length_mm - nominal_length_mm);
-    let extra_length_penalty = extra_length_mm * 5.5 + extra_length_mm * extra_length_mm * 1.6;
-
-    surface_alignment_penalty
-        + desired_direction_penalty
-        + socket_distance_penalty
-        + extra_length_penalty
-}
-
-struct ConePlacement {
-    cone: ContactCone,
-    socket_pos: Vec3,
-    rerouted: bool,
-}
-
-#[derive(Clone)]
-struct Candidate {
-    cone: ContactCone,
-    socket_pos: Vec3,
-    score: f64,
-}
-
-fn find_best_branch_cone_placement(
-    tip_pos: Vec3,
-    tip_normal: Vec3,
-    effective_cone_axis: Vec3,
-    tip_profile: SupportTipProfile,
-    mesh: Option<&dyn CollisionField>,
-) -> ConePlacement {
-    let _perf = crate::perf::scope("branch:cone-search");
-    let nominal_socket_target =
-        build_nominal_branch_socket_target(tip_pos, tip_normal, effective_cone_axis, tip_profile);
-    let direct_cone = build_authored_branch_cone(
-        tip_pos,
-        tip_normal,
-        effective_cone_axis,
-        tip_profile,
-        nominal_socket_target,
-    );
-    let direct_socket_pos = get_final_socket_position(&direct_cone);
-
-    let surface_normal = normalize_vector_or_fallback(tip_normal, Vec3::new(0.0, 0.0, 1.0));
-    let sn = direct_cone.surface_normal.unwrap_or(tip_normal);
-    let override_len = direct_cone.disk_length_override.unwrap_or(0.0);
-    let cone_start = Vec3::new(
-        direct_cone.pos.x + sn.x * override_len,
-        direct_cone.pos.y + sn.y * override_len,
-        direct_cone.pos.z + sn.z * override_len,
-    );
-    let desired_socket = nominal_socket_target;
-    let desired_vector = desired_socket.sub(cone_start);
-    let _desired_distance = js_max(0.25, desired_vector.length());
-    let desired_direction = normalize_vector_or_fallback(desired_vector, surface_normal);
-    let nominal_length_mm = tip_profile.length_mm;
-
-    let mut tangent_forward = desired_direction
-        .sub(surface_normal.multiply_scalar(desired_direction.dot(surface_normal)));
-    if tangent_forward.length_sq() < 0.000001 {
-        tangent_forward = Vec3::new(1.0, 0.0, 0.0).cross(surface_normal);
-        if tangent_forward.length_sq() < 0.000001 {
-            tangent_forward = Vec3::new(0.0, 1.0, 0.0).cross(surface_normal);
-        }
-    }
-    tangent_forward = tangent_forward.normalize();
-    let tangent_right = Vec3::cross_vectors(surface_normal, tangent_forward).normalize();
-
-    let mut best_candidate: Option<Candidate> = None;
-    let mut best_preferred: Option<Candidate> = None;
-    let mut consider = |candidate: Candidate| {
-        if best_candidate
-            .as_ref()
-            .is_none_or(|b| candidate.score < b.score)
-        {
-            best_candidate = Some(candidate.clone());
-        }
-        if cone_lean_from_vertical_deg(tip_pos, candidate.socket_pos)
-            > MAX_PREFERRED_CONE_LEAN_FROM_VERTICAL_DEG
-        {
-            return;
-        }
-        if best_preferred
-            .as_ref()
-            .is_none_or(|b| candidate.score < b.score)
-        {
-            best_preferred = Some(candidate);
-        }
-    };
-
-    if mesh.is_none() || is_cone_placement_clear(&direct_cone, mesh) {
-        let score = score_branch_cone_candidate(
-            direct_socket_pos,
-            desired_socket,
-            &direct_cone,
-            surface_normal,
-            desired_direction,
-            nominal_length_mm,
-        );
-        consider(Candidate {
-            cone: direct_cone.clone(),
-            socket_pos: direct_socket_pos,
-            score,
-        });
-    }
-
-    for polar_deg in BRANCH_SOCKET_POLAR_DEG {
-        let polar_rad = deg_to_rad(polar_deg);
-        let sin_polar = js_sin(polar_rad);
-        let cos_polar = js_cos(polar_rad);
-
-        for azimuth_deg in BRANCH_SOCKET_AZIMUTH_DEG {
-            let azimuth_rad = deg_to_rad(azimuth_deg);
-            let tangent_component = tangent_forward
-                .multiply_scalar(js_cos(azimuth_rad) * sin_polar)
-                .add(tangent_right.multiply_scalar(js_sin(azimuth_rad) * sin_polar));
-            let axis = surface_normal
-                .multiply_scalar(cos_polar)
-                .add(tangent_component);
-            if axis.length_sq() < 0.000001 {
-                continue;
-            }
-            let axis = axis.normalize();
-
-            if axis.dot(surface_normal) < 0.12 {
-                continue;
-            }
-
-            for stretch in BRANCH_SOCKET_STRETCH_FACTORS {
-                let candidate_length = js_max(nominal_length_mm, nominal_length_mm * stretch);
-                let candidate_socket = cone_start.add(axis.multiply_scalar(candidate_length));
-                let candidate_cone = build_authored_branch_cone(
-                    tip_pos,
-                    tip_normal,
-                    effective_cone_axis,
-                    tip_profile,
-                    candidate_socket,
-                );
-
-                if !is_cone_placement_clear(&candidate_cone, mesh) {
-                    continue;
-                }
-
-                let score = score_branch_cone_candidate(
-                    candidate_socket,
-                    desired_socket,
-                    &candidate_cone,
-                    surface_normal,
-                    desired_direction,
-                    nominal_length_mm,
-                );
-
-                let socket_pos = get_final_socket_position(&candidate_cone);
-                consider(Candidate {
-                    cone: candidate_cone,
-                    socket_pos,
-                    score,
-                });
-            }
-        }
-    }
-
-    // The steepest cone that clears wins over the nearest one that does not:
-    // a contact served by a cone lying along the surface holds nothing up, and
-    // the member bends into it at the socket, which is the junction the preview
-    // reads as a near-horizontal whisker.
-    match best_preferred.or(best_candidate) {
-        Some(chosen) => {
-            let rerouted = (chosen.socket_pos.x - direct_socket_pos.x).abs() > 0.0001
-                || (chosen.socket_pos.y - direct_socket_pos.y).abs() > 0.0001
-                || (chosen.socket_pos.z - direct_socket_pos.z).abs() > 0.0001;
-            ConePlacement {
-                cone: chosen.cone,
-                socket_pos: chosen.socket_pos,
-                rerouted,
-            }
-        }
-        None => ConePlacement {
-            cone: direct_cone,
-            socket_pos: direct_socket_pos,
-            rerouted: false,
-        },
-    }
-}
+/// Flatter than this the socket has swung so far to the side that the cone
+/// runs along the surface, a whisker that holds nothing up. Such a cone is
+/// still taken when nothing steeper clears the model.
+const MAX_PREFERRED_LEAN_DEG: f64 = 75.0;
 
 #[derive(Clone, Copy, Debug)]
 pub struct BranchBuildInput<'a> {
@@ -338,20 +45,18 @@ pub struct BranchBuildInput<'a> {
     pub model_id: &'a str,
     pub parent_knot: &'a Knot,
     pub mesh: Option<&'a dyn CollisionField>,
-    /// Auto-support tier overrides — when absent, the global settings band
-    /// is used (manual placement). Auto-placed branches must size from the
-    /// auto-support tier, not the active trunk preset.
+    /// Sizes of the auto-support tier. An auto branch is sized by its tier,
+    /// never by the active preset; manual placement leaves these unset.
     pub shaft_diameter_mm: Option<f64>,
     pub tip_contact_diameter_mm: Option<f64>,
     pub roots_diameter_mm: Option<f64>,
-    /// Settings band to size from. Defaults to the live global settings, which is
-    /// what a fresh placement wants. Rebuilding an existing branch passes that
-    /// branch's own band instead, so editing it does not resize it to whatever
-    /// the active preset happens to be.
+    /// The settings to size from. A new branch leaves this unset and takes
+    /// the live settings; rebuilding a branch passes its own, so an edit does
+    /// not resize it to the active preset.
     pub settings: Option<&'a SupportSettings>,
-    /// Contact tip profile to reuse verbatim instead of deriving one from
-    /// `settings`. Its `lengthMm` is the nominal the socket search starts from;
-    /// the solved length replaces it in the returned cone.
+    /// A tip to reuse as it is instead of one made from the settings. Its
+    /// length is where the cone search starts; the returned cone carries the
+    /// length found.
     pub tip_profile: Option<SupportTipProfile>,
 }
 
@@ -362,168 +67,359 @@ pub struct BranchBuildResult {
     pub support_data: SupportData,
 }
 
-/// Builds a branch with 2 segments and a middle joint (like trunks):
-/// - Starts at the parent knot position
-/// - Bottom segment: knot -> middle joint
-/// - Top segment: middle joint -> socket joint
-/// - Contact cone at the tip
+/// The contact the cone search works from.
+#[derive(Clone, Copy)]
+struct Contact {
+    pos: Vec3,
+    normal: Vec3,
+    axis: Vec3,
+    profile: SupportTipProfile,
+}
+
+impl Contact {
+    fn draft(&self) -> ContactCone {
+        ContactCone {
+            id: "branch-draft".to_owned(),
+            pos: self.pos,
+            normal: self.axis,
+            surface_normal: Some(self.normal),
+            profile: self.profile,
+            ..ContactCone::default()
+        }
+    }
+
+    /// The cone on this contact whose socket lands on `socket`.
+    fn cone_to(&self, socket: Vec3) -> ContactCone {
+        recompute_contact_cone_for_moved_disk(
+            &self.draft(),
+            self.pos,
+            self.normal,
+            Some(socket),
+            None,
+        )
+    }
+}
+
+/// How far the cone ending at `socket` leans off plumb, in degrees.
+fn lean_deg(tip: Vec3, socket: Vec3) -> f64 {
+    let across = js_hypot(&[socket.x - tip.x, socket.y - tip.y]);
+    let up = (socket.z - tip.z).abs();
+    (js_atan2(across, js_max(0.001, up)) * 180.0) / std::f64::consts::PI
+}
+
+/// Where the cone body starts, on top of its disk.
+fn cone_base(cone: &ContactCone) -> Vec3 {
+    let normal = cone.surface_normal.unwrap_or(cone.normal);
+    let disk = cone.disk_length_override.unwrap_or_else(|| {
+        if cone.profile.is_disk() {
+            nib_length(normal, cone.normal, Some(&cone.profile.as_disk_profile()))
+        } else {
+            0.0
+        }
+    });
+    Vec3::new(
+        cone.pos.x + normal.x * disk,
+        cone.pos.y + normal.y * disk,
+        cone.pos.z + normal.z * disk,
+    )
+}
+
+/// Whether the cone's body, with some air around it, stays out of the model.
+fn cone_is_clear(cone: &ContactCone, mesh: Option<&dyn CollisionField>) -> bool {
+    let Some(mesh) = mesh else {
+        return true;
+    };
+    !is_collision_frustum_blocked(
+        cone_base(cone),
+        get_final_socket_position(cone),
+        (cone.profile.contact_diameter_mm / 2.0) + CONE_CLEARANCE_MM,
+        (cone.profile.body_diameter_mm / 2.0) + CONE_CLEARANCE_MM,
+        mesh,
+        None,
+    )
+}
+
+/// What the search wants: the socket the stock cone would reach, the
+/// direction toward it, and the stock length.
+struct Goal {
+    socket: Vec3,
+    direction: Vec3,
+    surface_normal: Vec3,
+    length: f64,
+}
+
+impl Goal {
+    /// The cost of a cone ending at `socket`; lower is better. Leaning off
+    /// the surface normal costs most, then any length beyond stock, then
+    /// distance from the wanted socket and from the wanted direction.
+    fn cost(&self, socket: Vec3, cone: &ContactCone) -> f64 {
+        let axis = normalize_vector_or_fallback(cone.normal, self.surface_normal);
+        let unit_dot = |v: Vec3| js_max(-1.0, js_min(1.0, axis.dot(v)));
+        let off_normal = (1.0 - unit_dot(self.surface_normal)) * 6.75;
+        let off_direction = (1.0 - unit_dot(self.direction)) * 0.35;
+        let off_socket = socket.distance_to(self.socket) * 0.95;
+        let extra = js_max(0.0, cone.profile.length_mm - self.length);
+        let stretch = extra * 5.5 + extra * extra * 1.6;
+        off_normal + off_direction + off_socket + stretch
+    }
+}
+
+#[derive(Clone)]
+struct Choice {
+    cone: ContactCone,
+    socket: Vec3,
+    cost: f64,
+}
+
+/// The cheapest option seen, and the cheapest of those steep enough to be
+/// preferred.
+#[derive(Default)]
+struct Pick {
+    any: Option<Choice>,
+    steep: Option<Choice>,
+}
+
+impl Pick {
+    fn offer(&mut self, tip: Vec3, option: Choice) {
+        if self.any.as_ref().is_none_or(|b| option.cost < b.cost) {
+            self.any = Some(option.clone());
+        }
+        if lean_deg(tip, option.socket) > MAX_PREFERRED_LEAN_DEG {
+            return;
+        }
+        if self.steep.as_ref().is_none_or(|b| option.cost < b.cost) {
+            self.steep = Some(option);
+        }
+    }
+
+    /// A steep cone that clears wins over a closer one that does not: a
+    /// cone lying along the surface holds nothing, and the shaft would bend
+    /// into it at the socket.
+    fn best(self) -> Option<Choice> {
+        self.steep.or(self.any)
+    }
+}
+
+/// The contact cone and its socket, and whether the cone was turned aside
+/// from the stock one to clear the model.
+struct PlacedCone {
+    cone: ContactCone,
+    socket: Vec3,
+    turned: bool,
+}
+
+/// Find the cone for the contact: the stock cone when it clears, otherwise
+/// the cheapest of a fan of tilted and stretched ones that does.
+fn place_cone(contact: Contact, mesh: Option<&dyn CollisionField>) -> PlacedCone {
+    let _perf = crate::perf::scope("branch:cone-search");
+    let stock_socket = get_final_socket_position(&contact.draft());
+    let stock = contact.cone_to(stock_socket);
+    let stock_end = get_final_socket_position(&stock);
+
+    let surface_normal = normalize_vector_or_fallback(contact.normal, Vec3::new(0.0, 0.0, 1.0));
+    let disk_normal = stock.surface_normal.unwrap_or(contact.normal);
+    let disk = stock.disk_length_override.unwrap_or(0.0);
+    let base = Vec3::new(
+        stock.pos.x + disk_normal.x * disk,
+        stock.pos.y + disk_normal.y * disk,
+        stock.pos.z + disk_normal.z * disk,
+    );
+    let goal = Goal {
+        socket: stock_socket,
+        direction: normalize_vector_or_fallback(stock_socket.sub(base), surface_normal),
+        surface_normal,
+        length: contact.profile.length_mm,
+    };
+
+    // A frame on the surface: "forward" is the wanted direction laid flat.
+    let mut forward = goal
+        .direction
+        .sub(surface_normal.multiply_scalar(goal.direction.dot(surface_normal)));
+    if forward.length_sq() < 0.000001 {
+        forward = Vec3::new(1.0, 0.0, 0.0).cross(surface_normal);
+        if forward.length_sq() < 0.000001 {
+            forward = Vec3::new(0.0, 1.0, 0.0).cross(surface_normal);
+        }
+    }
+    let forward = forward.normalize();
+    let right = Vec3::cross_vectors(surface_normal, forward).normalize();
+
+    let mut pick = Pick::default();
+    if mesh.is_none() || cone_is_clear(&stock, mesh) {
+        let cost = goal.cost(stock_end, &stock);
+        pick.offer(
+            contact.pos,
+            Choice {
+                cone: stock.clone(),
+                socket: stock_end,
+                cost,
+            },
+        );
+    }
+
+    for tilt in TILTS_DEG.map(deg_to_rad) {
+        let (sin_tilt, cos_tilt) = (js_sin(tilt), js_cos(tilt));
+        for heading in HEADINGS_DEG.map(deg_to_rad) {
+            let sideways = forward
+                .multiply_scalar(js_cos(heading) * sin_tilt)
+                .add(right.multiply_scalar(js_sin(heading) * sin_tilt));
+            let axis = surface_normal.multiply_scalar(cos_tilt).add(sideways);
+            if axis.length_sq() < 0.000001 {
+                continue;
+            }
+            let axis = axis.normalize();
+            if axis.dot(surface_normal) < 0.12 {
+                continue;
+            }
+            for stretch in STRETCHES {
+                let length = js_max(goal.length, goal.length * stretch);
+                let target = base.add(axis.multiply_scalar(length));
+                let cone = contact.cone_to(target);
+                if !cone_is_clear(&cone, mesh) {
+                    continue;
+                }
+                let cost = goal.cost(target, &cone);
+                let socket = get_final_socket_position(&cone);
+                pick.offer(contact.pos, Choice { cone, socket, cost });
+            }
+        }
+    }
+
+    match pick.best() {
+        Some(chosen) => {
+            let moved = |a: f64, b: f64| (a - b).abs() > 0.0001;
+            let turned = moved(chosen.socket.x, stock_end.x)
+                || moved(chosen.socket.y, stock_end.y)
+                || moved(chosen.socket.z, stock_end.z);
+            PlacedCone {
+                cone: chosen.cone,
+                socket: chosen.socket,
+                turned,
+            }
+        }
+        None => PlacedCone {
+            cone: stock,
+            socket: stock_end,
+            turned: false,
+        },
+    }
+}
+
+/// Build a branch from its knot to the contact: the contact cone, and a
+/// shaft of two segments meeting at a joint halfway, or of three when the
+/// cone was turned aside and the shaft has room to line up with it first.
 ///
-/// `live_settings` is `getSettings()`, used when the input names no settings.
+/// `live_settings` are used when the input names no settings of its own.
 pub fn build_branch_data(
     input: &BranchBuildInput<'_>,
     live_settings: &SupportSettings,
     new_id: &mut dyn FnMut() -> String,
 ) -> BranchBuildResult {
     let _perf = crate::perf::scope("branch:build");
-    let BranchBuildInput {
-        tip_pos,
-        tip_normal,
-        model_id,
-        parent_knot,
-        mesh,
-        ..
-    } = *input;
-
+    let knot = input.parent_knot;
     let settings = input.settings.unwrap_or(live_settings);
-    let cone_angle_mode = settings
-        .tip
-        .cone_angle_mode
-        .unwrap_or(ConeAngleMode::Normal);
-    let adaptive_cone_angle_offset_deg =
-        settings.tip.adaptive_cone_angle_offset_deg.unwrap_or(30.0);
+    let tip = &settings.tip;
 
-    let cone_axis = resolve_cone_axis_policy(ConeAxisPolicyInput {
-        surface_normal: tip_normal,
-        cone_angle_mode,
-        adaptive_cone_angle_offset_deg: Some(adaptive_cone_angle_offset_deg),
+    let axis = resolve_cone_axis_policy(ConeAxisPolicyInput {
+        surface_normal: input.tip_normal,
+        cone_angle_mode: tip.cone_angle_mode.unwrap_or(ConeAngleMode::Normal),
+        adaptive_cone_angle_offset_deg: Some(tip.adaptive_cone_angle_offset_deg.unwrap_or(30.0)),
     })
     .cone_axis;
-
-    let effective_cone_axis = cone_axis;
-    let tip_profile = input.tip_profile.unwrap_or(SupportTipProfile {
+    let profile = input.tip_profile.unwrap_or(SupportTipProfile {
         kind: Some(TipPrimitive::Disk),
         contact_diameter_mm: input
             .tip_contact_diameter_mm
-            .unwrap_or(settings.tip.contact_diameter_mm),
-        body_diameter_mm: settings.tip.body_diameter_mm,
-        length_mm: settings.tip.length_mm,
-        penetration_mm: settings.tip.penetration_mm,
+            .unwrap_or(tip.contact_diameter_mm),
+        body_diameter_mm: tip.body_diameter_mm,
+        length_mm: tip.length_mm,
+        penetration_mm: tip.penetration_mm,
         disk_thickness_mm: Some(0.1),
         max_standoff_mm: Some(1.5),
-        standoff_angle_threshold: Some(std::f64::consts::PI / 4.0),
-        break_point_mm: settings.tip.breakpoint_mm.filter(|b| *b > 0.0),
+        standoff_angle_threshold: Some(std::f64::consts::FRAC_PI_4),
+        break_point_mm: tip.breakpoint_mm.filter(|b| *b > 0.0),
     });
-
     let shaft_diameter = input
         .shaft_diameter_mm
         .unwrap_or(settings.shaft.diameter_mm);
     let joint_diameter = get_joint_diameter(shaft_diameter);
-    let ConePlacement {
-        cone: authored_cone,
-        socket_pos,
-        rerouted,
-    } = find_best_branch_cone_placement(
-        tip_pos,
-        tip_normal,
-        effective_cone_axis,
-        tip_profile,
-        mesh,
+
+    let placed = place_cone(
+        Contact {
+            pos: input.tip_pos,
+            normal: input.tip_normal,
+            axis,
+            profile,
+        },
+        input.mesh,
     );
+    let socket = placed.socket;
 
-    let socket_joint = Joint {
-        id: new_id(),
-        pos: socket_pos,
-        diameter: joint_diameter,
-    };
-
-    let knot_pos = parent_knot.pos;
-    let socket_vec = socket_pos;
-    let knot_vec = knot_pos;
-    let span = socket_vec.sub(knot_vec);
-    let span_length = span.length();
-    let span_direction = if span_length > 0.000001 {
-        span.normalize()
-    } else {
-        authored_cone.normal.normalize()
-    };
-
-    let mut segments: Vec<Segment> = Vec::new();
-
-    let mut add_joint = |pos: Vec3| Joint {
+    let mut joint_at = |pos: Vec3| Joint {
         id: new_id(),
         pos,
         diameter: joint_diameter,
     };
-    let segment = |id: String, top: &Joint, bottom: Option<&Joint>| {
-        let mut seg = Segment::straight(id, shaft_diameter);
-        seg.top_joint = Some(top.clone());
-        seg.bottom_joint = bottom.cloned();
-        seg
-    };
+    let socket_joint = joint_at(socket);
 
-    let mut planned: Option<(Joint, Joint)> = None;
-    if rerouted && span_length > 1.8 {
-        let approach_backoff = js_min(
+    // When the cone was turned aside, an extra joint short of the socket
+    // lets the last segment come in along the knot-to-socket line.
+    let knot_pos = knot.pos;
+    let span = socket.sub(knot_pos);
+    let span_length = span.length();
+    let mut inner_joints = Vec::new();
+    if placed.turned && span_length > 1.8 {
+        let direction = span.normalize();
+        let backoff = js_min(
             js_max(span_length * 0.28, 0.9),
             js_max(span_length - 0.65, 0.9),
         );
-        let approach_vec = socket_vec.sub(span_direction.multiply_scalar(approach_backoff));
-        let approach_distance_to_knot = approach_vec.distance_to(knot_vec);
-
-        if approach_distance_to_knot > 0.6 {
-            let middle_vec = knot_vec.lerp(approach_vec, 0.5);
-            let middle_joint = add_joint(middle_vec);
-            let approach_joint = add_joint(approach_vec);
-            planned = Some((middle_joint, approach_joint));
+        let approach = socket.sub(direction.multiply_scalar(backoff));
+        if approach.distance_to(knot_pos) > 0.6 {
+            inner_joints.push(joint_at(knot_pos.lerp(approach, 0.5)));
+            inner_joints.push(joint_at(approach));
         }
     }
-
-    if let Some((middle_joint, approach_joint)) = planned {
-        segments.push(segment(new_id(), &middle_joint, None));
-        segments.push(segment(new_id(), &approach_joint, Some(&middle_joint)));
-        segments.push(segment(new_id(), &socket_joint, Some(&approach_joint)));
+    if inner_joints.is_empty() {
+        inner_joints.push(joint_at(Vec3::new(
+            (knot_pos.x + socket.x) / 2.0,
+            (knot_pos.y + socket.y) / 2.0,
+            (knot_pos.z + socket.z) / 2.0,
+        )));
     }
 
-    if segments.is_empty() {
-        let middle_joint_pos = Vec3::new(
-            (knot_pos.x + socket_pos.x) / 2.0,
-            (knot_pos.y + socket_pos.y) / 2.0,
-            (knot_pos.z + socket_pos.z) / 2.0,
-        );
-
-        let middle_joint = Joint {
-            id: new_id(),
-            pos: middle_joint_pos,
-            diameter: joint_diameter,
-        };
-
-        segments.push(segment(new_id(), &middle_joint, None));
-        segments.push(segment(new_id(), &socket_joint, Some(&middle_joint)));
+    // Segments bottom to top; the first starts at the knot, with no joint.
+    let mut segments = Vec::new();
+    let mut below: Option<&Joint> = None;
+    for top in inner_joints.iter().chain([&socket_joint]) {
+        let mut segment = Segment::straight(new_id(), shaft_diameter);
+        segment.top_joint = Some(top.clone());
+        segment.bottom_joint = below.cloned();
+        segments.push(segment);
+        below = Some(top);
     }
 
     let contact_cone = ContactCone {
         id: new_id(),
         socket_joint_id: Some(socket_joint.id.clone()),
-        ..authored_cone
+        ..placed.cone
     };
-
-    let branch_id = new_id();
+    let id = new_id();
     let branch = Branch {
         base: SupportEntity {
-            id: branch_id.clone(),
-            model_id: model_id.to_owned(),
+            id: id.clone(),
+            model_id: input.model_id.to_owned(),
             type_id: Some(SupportTypeId::Branch),
             ..SupportEntity::default()
         },
-        parent_knot_id: parent_knot.id.clone(),
+        parent_knot_id: knot.id.clone(),
         segments: segments.clone(),
         contact_cone: Some(contact_cone.clone()),
     };
-
     let support_data = SupportData {
-        id: branch_id,
-        start_pos: Some(parent_knot.pos),
-        knot: Some(parent_knot.clone()),
+        id,
+        start_pos: Some(knot_pos),
+        knot: Some(knot.clone()),
         segments,
         contact_cone: Some(contact_cone),
         ..SupportData::default()

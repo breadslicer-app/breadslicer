@@ -1,10 +1,6 @@
-//! The model mesh as the builders ask it questions.
-//!
-//! DragonFruit hands builders a `THREE.Mesh` and each check picks its own view
-//! of it: the pooled distance field (`isShaftBlocked`, the cone and stump
-//! gates) or the BVH raycaster (`checkShaftCollision`, `checkShortBridgeCollision`).
-//! Here both views travel together, and each builder reads the one DragonFruit
-//! reads.
+//! The model as the builders ask it questions: its distance field (shafts,
+//! cones and stumps against the model) and its rays (shaft and short bridge
+//! collisions), together.
 
 use crate::supports::placement_logic::collision_avoidance::CollisionField;
 use crate::bvh::BvhMesh;

@@ -1,39 +1,22 @@
-//! DragonFruit `src/supports/PlacementLogic/Grid/nearestCandidateNodeKeys.ts`.
+//! The nodes around a node, nearest rings first.
 
-use super::grid_math::js_number_to_string;
+use super::grid_math::{key_indices, node_key};
 
-/// `Number(part)` for a key part: a missing part is NaN, an empty one 0.
-fn key_part(part: Option<&str>) -> f64 {
-    match part.map(str::trim) {
-        None => f64::NAN,
-        Some("") => 0.0,
-        Some(p) => p.parse::<f64>().unwrap_or(f64::NAN),
-    }
-}
-
-/// The node keys in square rings around `preferred_key`, ring 0 (the key
-/// itself) first, each ring in `dx`-major then `dy` order.
+/// The keys of the nodes in square rings round `preferred_key`, up to
+/// `max_rings` out: the node itself first, then each ring by `dx`, then
+/// `dy`.
 pub fn build_nearest_candidate_node_keys(preferred_key: &str, max_rings: u32) -> Vec<String> {
-    let mut parts = preferred_key.split(',');
-    let center_x = key_part(parts.next());
-    let center_y = key_part(parts.next());
-    let mut keys = Vec::new();
-
+    let (cx, cy) = key_indices(preferred_key);
     let max_rings = i64::from(max_rings);
+    let mut keys = Vec::new();
     for ring in 0..=max_rings {
         for dx in -ring..=ring {
             for dy in -ring..=ring {
-                if dx.abs().max(dy.abs()) != ring {
-                    continue;
+                if dx.abs().max(dy.abs()) == ring {
+                    keys.push(node_key(cx + dx as f64, cy + dy as f64));
                 }
-                keys.push(format!(
-                    "{},{}",
-                    js_number_to_string(center_x + dx as f64),
-                    js_number_to_string(center_y + dy as f64)
-                ));
             }
         }
     }
-
     keys
 }

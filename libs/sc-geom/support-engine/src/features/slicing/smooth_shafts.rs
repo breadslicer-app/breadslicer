@@ -1,14 +1,9 @@
-//! SoulCrafted's smooth shaft mesher (not a DragonFruit file): an
-//! alternative to DragonFruit's tessellation of shafts, where every segment is
-//! its own frustum and every joint a sphere.
-//!
-//! Here each run of connected segments becomes one continuous tube. The tube
-//! bends through each joint on a ring mitred into the plane that bisects the
-//! bend, so no step or seam shows. A joint DragonFruit draws as a sphere gets
-//! a *bicone* instead: the tube flares over a collar on either side up to a
-//! wider waist at the joint. That keeps the extra cross-section a sphere gives
-//! the joint, with gradual, self-supporting tapers instead of a sphere's
-//! abrupt step and flat underside.
+//! Shafts as smooth tubes: each run of connected segments one continuous
+//! tube, bending through each joint on a ring mitred into the plane that
+//! bisects the bend, so no step or seam shows. A joint gets a *bicone*: the
+//! tube flares over a collar on either side up to a wider waist at the joint,
+//! the extra section a sphere would give it but with gradual,
+//! self-supporting tapers instead of a sphere's step and flat underside.
 //!
 //! Tubes are closed (flat caps at both ends) and outward-wound.
 
@@ -46,9 +41,9 @@ impl Default for SmoothShaftParams {
 /// How the tessellation draws shafts and joints.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum ShaftStyle {
-    /// DragonFruit's: a frustum per segment and a sphere per joint (parity).
+    /// A frustum per segment and a sphere per joint.
     #[default]
-    DragonFruit,
+    Segmented,
     /// Continuous tubes with bicones at the joints.
     Smooth(SmoothShaftParams),
 }

@@ -10,7 +10,7 @@
 //! `every_test_file_is_a_module` fails when a new file is not listed below.
 
 mod bench_real_model;
-mod builders5_df_tests;
+mod builder_cases;
 mod cavity_landing;
 mod hollow_cavity;
 mod pipeline;

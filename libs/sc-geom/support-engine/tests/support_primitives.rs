@@ -1,5 +1,5 @@
-//! DragonFruit `src/supports/__tests__/contactDiskNib.test.ts`,
-//! `jointInsertionKnotRemap.test.ts` and the taper half of `shaftTaperGeometry.test.ts`.
+//! A contact disk's nib, knots kept on their shafts when joints are added,
+//! and a shaft's taper.
 
 use indexmap::IndexMap;
 use support_engine::supports::bezier::{

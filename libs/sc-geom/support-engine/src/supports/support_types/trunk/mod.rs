@@ -1,4 +1,5 @@
-//! DragonFruit `src/supports/SupportTypes/Trunk/`.
+//! Trunks: supports from the plate up to a contact, their routes, and the
+//! bridge that stands in when a contact cannot reach the plate.
 
 pub mod cavity_bridge;
 pub mod trunk_builder;

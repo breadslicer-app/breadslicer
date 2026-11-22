@@ -1,6 +1,5 @@
 //! Editing supports after a run (BS-1, BS-3): a support is added where the
-//! person clicks the model the way DragonFruit's auto-placer places one
-//! contact (`place_one_candidate`): a fan or a merge onto a nearby support,
+//! person clicks the model the way a run places one contact (`place_one_candidate`): a fan or a merge onto a nearby support,
 //! its own routed trunk, a grid attachment to a neighbour, the gridless
 //! fallback. A support is removed where they click it, with everything that
 //! hangs from it. Previews of both run on a copy and draw only the pieces
@@ -80,7 +79,7 @@ pub const COVERED_AGREEMENT: f64 = 0.25;
 /// How far a hand-placed support reaches for a support to hang from.
 const MANUAL_ATTACH_REACH_MM: f64 = 15.0;
 /// How far from vertical a hand-placed support may lean to hang from
-/// another (#3). A run holds its members to 30° (DragonFruit's branch-angle
+/// another (#3). A run holds its members to 30° (the branch-angle
 /// rule, 60° from flat), tuned for a whole plate where a lone trunk is cheap;
 /// by hand that built a trunk of its own right next to one in reach.
 const MANUAL_MAX_ANGLE_DEG: f64 = 45.0;
@@ -428,7 +427,7 @@ impl std::fmt::Debug for SdfSlot {
 pub enum EditError {
     /// Nothing to act on within reach of the click.
     NothingThere,
-    /// DragonFruit's placement found no way to hold that point.
+    /// Placing found no way to hold that point.
     NoRoute(String),
     /// The tessellation failed (a raft Clipper error).
     Tessellation(String),
@@ -696,7 +695,7 @@ fn hand_pool(state: &SupportState) -> Vec<FanShaftPoint> {
 
 /// Hangs `candidate` from a support of its model within `reach_mm` it can
 /// reach without crossing the model or another support, leaning no further
-/// from vertical than the live settings let a member: DragonFruit's fan on
+/// from vertical than the live settings let a member, from
 /// [`hand_pool`], the steepest host first or the nearest. Adds the knot and
 /// the member to `state`, or says why none was found.
 fn hang(
@@ -964,8 +963,8 @@ fn strings_in(value: &Value, out: &mut HashSet<String>) {
     }
 }
 
-/// The contact area each sizing tier stands for: DragonFruit sizes an auto
-/// support from its island's area, and a click has no island.
+/// The contact area each sizing tier stands for: a run sizes a support from
+/// its island's area, and a click has no island.
 fn area_for_sizing(sizing: &str) -> f64 {
     match sizing {
         "detail" => 0.1,
@@ -1301,8 +1300,8 @@ impl SupportSession {
     }
 
     /// One session per model, in model order, each holding only the supports
-    /// that stand on its model (#197). DragonFruit keeps each model's
-    /// supports to themselves, so nothing is placed again; each session's
+    /// that stand on its model (#197). Each model's supports keep to
+    /// themselves, so nothing is placed again; each session's
     /// raft is drawn from its own roots. The models' geometry, BVHs and
     /// distance fields carry over. Hand-placed ids stay apart: each session
     /// names new supports under its own prefix.
@@ -1653,15 +1652,14 @@ impl SupportSession {
                     Ok(()) => Ok(None),
                     Err(why_not) => {
                         let why_not = (!own).then_some(why_not);
-                        // DragonFruit's placement without its own fan (no
-                        // grid hosts skips it): a merge, its own trunk, a
+                        // Placing without its own hanging (no grid hosts
+                        // skips it): a merge, its own trunk, a
                         // bridge from the model.
                         let outcome = place_one_candidate(
                             &candidate,
                             &mut state,
                             &PlaceArgs {
                                 grid_host_ids: None,
-                                sizing_ctx: None,
                             },
                             &ctx,
                             false,
@@ -1760,7 +1758,7 @@ impl SupportSession {
     }
 
     /// Adds a support whose tip touches the model at `point` (world mm), the
-    /// way DragonFruit places one contact.
+    /// way a run places one contact.
     pub fn add_trunk_at(&mut self, point: [f64; 3]) -> Result<(), EditError> {
         self.add_at(point, &AddOptions::default())
     }

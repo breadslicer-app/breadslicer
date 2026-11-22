@@ -1,8 +1,5 @@
-//! DragonFruit `src/volumeAnalysis/Islands/voxelFootprint.ts`.
-//!
-//! An island's contact footprint as flat `f32` arrays: interleaved x, y and an
-//! optional per-voxel surface Z. On the wire it is `{ xy, z, count }` with plain
-//! number arrays (a `Float32Array` does not survive `JSON.stringify`).
+//! An island's cells as flat `f32` arrays: x and y interleaved, and a height
+//! per cell when what found it measured one.
 
 use serde::{Deserialize, Serialize};
 
@@ -16,7 +13,7 @@ pub struct VoxelFootprint {
     pub count: usize,
 }
 
-/// One voxel as `footprintToPoints` materialises it.
+/// One cell.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FootprintPoint {
     pub x: f64,
@@ -38,7 +35,7 @@ impl VoxelFootprint {
         self.z.as_ref().map(|z| f64::from(z[index]))
     }
 
-    /// `footprintToPoints`.
+    /// Every cell.
     pub fn to_points(&self) -> Vec<FootprintPoint> {
         (0..self.count)
             .map(|i| FootprintPoint {
@@ -50,14 +47,12 @@ impl VoxelFootprint {
     }
 }
 
-/// Unique integer key for an integer cell of a 2D grid — the footprint's own
-/// 0.25 mm cells (`Math.round(mm * 4)`) and any coarser bucketing alike.
+/// One number for an integer cell of a grid on the plate.
 pub fn cell_key(cx: f64, cy: f64) -> f64 {
     (cx + 32768.0) * 65536.0 + (cy + 32768.0)
 }
 
-/// A number as a `Map`/`Set` key: JavaScript keys numbers by value
-/// (SameValueZero), so -0 and 0 are one key, and so is every NaN.
+/// A number as a key: -0 and 0 are one key, and so is every NaN.
 pub fn number_key(value: f64) -> u64 {
     if value == 0.0 {
         0
@@ -68,17 +63,13 @@ pub fn number_key(value: f64) -> u64 {
     }
 }
 
-/// `cellKey(cx, cy)` as a map key.
+/// [`cell_key`] as a key.
 pub fn cell_key_bits(cx: f64, cy: f64) -> u64 {
     number_key(cell_key(cx, cy))
 }
 
-pub fn is_empty_footprint(footprint: Option<&VoxelFootprint>) -> bool {
-    footprint.is_none_or(|f| f.count == 0)
-}
-
-/// `VoxelFootprintBuilder`: voxels pushed one at a time into `f32` storage, Z
-/// recorded only when the builder was made with it (a missing Z stores 0).
+/// Cells added one at a time, as `f32`; heights kept only when made with
+/// them (a missing one stored as 0).
 #[derive(Debug, Clone, Default)]
 pub struct VoxelFootprintBuilder {
     xy: Vec<f32>,
@@ -113,19 +104,4 @@ impl VoxelFootprintBuilder {
             count,
         }
     }
-}
-
-/// `concatFootprints`: the result carries Z only if every input does.
-pub fn concat_footprints(footprints: &[&VoxelFootprint]) -> VoxelFootprint {
-    let with_z = !footprints.is_empty() && footprints.iter().all(|f| f.z.is_some());
-    let mut xy = Vec::new();
-    let mut z = with_z.then(Vec::new);
-    for f in footprints {
-        xy.extend_from_slice(&f.xy[..f.count * 2]);
-        if let (Some(z), Some(fz)) = (&mut z, &f.z) {
-            z.extend_from_slice(&fz[..f.count]);
-        }
-    }
-    let count = xy.len() / 2;
-    VoxelFootprint { xy, z, count }
 }

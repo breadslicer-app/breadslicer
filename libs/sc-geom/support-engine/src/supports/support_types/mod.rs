@@ -1,4 +1,7 @@
-//! DragonFruit `src/supports/SupportTypes/`.
+//! The support types and how each one is built: trunks from the plate,
+//! branches and leaves off other supports, twigs and sticks between two
+//! model contacts, stumps near the plate, kickstands and braces that steady
+//! other supports.
 
 pub mod brace;
 pub mod branch;

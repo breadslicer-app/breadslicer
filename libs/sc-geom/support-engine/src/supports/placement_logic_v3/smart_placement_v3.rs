@@ -1,34 +1,19 @@
-//! DragonFruit `src/supports/PlacementLogicV3/SmartPlacementV3.ts`.
-//!
-//! SmartPlacementV3 — the support trunk router.
-//!
-//! One entry point, one route shape, one collision oracle. The shape it
-//! produces, which is what slicers actually print:
+//! The trunk router: where a trunk's shaft runs from its tip cone to the
+//! plate, in the one shape a printed support takes:
 //!
 //! ```text
-//! contact cone ──► one diagonal ──► joint ──► straight drop to the plate
+//! tip cone ──► one diagonal ──► joint ──► straight drop to the plate
 //! ```
 //!
-//! The diagonal leaves the socket at up to 45° from vertical and is lifted as
-//! high as its column allows, so the tilt is as short as the geometry permits
-//! and everything below the joint is vertical. A trunk is strongest as a
-//! vertical pillar, so the router's whole job is to find the earliest point
-//! where vertical becomes possible and get there in one move.
+//! First a straight drop under the cone (the cone may swing round the tip to
+//! find one); else one diagonal, at up to 45° from vertical, to the nearest
+//! column that clears ([`super::escape_joint_search`]), then straight down.
+//! A contact neither serves is refused with the model in the way; one the
+//! grid cannot serve at the shape is routed again with the grid off; one the
+//! model blocks gets a second, tighter look with the tip leaning further.
 //!
-//! Cost is bounded by construction: the search is a bounded outward walk with a
-//! hard probe budget (see `escape_joint_search`), the roots volume is the only
-//! other place that touches the mesh, and nothing here iterates to a fixed
-//! point.
-//!
-//! Differences from DragonFruit, none of which changes a placement:
-//! - The mesh is its distance field: the caller passes the pooled [`SdfCache`]
-//!   and the mesh's world matrix (`sdf.refreshMatrix()` reads `mesh.matrixWorld`).
-//! - Settings are passed in (`getSettings()`), and the run counters are the
-//!   caller's [`RouterStats`] rather than a module global.
-//! - The pinned-preset column map prewarm runs on `requestIdleCallback`, which
-//!   is a no-op off the browser main thread (DragonFruit's worker and Node);
-//!   the GUI can call `SdfCache::prewarm_column_map` itself. The pathfinding
-//!   debug overlay snapshot and the perf marks are not produced.
+//! The work is bounded: a capped search with a probe budget, and the root's
+//! volume, are all that touch the model; nothing iterates to a fixed point.
 
 use std::collections::HashMap;
 
@@ -39,6 +24,8 @@ use super::escape_joint_search::{
     EscapeJointSearchOptions, GridJointSearchOptions, PILLAR_LEANS_DEG, Xy, build_direction_fan,
     find_escape_joint, find_grid_joint,
 };
+use crate::geom::Matrix4;
+use crate::geom::math_utils::{deg_to_rad, js_cos, js_hypot, js_max, js_min, js_round, js_sin};
 use crate::supports::placement_logic::collision_avoidance::{
     CollisionField, ContactConeSweep, is_contact_cone_blocked,
 };
@@ -61,164 +48,114 @@ use crate::supports::placement_logic::standard_placement::{
     TrunkPlacementInput, TrunkPlacementResult, calculate_standard_placement,
 };
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::tips::get_socket_position;
-use crate::supports::tips::SupportTipProfile;
-use crate::supports::tips::nib_length;
+use crate::supports::tips::{SupportTipProfile, get_socket_position, nib_length};
 use crate::supports::types::{LimitationCode, Vec3};
-use crate::geom::Matrix4;
-use crate::geom::math_utils::{deg_to_rad, js_cos, js_hypot, js_max, js_min, js_round, js_sin};
 
-/// What one placement asks the geometry, counted. The router's cost is the
-/// *number* of questions it puts to the distance field, so the run report needs
-/// the counts to say which stage to attack. Reset per run by the auto-support
-/// planner.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// What the router asked the model, counted, for the run report: its cost
+/// is the number of questions put to the distance field.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RouterStats {
     pub placements: u64,
-    /// Cones the straight-drop loop tested (the straight one plus deviations).
+    /// Cones tried for a straight drop or a routed start.
     pub cones_tested: u64,
-    /// Cone-vs-model checks that reached the distance field (memo misses).
+    /// Cone checks that reached the distance field (not remembered).
     pub cone_gates: u64,
-    /// Sockets the routed fallback handed to the joint search.
+    /// Joint searches run.
     pub joint_searches: u64,
-    /// SDF probes those searches spent, summed.
+    /// Probes those searches spent.
     pub joint_probes: u64,
-    /// Root-volume checks that were not already memoized for their XY.
+    /// Root volume checks not remembered for their spot.
     pub roots_checks: u64,
-    /// SDF queries inside those checks (a slice centre plus its perimeter).
+    /// Distance queries those checks made.
     pub roots_samples: u64,
-    /// Base positions the ring search tried.
+    /// Spots tried for a root.
     pub base_candidates: u64,
-    /// How the joint searches ended (`found`, `never-cleared`, `probe-budget`,
-    /// `no-direction`), in first-seen order.
+    /// How the joint searches ended, in the order first seen.
     pub joint_outcomes: IndexMap<String, u64>,
-    /// Probes the searches that *found* a joint needed, bucketed by powers of
-    /// two (index 0 = up to 64 probes, 1 = up to 128, ...).
+    /// The probes of the searches that found a joint, by power of two (up
+    /// to 64, 128, 256, 512, more).
     pub found_probe_buckets: [u64; 5],
-    /// The largest probe count any successful search spent.
+    /// The most probes a search that found a joint spent.
     pub max_found_probes: u64,
 }
 
-impl Default for RouterStats {
-    fn default() -> Self {
-        RouterStats {
-            placements: 0,
-            cones_tested: 0,
-            cone_gates: 0,
-            joint_searches: 0,
-            joint_probes: 0,
-            roots_checks: 0,
-            roots_samples: 0,
-            base_candidates: 0,
-            joint_outcomes: IndexMap::new(),
-            found_probe_buckets: [0; 5],
-            max_found_probes: 0,
-        }
-    }
-}
-
 impl RouterStats {
-    /// `resetRouterStats()`.
     pub fn reset(&mut self) {
         *self = RouterStats::default();
     }
 }
 
+/// A contact to route.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SmartPlacementV3Input<'a> {
     pub placement: TrunkPlacementInput,
     pub model_id: &'a str,
-    /// Hover preview rather than a committed click. Reported to the debug overlay only.
+    /// A hover preview rather than a placement; nothing here reads it.
     pub is_preview: Option<bool>,
 }
 
+/// How a routing pass runs; set only by the router's own second passes.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct SmartPlacementV3Context {
-    /// Resolve as if the grid were off. Set only by the retry below: a grid
-    /// placement that cannot meet the shape rule is re-resolved without it.
+    /// Route as if the grid were off.
     pub ignore_grid: bool,
-    /// The tight pass (#466), set only by the retry below: a contact the
-    /// normal pass refuses for the model in the way gets the cones that lean
-    /// past its cap.
+    /// The tight pass (#466): only cones leaning past the normal cap.
     pub tight: bool,
 }
 
-// Standoff from model geometry, matching the shaft collision gate used
-// everywhere else in the support system.
-const COLLISION_AVOIDANCE_MM: f64 = 0.48;
-
-/// The step the router's shaft radius is rounded up to (#233).
+/// The clearance shafts keep from the model past their radius, mm.
+const STANDOFF_MM: f64 = 0.48;
+/// The step a shaft's radius is rounded up to for its clearance (#233), mm.
 pub const CLEARANCE_RADIUS_STEP_MM: f64 = 0.025;
+/// The column map's cell, mm.
+pub const COLUMN_MAP_CELL_MM: f64 = 0.2;
+/// Root spots tried round the preferred one with the grid off (with it, the
+/// joint already stands over a node: a root that does not fit there means
+/// another joint).
+const BASE_RINGS: u32 = 4;
+const GRID_BASE_RINGS: u32 = 0;
+/// The shortest drop worth having below a joint, mm.
+const MIN_DROP_MM: f64 = 1.0;
+/// A root this far off the socket's column is still a straight drop, mm.
+const STRAIGHT_TOLERANCE_MM: f64 = 0.05;
+/// The step of the walk along a diagonal, mm.
+const WALK_STEP_MM: f64 = 0.5;
+/// The directions walked.
+const DIRECTION_COUNT: usize = 12;
+/// Nodes the grid search tries, nearest first.
+const GRID_NODES: u32 = 24;
+/// How far from a tip a pillar may stand, in grid steps (#464).
+const PILLAR_REACH_STEPS: f64 = 0.75;
+/// Nodes tried with pillars on the grid (#464).
+const PILLAR_NODES: u32 = 80;
+/// The drop below the joint may lean this much past the routed angle
+/// configured, degrees, and the routed angle is never under the floor.
+const DROP_SLACK_DEG: f64 = 10.0;
+const ROUTED_FLOOR_DEG: f64 = 15.0;
+/// How far a blocked cone swings off the normal, degrees, smallest first,
+/// and in how many directions round the tip.
+const CONE_SWINGS_DEG: [f64; 3] = [10.0, 20.0, 30.0];
+const CONE_SWING_DIRECTIONS: usize = 8;
+/// The tight pass's swing (#466), degrees: on the scorecard 45 places most
+/// of what the model was in the way of and buries no more tips.
+const TIGHT_SWING_DEG: f64 = 45.0;
+/// Samples round a root's cross-section at each height.
+const ROOT_RIM_SAMPLES: u32 = 16;
 
-/// The clearance the router asks the column map for, from the shaft it clears.
-/// One function for both the ask and the prewarm, so a prewarmed map cannot
-/// miss the clearance the hover then asks for and rebuild anyway.
-///
-/// The shaft's radius is rounded up to [`CLEARANCE_RADIUS_STEP_MM`] (#233):
-/// trunk diameters are continuous (from area and height), and each new
-/// clearance built a column map over every vertex of the model (~60 ms on
-/// 1.9 M of them), up to 180 maps a run. Rounded, trunks within 0.05 mm of
-/// one another share a map, and a shaft keeps at most 0.025 mm more room
-/// from the model, never less.
+/// The clearance a shaft of `shaft_diameter_mm` keeps: its radius rounded up
+/// to [`CLEARANCE_RADIUS_STEP_MM`] (so shafts within 0.05 mm share a column
+/// map), plus the standoff.
 pub fn column_clearance_mm(shaft_diameter_mm: f64) -> f64 {
     let radius = shaft_diameter_mm / 2.0;
-    // A hair under the step, so a radius already on it is not pushed up a
-    // step by its rounding error.
+    // A hair under, so a radius on a step stays there.
     let steps = (radius / CLEARANCE_RADIUS_STEP_MM - 1e-9).ceil();
-    steps * CLEARANCE_RADIUS_STEP_MM + COLLISION_AVOIDANCE_MM
+    steps * CLEARANCE_RADIUS_STEP_MM + STANDOFF_MM
 }
 
-/// The column map's cell size, shared with the prewarm for the same reason.
-pub const COLUMN_MAP_CELL_MM: f64 = 0.2;
-
-/// Safety margin applied to the roots volume, as the rest of the system does.
-const ROOTS_DISK_SAFETY_MM: f64 = COLLISION_AVOIDANCE_MM;
-/// Perimeter samples around the roots cross-section at each height slice.
-const ROOTS_DISK_PERIMETER_SAMPLES: u32 = 16;
-/// Ring search around the preferred base node when the grid is off. Grid mode
-/// searches no rings at all: the joint already sits on a node, and when the node
-/// under the joint cannot take the base, the answer is a different joint, not a
-/// longer lean.
-const MAX_BASE_SEARCH_RINGS: u32 = 4;
-const GRID_BASE_SEARCH_RINGS: u32 = 0;
-// Shortest vertical leg worth putting below a joint.
-const MIN_VERTICAL_LEG_MM: f64 = 1.0;
-/// A base this far off the socket's column still counts as a straight drop.
-const STRAIGHT_BASE_TOLERANCE_MM: f64 = 0.05;
-/// Lateral step of the outward walk. One SDF probe pair per step.
-const WALK_STEP_MM: f64 = 0.5;
-/// Directions tried, in preference order, before the router gives up.
-const DIRECTION_COUNT: usize = 12;
-/// How many lattice nodes the grid search may try, nearest first.
-const GRID_JOINT_NODE_BUDGET: u32 = 24;
-/// How far from a tip a pillar may stand, in grid steps: a pillar further out
-/// takes a long diagonal and stretches the raft around it (#464).
-const PILLAR_REACH_STEPS: f64 = 0.75;
-/// The same with pillars on the nodes: the far nodes are worth a look (#464).
-const PILLAR_JOINT_NODE_BUDGET: u32 = 80;
-/// The vertical leg below the joint is the load-bearing span, so it obeys the
-/// configured routed-trunk angle (90 minus `grid.minRoutedTrunkAngleDeg`).
-const ROUTED_DETOUR_SLACK_DEG: f64 = 10.0;
-const MIN_ALLOWED_ROUTED_ANGLE_DEG: f64 = 15.0;
-/// How far the cone may swing off the surface normal when the cone at the
-/// nominal socket is blocked, and how many directions around the tip are tried
-/// at each angle. Smallest deviation first.
-const CONE_DEVIATION_ANGLES_DEG: [f64; 3] = [10.0, 20.0, 30.0];
-const CONE_DEVIATION_DIRECTION_COUNT: usize = 8;
-
-/// The tight pass (#466): a contact no cone above clears gets a second look
-/// with the tip leaning further off the face, with every collision check. The
-/// tip ends in a ball, so it holds at that angle to the face.
-///
-/// Measured on the scorecard (#234): 45 degrees places most of what the model
-/// was in the way of and buries no more tips; 60 buries more, and shorter tips
-/// add almost nothing.
-const TIGHT_CONE_DEVIATION_DEG: f64 = 45.0;
-
-/// A memo key part as JavaScript's string key makes it: `Math.round` of the
-/// value, with -0 and 0 one key and every NaN one key.
-fn memo_key_part(rounded: f64) -> u64 {
+/// A remembered answer's key part: a rounded value, with -0 and 0 one key
+/// and every NaN one key.
+fn memo_part(rounded: f64) -> u64 {
     if rounded == 0.0 {
         0.0f64.to_bits()
     } else if rounded.is_nan() {
@@ -228,66 +165,8 @@ fn memo_key_part(rounded: f64) -> u64 {
     }
 }
 
-/// Roots volume check: does the disk + cone the root is made of intersect the model?
-///
-/// Samples the cross-section the root actually occupies at each height and asks
-/// whether that circle comes within the safety margin of the mesh, with the
-/// bounding-ball early-out the 1-Lipschitz SDF allows.
-#[allow(clippy::too_many_arguments)]
-fn roots_volume_blocked(
-    sdf: &SdfCache,
-    stats: &mut RouterStats,
-    center_x: f64,
-    center_y: f64,
-    disk_height: f64,
-    cone_height: f64,
-    roots_radius: f64,
-    shaft_radius: f64,
-) -> bool {
-    stats.roots_checks += 1;
-    let root_top_z = disk_height + cone_height;
-    let z_slices = js_max(4.0, (root_top_z / sdf.cell_size()).ceil());
-    let mut slice = 0.0;
-    while slice <= z_slices {
-        let z = (slice / z_slices) * root_top_z;
-        let radius_at_z = if z <= disk_height {
-            roots_radius
-        } else {
-            roots_radius
-                + ((z - disk_height) / js_max(cone_height, 1e-6)) * (shaft_radius - roots_radius)
-        };
-
-        stats.roots_samples += 1;
-        let center_dist = sdf.distance_at(center_x, center_y, z);
-        if center_dist >= radius_at_z + ROOTS_DISK_SAFETY_MM {
-            slice += 1.0;
-            continue;
-        }
-        if center_dist < ROOTS_DISK_SAFETY_MM {
-            return true;
-        }
-
-        for i in 0..ROOTS_DISK_PERIMETER_SAMPLES {
-            let angle = (f64::from(i) / f64::from(ROOTS_DISK_PERIMETER_SAMPLES))
-                * std::f64::consts::PI
-                * 2.0;
-            stats.roots_samples += 1;
-            if sdf.distance_at(
-                center_x + js_cos(angle) * radius_at_z,
-                center_y + js_sin(angle) * radius_at_z,
-                z,
-            ) < ROOTS_DISK_SAFETY_MM
-            {
-                return true;
-            }
-        }
-        slice += 1.0;
-    }
-    false
-}
-
-/// A cone the router may commit: where it starts on the disk, its axis, and the
-/// socket the shaft leaves from.
+/// A cone the router may use: where it leaves the contact disk, its axis,
+/// and the socket the shaft leaves from.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Cone {
     socket_pos: Vec3,
@@ -295,348 +174,282 @@ struct Cone {
     cone_start_pos: Vec3,
 }
 
-/// A committed base: where the root lands and where the vertical leg ends.
+/// Where a root lands and where the drop above it ends.
 #[derive(Debug, Clone, PartialEq)]
 struct Base {
     base_pos: Vec3,
-    root_top_target: Vec3,
+    root_top: Vec3,
     node_key: Option<String>,
 }
 
-/// The per-placement gates and their memos, over the model's distance field.
-struct Gates<'a> {
+/// One placement's checks against the model, with the costly ones
+/// remembered (the segment check caches its cells already).
+struct Checks<'a> {
     sdf: &'a SdfCache,
     stats: &'a mut RouterStats,
-    tip_pos: Vec3,
-    tip_profile: SupportTipProfile,
-    clearance_mm: f64,
+    tip: Vec3,
+    profile: SupportTipProfile,
+    clearance: f64,
     disk_height: f64,
     cone_height: f64,
-    roots_radius: f64,
+    root_radius: f64,
     shaft_radius: f64,
-    /// How far the cone may swing off the surface normal.
-    max_deviation_deg: f64,
-    // Two memos only: the roots volume (a disk + cone sweep, the most expensive
-    // per-point check here) and the contact-cone gate. The segment test is
-    // deliberately not memoized: the key costs more than the cell-cached call.
-    roots_memo: HashMap<(u64, u64), bool>,
-    cone_gate_memo: HashMap<[u64; 6], bool>,
+    /// How far the cone may swing off the normal, degrees.
+    max_swing_deg: f64,
+    roots: HashMap<(u64, u64), bool>,
+    cones: HashMap<[u64; 6], bool>,
 }
 
-impl Gates<'_> {
-    /// True when the roots volume at this XY is blocked by the model.
-    fn roots_blocked_at(&mut self, x: f64, y: f64) -> bool {
-        let key = (
-            memo_key_part(js_round(x / 0.05)),
-            memo_key_part(js_round(y / 0.05)),
-        );
-        if let Some(&cached) = self.roots_memo.get(&key) {
-            return cached;
+impl Checks<'_> {
+    /// Whether the root's disk and cone at (x, y) reach the model:
+    /// remembered per 0.05 mm spot.
+    fn root_blocked(&mut self, x: f64, y: f64) -> bool {
+        let key = (memo_part(js_round(x / 0.05)), memo_part(js_round(y / 0.05)));
+        if let Some(&known) = self.roots.get(&key) {
+            return known;
         }
-        let blocked = roots_volume_blocked(
-            self.sdf,
-            self.stats,
-            x,
-            y,
-            self.disk_height,
-            self.cone_height,
-            self.roots_radius,
-            self.shaft_radius,
-        );
-        self.roots_memo.insert(key, blocked);
+        let blocked = self.root_volume_blocked(x, y);
+        self.roots.insert(key, blocked);
         blocked
     }
 
-    fn segment_blocked_between(&self, from: Vec3, to: Vec3) -> bool {
-        self.sdf
-            .segment_blocked_xyz(from.x, from.y, from.z, to.x, to.y, to.z, self.clearance_mm)
+    /// The root's cross-section, slice by slice up its height: the centre's
+    /// distance settles a slice when it clears the whole section (the field
+    /// is 1-Lipschitz) or the standoff alone fails; else its rim is sampled.
+    fn root_volume_blocked(&mut self, x: f64, y: f64) -> bool {
+        self.stats.roots_checks += 1;
+        let top = self.disk_height + self.cone_height;
+        let slices = js_max(4.0, (top / self.sdf.cell_size()).ceil());
+        let mut slice = 0.0;
+        while slice <= slices {
+            let z = (slice / slices) * top;
+            slice += 1.0;
+            let r = if z <= self.disk_height {
+                self.root_radius
+            } else {
+                self.root_radius
+                    + ((z - self.disk_height) / js_max(self.cone_height, 1e-6))
+                        * (self.shaft_radius - self.root_radius)
+            };
+            self.stats.roots_samples += 1;
+            let centre = self.sdf.distance_at(x, y, z);
+            if centre >= r + STANDOFF_MM {
+                continue;
+            }
+            if centre < STANDOFF_MM {
+                return true;
+            }
+            for i in 0..ROOT_RIM_SAMPLES {
+                let a = (f64::from(i) / f64::from(ROOT_RIM_SAMPLES)) * std::f64::consts::PI * 2.0;
+                self.stats.roots_samples += 1;
+                if self
+                    .sdf
+                    .distance_at(x + js_cos(a) * r, y + js_sin(a) * r, z)
+                    < STANDOFF_MM
+                {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
-    fn cone_blocked_at(&self, socket_pos: Vec3) -> bool {
+    fn segment_blocked(&self, from: Vec3, to: Vec3) -> bool {
         self.sdf
-            .distance_at(socket_pos.x, socket_pos.y, socket_pos.z)
-            < self.clearance_mm
+            .segment_blocked_xyz(from.x, from.y, from.z, to.x, to.y, to.z, self.clearance)
     }
 
-    /// The cone body, not just the socket point: a cone can lean sideways into
-    /// geometry the socket itself clears. Memoized per placement, because the
-    /// router tests the same cone geometry looking for a straight drop and again
-    /// as a socket candidate for the joint search.
-    fn contact_cone_blocked_at(&mut self, cone_start_pos: Vec3, socket_pos: Vec3) -> bool {
-        let key = [
-            cone_start_pos.x,
-            cone_start_pos.y,
-            cone_start_pos.z,
-            socket_pos.x,
-            socket_pos.y,
-            socket_pos.z,
-        ]
-        .map(|value| memo_key_part(js_round(value * 100.0)));
-        if let Some(&cached) = self.cone_gate_memo.get(&key) {
-            return cached;
+    /// Whether the socket itself is within the clearance of the model.
+    fn socket_blocked(&self, socket: Vec3) -> bool {
+        self.sdf.distance_at(socket.x, socket.y, socket.z) < self.clearance
+    }
+
+    /// Whether the cone's body reaches the model (a cone can lean into what
+    /// its socket clears), remembered per 0.01 mm.
+    fn cone_blocked(&mut self, start: Vec3, socket: Vec3) -> bool {
+        let key = [start.x, start.y, start.z, socket.x, socket.y, socket.z]
+            .map(|v| memo_part(js_round(v * 100.0)));
+        if let Some(&known) = self.cones.get(&key) {
+            return known;
         }
         self.stats.cone_gates += 1;
         let blocked = is_contact_cone_blocked(
             self.sdf,
             ContactConeSweep {
-                start: cone_start_pos,
-                end: socket_pos,
-                start_radius: self.tip_profile.contact_diameter_mm / 2.0,
-                end_radius: self.tip_profile.body_diameter_mm / 2.0,
+                start,
+                end: socket,
+                start_radius: self.profile.contact_diameter_mm / 2.0,
+                end_radius: self.profile.body_diameter_mm / 2.0,
             },
         );
-        self.cone_gate_memo.insert(key, blocked);
+        self.cones.insert(key, blocked);
         blocked
     }
 
-    /// The contact is the top of the member: no cone the router commits may lift
-    /// its own socket end over the tip.
-    fn cone_keeps_contact_on_top(&self, cone: &Cone) -> bool {
+    /// Whether the cone leaves its contact the highest point of the support.
+    fn contact_on_top(&self, cone: &Cone) -> bool {
         cone_keeps_contact_highest(
             cone.cone_axis,
             cone.socket_pos,
-            self.tip_pos,
-            self.tip_profile.body_diameter_mm,
+            self.tip,
+            self.profile.body_diameter_mm,
         )
     }
 
-    /// Resolves the cone's axis and the shaft's top point together, because they
-    /// are one decision: the builder renders the cone along the direction from
-    /// the cone start to the socket.
-    ///
-    /// With a joint to aim at, the socket moves onto the line from the cone start
-    /// toward that joint, so the cone and the first shaft segment form one line.
-    /// The move is clamped to the cone's deviation budget off the surface normal,
-    /// and dropped outright when it would lift the cone's socket end over the
-    /// tip. With no joint (a straight shaft) the socket stands and the axis
-    /// follows it.
-    fn resolve_cone_socket_and_axis(
+    /// The cone for a shaft starting at `socket` and running through
+    /// `joints`: aimed at the first joint (within the swing allowed) when
+    /// that lines the cone up with the shaft and clears; else the cone at
+    /// `socket` as it is.
+    fn cone_toward(
         &mut self,
-        socket_pos: Vec3,
+        socket: Vec3,
         joints: &[Vec3],
-        tip_normal: Vec3,
-        cone_axis_hint: Vec3,
+        normal: Vec3,
+        axis_hint: Vec3,
     ) -> Cone {
-        let tip_pos = self.tip_pos;
-        let tip_profile = self.tip_profile;
-        let disk_thickness = if tip_profile.is_disk() {
-            nib_length(
-                tip_normal,
-                cone_axis_hint,
-                Some(&tip_profile.as_disk_profile()),
-            )
+        let (tip, profile) = (self.tip, self.profile);
+        let nib = if profile.is_disk() {
+            nib_length(normal, axis_hint, Some(&profile.as_disk_profile()))
         } else {
             0.0
         };
-        let cone_start_pos = Vec3::new(
-            tip_pos.x + tip_normal.x * disk_thickness,
-            tip_pos.y + tip_normal.y * disk_thickness,
-            tip_pos.z + tip_normal.z * disk_thickness,
+        let start = Vec3::new(
+            tip.x + normal.x * nib,
+            tip.y + normal.y * nib,
+            tip.z + normal.z * nib,
         );
-
-        if let Some(&first_joint) = joints.first() {
-            let aligned_axis = clamp_cone_axis_deviation_from_surface_normal(
-                tip_normal,
-                Vec3::new(
-                    first_joint.x - cone_start_pos.x,
-                    first_joint.y - cone_start_pos.y,
-                    first_joint.z - cone_start_pos.z,
-                )
-                .normalize(),
-                self.max_deviation_deg,
+        if let Some(&joint) = joints.first() {
+            let axis = clamp_cone_axis_deviation_from_surface_normal(
+                normal,
+                Vec3::new(joint.x - start.x, joint.y - start.y, joint.z - start.z).normalize(),
+                self.max_swing_deg,
             );
-            let aligned_socket =
-                get_socket_position(cone_start_pos, aligned_axis, Some(&tip_profile));
-            if !self.cone_blocked_at(aligned_socket)
-                && !self.contact_cone_blocked_at(cone_start_pos, aligned_socket)
-                && !self.segment_blocked_between(aligned_socket, first_joint)
-                && cone_keeps_contact_highest(
-                    aligned_axis,
-                    aligned_socket,
-                    tip_pos,
-                    tip_profile.body_diameter_mm,
-                )
+            let aimed = get_socket_position(start, axis, Some(&profile));
+            if !self.socket_blocked(aimed)
+                && !self.cone_blocked(start, aimed)
+                && !self.segment_blocked(aimed, joint)
+                && cone_keeps_contact_highest(axis, aimed, tip, profile.body_diameter_mm)
             {
                 return Cone {
-                    socket_pos: aligned_socket,
-                    cone_axis: aligned_axis,
-                    cone_start_pos,
+                    socket_pos: aimed,
+                    cone_axis: axis,
+                    cone_start_pos: start,
                 };
             }
         }
-
         Cone {
-            socket_pos,
-            cone_axis: Vec3::new(
-                socket_pos.x - cone_start_pos.x,
-                socket_pos.y - cone_start_pos.y,
-                socket_pos.z - cone_start_pos.z,
-            )
-            .normalize(),
-            cone_start_pos,
+            socket_pos: socket,
+            cone_axis: Vec3::new(socket.x - start.x, socket.y - start.y, socket.z - start.z)
+                .normalize(),
+            cone_start_pos: start,
         }
     }
 
-    /// Resolves where the root lands and where the shaft's vertical leg ends.
-    ///
-    /// With the grid on, the base snaps to the nearest legal node: legal means the
-    /// roots volume fits there and the leg from the joint reaches it without
-    /// clipping. Among legal nodes the nearest to directly under the joint wins.
-    /// With the grid off the preferred XY is continuous and is used as-is.
-    fn resolve_base(
+    /// Where the root lands for a drop from `drop_from`: at `preferred` with
+    /// the grid off, else on the node nearest it within `rings` (the root
+    /// fitting and the drop clearing), nearest under the joint first.
+    fn base_for(
         &mut self,
-        preferred_xy: Xy,
-        last_segment_start: Vec3,
+        preferred: Xy,
+        drop_from: Vec3,
         root_top_z: f64,
         spacing_mm: f64,
-        grid_enabled: bool,
-        max_search_rings: u32,
+        grid: bool,
+        rings: u32,
     ) -> Option<Base> {
-        let node_keys = if grid_enabled {
+        let keys = if grid {
             build_nearest_candidate_node_keys(
-                &grid_node_key_from_xy(preferred_xy.x, preferred_xy.y, spacing_mm),
-                max_search_rings,
+                &grid_node_key_from_xy(preferred.x, preferred.y, spacing_mm),
+                rings,
             )
         } else {
-            vec!["continuous".to_owned()]
+            vec![String::new()]
         };
-
-        let mut best: Option<(Base, f64)> = None;
-        for node_key in node_keys {
+        let mut best: Option<Base> = None;
+        let mut best_off = f64::INFINITY;
+        for key in keys {
             self.stats.base_candidates += 1;
-            let (x, y) = if grid_enabled {
-                grid_snapped_xy_from_key(&node_key, spacing_mm)
+            let (x, y) = if grid {
+                grid_snapped_xy_from_key(&key, spacing_mm)
             } else {
-                (preferred_xy.x, preferred_xy.y)
+                (preferred.x, preferred.y)
             };
-            if self.roots_blocked_at(x, y) {
+            if self.root_blocked(x, y) {
                 continue;
             }
-
-            let base_pos = Vec3::new(x, y, 0.0);
-            let root_top_target = Vec3::new(x, y, root_top_z);
-            if self.segment_blocked_between(last_segment_start, root_top_target) {
+            let root_top = Vec3::new(x, y, root_top_z);
+            if self.segment_blocked(drop_from, root_top) {
                 continue;
             }
-
-            let lateral_mm = js_hypot(&[x - last_segment_start.x, y - last_segment_start.y]);
-            if best.as_ref().is_none_or(|(_, b)| lateral_mm < *b) {
-                best = Some((
-                    Base {
-                        base_pos,
-                        root_top_target,
-                        node_key: grid_enabled.then_some(node_key),
-                    },
-                    lateral_mm,
-                ));
+            let off = js_hypot(&[x - drop_from.x, y - drop_from.y]);
+            if best.is_none() || off < best_off {
+                best = Some(Base {
+                    base_pos: Vec3::new(x, y, 0.0),
+                    root_top,
+                    node_key: grid.then_some(key),
+                });
+                best_off = off;
             }
         }
-        best.map(|(base, _)| base)
+        best
     }
 }
 
-/// Axes the cone can take to reach around geometry beside the tip.
-///
-/// Each of `angles_deg` off the surface normal, in every direction around it:
-/// up to `MAX_CONE_AXIS_DEVIATION_FROM_SURFACE_NORMAL_DEG` in the normal pass,
-/// further in the tight pass. Ordered as the angles are, then outward direction
-/// first, so the first candidate that clears is the least-distorted cone.
-fn build_cone_deviation_axes(
-    tip_normal: Vec3,
-    outward_hint: Vec3,
-    angles_deg: &[f64],
-) -> Vec<Vec3> {
-    let normal = tip_normal;
+/// The axes a cone may swing to round what stands beside the tip: each of
+/// `swings_deg` off the normal, in a fan round it starting the way off the
+/// surface (`outward`).
+fn swung_axes(normal: Vec3, outward: Vec3, swings_deg: &[f64]) -> Vec<Vec3> {
     if normal.length_sq() < 1e-10 {
         return Vec::new();
     }
     let normal = normal.normalize();
-
-    // The fan is generated in 2D and mapped onto the plane the cone can tilt in.
-    let reference = if normal.z.abs() < 0.9 {
+    let helper = if normal.z.abs() < 0.9 {
         Vec3::new(0.0, 0.0, 1.0)
     } else {
         Vec3::new(1.0, 0.0, 0.0)
     };
-    let tangent_x = Vec3::cross_vectors(reference, normal).normalize();
-    let tangent_y = Vec3::cross_vectors(normal, tangent_x).normalize();
-
-    let hint = outward_hint.add_scaled_vector(normal, -outward_hint.dot(normal));
-    let preferred = if hint.length_sq() > 1e-6 {
+    let u = Vec3::cross_vectors(helper, normal).normalize();
+    let v = Vec3::cross_vectors(normal, u).normalize();
+    let flat = outward.add_scaled_vector(normal, -outward.dot(normal));
+    let first = if flat.length_sq() > 1e-6 {
         Xy {
-            x: hint.dot(tangent_x),
-            y: hint.dot(tangent_y),
+            x: flat.dot(u),
+            y: flat.dot(v),
         }
     } else {
         Xy { x: 1.0, y: 0.0 }
     };
-
     let mut axes = Vec::new();
-    for &angle_deg in angles_deg {
-        let angle_rad = deg_to_rad(angle_deg);
-        for direction in build_direction_fan(Some(preferred), CONE_DEVIATION_DIRECTION_COUNT) {
-            let tilt = tangent_x
-                .multiply_scalar(direction.x)
-                .add_scaled_vector(tangent_y, direction.y);
-            // Rotating the normal about (normal × tilt) swings it toward tilt.
-            axes.push(normal.apply_axis_angle(normal.cross(tilt).normalize(), angle_rad));
+    for &swing in swings_deg {
+        let angle = deg_to_rad(swing);
+        for d in build_direction_fan(Some(first), CONE_SWING_DIRECTIONS) {
+            let toward = u.multiply_scalar(d.x).add_scaled_vector(v, d.y);
+            axes.push(normal.apply_axis_angle(normal.cross(toward).normalize(), angle));
         }
     }
     axes
 }
 
-/// The cones of the tight pass (#466): the tip leaning past the normal pass's
-/// cap, in every direction around the tip, the way off the surface first.
-fn tight_cones(
-    tip_normal: Vec3,
-    outward_hint: Vec3,
-    cone_start_pos: Vec3,
-    profile: &SupportTipProfile,
-) -> Vec<Cone> {
-    build_cone_deviation_axes(tip_normal, outward_hint, &[TIGHT_CONE_DEVIATION_DEG])
-        .into_iter()
-        .map(|axis| Cone {
-            socket_pos: get_socket_position(cone_start_pos, axis, Some(profile)),
-            cone_axis: axis,
-            cone_start_pos,
-        })
-        .collect()
-}
-
-/// Whether a resolved chain holds the shape rule: every span from the socket down
-/// to the base, measured against the 45 degrees a trunk's diagonal is built to.
-///
-/// Snapping the drop to a node leaves the socket where the contact is, so the
-/// span under the tip can come out flatter than any diagonal the router would
-/// ever have built.
-fn chain_holds_shape_rule(points: &[Vec3], clearance_mm: f64) -> bool {
-    for pair in points.windows(2) {
-        let (start, end) = (pair[0], pair[1]);
-        if distance_xy(start, end) <= js_max(clearance_mm * 0.5, 0.05) {
-            continue;
+/// Whether every span of the chain, the flat-enough ones aside, leans no
+/// more than a trunk diagonal may at its length. A drop snapped to a node
+/// can leave the span under the tip flatter than any routed diagonal.
+fn holds_trunk_shape(points: &[Vec3], clearance_mm: f64) -> bool {
+    points.windows(2).all(|pair| {
+        let (a, b) = (pair[0], pair[1]);
+        if distance_xy(a, b) <= js_max(clearance_mm * 0.5, 0.05) {
+            return true;
         }
-        let span_mm = distance_3d(start, end);
-        // Short spans may take the detour slack, longer ones tighten to the
-        // trunk's 45 degrees.
-        let allowance_deg = get_length_aware_max_angle_from_vertical_deg(
-            span_mm,
+        let allowed = get_length_aware_max_angle_from_vertical_deg(
+            distance_3d(a, b),
             TRUNK_DIAGONAL_LEAN_FROM_VERTICAL_DEG,
             Some(TRUNK_DIAGONAL_LEAN_FROM_VERTICAL_DEG),
         );
-        if span_lean_from_vertical_deg(start, end) > allowance_deg + 0.05 {
-            return false;
-        }
-    }
-    true
+        span_lean_from_vertical_deg(a, b) <= allowed + 0.05
+    })
 }
 
-/// Resolves a trunk placement: the socket the shaft leaves from, the chain that
-/// gets it to the plate, and the cone that attaches it to the model.
-///
-/// Returns a `COLLISION_WITH_MODEL` result rather than searching harder when the
-/// socket's column is blocked and no joint in the envelope fixes it. A trunk
-/// that cannot reach the plate in one diagonal is not a trunk, and the caller
-/// has the cavity fallback for exactly that case.
+/// A trunk's route for the contact of `input`: its socket, its chain to the
+/// plate and its cone; or why it has none.
 pub fn calculate_smart_placement_v3(
     input: &SmartPlacementV3Input<'_>,
     sdf: &mut SdfCache,
@@ -647,279 +460,217 @@ pub fn calculate_smart_placement_v3(
 ) -> TrunkPlacementResult {
     let _perf = crate::perf::scope("router:v3");
     stats.placements += 1;
-    let standard = calculate_standard_placement(&input.placement, settings);
-    if standard.error.is_some() {
-        return standard;
+    let plain = calculate_standard_placement(&input.placement, settings);
+    if plain.error.is_some() {
+        return plain;
     }
-
-    let setup = crate::perf::scope("router:setup");
-    sdf.refresh_matrix(matrix_world);
-    let clearance_mm = column_clearance_mm(settings.shaft.diameter_mm);
-    // The router's columns are the bulk of this run's distance-field reads, and
-    // the exact column map answers them from one scalar per XY cell. It is
-    // clearance-specific: one map per clearance, reused after that.
-    sdf.enable_column_map(clearance_mm, COLUMN_MAP_CELL_MM);
-    drop(setup);
-
-    let result = match route(input, sdf, stats, settings, context, standard) {
-        Some(result) => result,
-        // The grid could not serve this contact at the shape rule: re-resolve
-        // it as if the grid were off.
-        None => {
-            return calculate_smart_placement_v3(
-                input,
-                sdf,
-                matrix_world,
-                stats,
-                settings,
-                SmartPlacementV3Context {
-                    ignore_grid: true,
-                    ..context
-                },
-            );
-        }
+    {
+        let _p = crate::perf::scope("router:setup");
+        sdf.refresh_matrix(matrix_world);
+        sdf.enable_column_map(
+            column_clearance_mm(settings.shaft.diameter_mm),
+            COLUMN_MAP_CELL_MM,
+        );
+    }
+    let again = |sdf: &mut SdfCache, stats: &mut RouterStats, context| {
+        calculate_smart_placement_v3(input, sdf, matrix_world, stats, settings, context)
     };
-    if result.error != Some(LimitationCode::CollisionWithModel) || context.tight {
-        return result;
+    let Some(found) = route(input, sdf, stats, settings, context, plain) else {
+        return again(
+            sdf,
+            stats,
+            SmartPlacementV3Context {
+                ignore_grid: true,
+                ..context
+            },
+        );
+    };
+    if found.error != Some(LimitationCode::CollisionWithModel) || context.tight {
+        return found;
     }
-    // The model is in the way of every cone the normal pass tries: the tight
-    // pass looks again before the contact is refused.
-    let tight = calculate_smart_placement_v3(
-        input,
+    let tight = again(
         sdf,
-        matrix_world,
         stats,
-        settings,
         SmartPlacementV3Context {
             tight: true,
             ..context
         },
     );
-    if tight.error.is_none() { tight } else { result }
+    if tight.error.is_none() { tight } else { found }
 }
 
-/// The routing body. `None` asks the caller to retry with the grid ignored.
+/// One routing pass; `None` asks for the pass again with the grid off.
 fn route(
     input: &SmartPlacementV3Input<'_>,
     sdf: &SdfCache,
     stats: &mut RouterStats,
     settings: &SupportSettings,
     context: SmartPlacementV3Context,
-    standard: TrunkPlacementResult,
+    plain: TrunkPlacementResult,
 ) -> Option<TrunkPlacementResult> {
-    let placement = &input.placement;
-    let root_top_z = placement.roots_top_z;
-    let clearance_mm = column_clearance_mm(settings.shaft.diameter_mm);
-    let spacing_mm = settings.grid.spacing_mm;
-    let ignored_grid = settings.grid.enabled && context.ignore_grid;
-    let grid_enabled = settings.grid.enabled && !context.ignore_grid;
-    let pillars = grid_enabled && settings.grid.pillars;
-    let base_rings = if grid_enabled {
-        GRID_BASE_SEARCH_RINGS
-    } else {
-        MAX_BASE_SEARCH_RINGS
-    };
-
-    let mut gates = Gates {
+    let p = &input.placement;
+    let root_top_z = p.roots_top_z;
+    let clearance = column_clearance_mm(settings.shaft.diameter_mm);
+    let spacing = settings.grid.spacing_mm;
+    let grid_dropped = settings.grid.enabled && context.ignore_grid;
+    let grid = settings.grid.enabled && !context.ignore_grid;
+    let pillars = grid && settings.grid.pillars;
+    let rings = if grid { GRID_BASE_RINGS } else { BASE_RINGS };
+    let mut checks = Checks {
         sdf,
         stats,
-        tip_pos: placement.tip_pos,
-        tip_profile: placement.tip_profile,
-        clearance_mm,
+        tip: p.tip_pos,
+        profile: p.tip_profile,
+        clearance,
         disk_height: settings.roots.disk_height_mm,
         cone_height: settings.roots.cone_height_mm,
-        roots_radius: settings.roots.diameter_mm / 2.0,
+        root_radius: settings.roots.diameter_mm / 2.0,
         shaft_radius: settings.shaft.diameter_mm / 2.0,
-        max_deviation_deg: if context.tight {
-            TIGHT_CONE_DEVIATION_DEG
+        max_swing_deg: if context.tight {
+            TIGHT_SWING_DEG
         } else {
             MAX_CONE_AXIS_DEVIATION_FROM_SURFACE_NORMAL_DEG
         },
-        roots_memo: HashMap::new(),
-        cone_gate_memo: HashMap::new(),
+        roots: HashMap::new(),
+        cones: HashMap::new(),
     };
+    let axis_hint = plain.cone_axis.unwrap_or(p.tip_normal);
+    let socket = plain.socket_pos;
+    let reach = js_min(72.0, js_max(48.0, js_max(0.0, socket.z - root_top_z) * 2.5));
 
-    let cone_axis_hint = standard.cone_axis.unwrap_or(placement.tip_normal);
-    let socket_pos = standard.socket_pos;
-    let vertical_span_mm = js_max(0.0, socket_pos.z - root_top_z);
-    let max_lateral_mm = js_min(72.0, js_max(48.0, vertical_span_mm * 2.5));
+    // Asked first for the cells they leave cached, which the rest reads.
+    let _ = checks.segment_blocked(socket, Vec3::new(socket.x, socket.y, root_top_z));
+    let _ = checks.root_blocked(socket.x, socket.y);
 
-    // DragonFruit reports these two to the debug overlay. They are asked here
-    // all the same, because the answers they cache shape what comes after.
-    let _straight_preflight_clear = !gates.segment_blocked_between(
-        socket_pos,
-        Vec3::new(socket_pos.x, socket_pos.y, root_top_z),
-    );
-    let _roots_fit_straight_down = !gates.roots_blocked_at(socket_pos.x, socket_pos.y);
-
-    // 1. Straight: the column below the socket is clear and a root fits there.
-    //    The cone comes first and may walk around the tip; routing below gets
-    //    its turn only when no deviation clears.
-    let straight_cone =
-        gates.resolve_cone_socket_and_axis(socket_pos, &[], placement.tip_normal, cone_axis_hint);
-    // Each cone, and whether it swings off the cone the policy asks for. The
-    // tight pass has only the cones that lean past the normal pass's cap.
-    let deviated = if context.tight {
-        tight_cones(
-            placement.tip_normal,
-            cone_axis_hint,
-            straight_cone.cone_start_pos,
-            &placement.tip_profile,
-        )
+    // The cones to try: the policy's own (not in the tight pass), then the
+    // swung ones, smallest swing first.
+    let own = checks.cone_toward(socket, &[], p.tip_normal, axis_hint);
+    let swings: &[f64] = if context.tight {
+        &[TIGHT_SWING_DEG]
     } else {
-        build_cone_deviation_axes(
-            placement.tip_normal,
-            cone_axis_hint,
-            &CONE_DEVIATION_ANGLES_DEG,
-        )
-        .into_iter()
-        .map(|axis| Cone {
-            socket_pos: get_socket_position(
-                straight_cone.cone_start_pos,
-                axis,
-                Some(&placement.tip_profile),
-            ),
-            cone_axis: axis,
-            cone_start_pos: straight_cone.cone_start_pos,
-        })
-        .collect()
+        &CONE_SWINGS_DEG
     };
     let cones: Vec<(Cone, bool)> = (!context.tight)
-        .then_some((straight_cone, false))
+        .then_some((own, false))
         .into_iter()
-        .chain(deviated.into_iter().map(|cone| (cone, true)))
+        .chain(
+            swung_axes(p.tip_normal, axis_hint, swings)
+                .into_iter()
+                .map(|axis| {
+                    (
+                        Cone {
+                            socket_pos: get_socket_position(
+                                own.cone_start_pos,
+                                axis,
+                                Some(&p.tip_profile),
+                            ),
+                            cone_axis: axis,
+                            cone_start_pos: own.cone_start_pos,
+                        },
+                        true,
+                    )
+                }),
+        )
         .collect();
-    for &(candidate, _) in &cones {
-        gates.stats.cones_tested += 1;
-        if gates.contact_cone_blocked_at(candidate.cone_start_pos, candidate.socket_pos) {
+
+    // 1. A straight drop: the cone clears, its column clears and a root fits
+    //    right under it.
+    for &(cone, _) in &cones {
+        checks.stats.cones_tested += 1;
+        let s = cone.socket_pos;
+        if checks.cone_blocked(cone.cone_start_pos, s)
+            || !checks.contact_on_top(&cone)
+            || checks.segment_blocked(s, Vec3::new(s.x, s.y, root_top_z))
+            || checks.root_blocked(s.x, s.y)
+        {
             continue;
         }
-        if !gates.cone_keeps_contact_on_top(&candidate) {
-            continue;
-        }
-        let column_end = Vec3::new(candidate.socket_pos.x, candidate.socket_pos.y, root_top_z);
-        if gates.segment_blocked_between(candidate.socket_pos, column_end) {
-            continue;
-        }
-        if gates.roots_blocked_at(candidate.socket_pos.x, candidate.socket_pos.y) {
-            continue;
-        }
-        let base = gates.resolve_base(
-            Xy {
-                x: candidate.socket_pos.x,
-                y: candidate.socket_pos.y,
-            },
-            candidate.socket_pos,
-            root_top_z,
-            spacing_mm,
-            grid_enabled,
-            base_rings,
-        );
-        // A base the grid moved off the socket's column is not a straight drop:
-        // it is left to the routing below, which is where a diagonal belongs.
-        let Some(base) = base.filter(|base| {
-            js_hypot(&[
-                base.base_pos.x - candidate.socket_pos.x,
-                base.base_pos.y - candidate.socket_pos.y,
-            ]) <= STRAIGHT_BASE_TOLERANCE_MM
+        let base = checks.base_for(Xy { x: s.x, y: s.y }, s, root_top_z, spacing, grid, rings);
+        // A root the grid moved off the column is a diagonal's job.
+        let Some(base) = base.filter(|b| {
+            js_hypot(&[b.base_pos.x - s.x, b.base_pos.y - s.y]) <= STRAIGHT_TOLERANCE_MM
         }) else {
             continue;
         };
-
-        let straight_chain = [candidate.socket_pos, base.root_top_target];
-        if grid_enabled && !chain_holds_shape_rule(&straight_chain, clearance_mm) {
+        if grid && !holds_trunk_shape(&[s, base.root_top], clearance) {
             return None;
         }
         return Some(TrunkPlacementResult {
-            socket_pos: candidate.socket_pos,
+            socket_pos: s,
             joints: Some(Vec::new()),
             construction_joints: Some(Vec::new()),
             base_pos: base.base_pos,
-            unsnapped_bottom_pos: Some(candidate.socket_pos),
+            unsnapped_bottom_pos: Some(s),
             snapped_node_key: base.node_key,
-            cone_axis: Some(candidate.cone_axis),
+            cone_axis: Some(cone.cone_axis),
             error: None,
-            grid_ignored: Some(ignored_grid),
-            ..standard
+            grid_ignored: Some(grid_dropped),
+            ..plain
         });
     }
 
-    // 2. One diagonal to a column that clears, then straight down. The fan is
-    //    ordered so the way off the surface the tip is attached to is tried
-    //    first; every direction is tried before giving up.
-    let configured_routed_angle_deg = js_max(
-        MIN_ALLOWED_ROUTED_ANGLE_DEG,
+    // 2. One diagonal to a column that clears, then straight down, from
+    //    each cone that clears in turn; the way off the surface first.
+    let routed_deg = js_max(
+        ROUTED_FLOOR_DEG,
         90.0 - settings.grid.min_routed_trunk_angle_deg,
     );
-    let outward = Vec3::new(cone_axis_hint.x, cone_axis_hint.y, 0.0);
-    let outward_xy = (outward.length_sq() > 1e-6).then_some(Xy {
+    let outward = Vec3::new(axis_hint.x, axis_hint.y, 0.0);
+    let outward = (outward.length_sq() > 1e-6).then_some(Xy {
         x: outward.x,
         y: outward.y,
     });
-
-    // The cone decides which socket the chain starts from: the cheap cone test
-    // first, and the expensive joint search once per socket that clears.
-    for &(socket_candidate, is_deviated) in &cones {
-        let start_socket = socket_candidate.socket_pos;
-        gates.stats.cones_tested += 1;
-        if gates.contact_cone_blocked_at(socket_candidate.cone_start_pos, start_socket) {
+    for &(start, swung) in &cones {
+        let from = start.socket_pos;
+        checks.stats.cones_tested += 1;
+        if checks.cone_blocked(start.cone_start_pos, from) || !checks.contact_on_top(&start) {
             continue;
         }
-        if !gates.cone_keeps_contact_on_top(&socket_candidate) {
-            continue;
-        }
-
-        // Grid mode searches the lattice: the drop has to land on a node, so the
-        // node is chosen first and the joint derived from it. Every other mode
-        // drops at the first column that clears.
-        let field: &dyn CollisionField = gates.sdf;
+        let field: &dyn CollisionField = checks.sdf;
         let found = {
-            let mut base_fits_at = |x: f64, y: f64| !gates.roots_blocked_at(x, y);
+            let mut root_fits = |x: f64, y: f64| !checks.root_blocked(x, y);
             let _p = crate::perf::scope("router:joint-search");
-            if grid_enabled {
+            if grid {
+                // The drop must land on a node: the node first, the joint
+                // over it.
                 find_grid_joint(
                     field,
-                    start_socket,
+                    from,
                     root_top_z,
                     GridJointSearchOptions {
-                        clearance_mm,
-                        spacing_mm,
+                        clearance_mm: clearance,
+                        spacing_mm: spacing,
                         max_lateral_mm: if pillars {
-                            js_min(max_lateral_mm, spacing_mm * PILLAR_REACH_STEPS)
+                            js_min(reach, spacing * PILLAR_REACH_STEPS)
                         } else {
-                            max_lateral_mm
+                            reach
                         },
                         lean_from_vertical_deg: TRUNK_DIAGONAL_LEAN_FROM_VERTICAL_DEG,
-                        min_vertical_leg_mm: MIN_VERTICAL_LEG_MM,
-                        max_node_count: if pillars {
-                            PILLAR_JOINT_NODE_BUDGET
-                        } else {
-                            GRID_JOINT_NODE_BUDGET
-                        },
-                        // Keep leaving the way the cone points.
-                        preferred_direction: outward_xy,
-                        base_fits_at: &mut base_fits_at,
+                        min_vertical_leg_mm: MIN_DROP_MM,
+                        max_node_count: if pillars { PILLAR_NODES } else { GRID_NODES },
+                        preferred_direction: outward,
+                        base_fits_at: &mut root_fits,
                         leans_deg: if pillars { &PILLAR_LEANS_DEG } else { &[] },
                     },
                 )
             } else {
                 find_escape_joint(
                     field,
-                    start_socket,
+                    from,
                     root_top_z,
                     EscapeJointSearchOptions {
-                        clearance_mm,
+                        clearance_mm: clearance,
                         step_mm: WALK_STEP_MM,
-                        max_lateral_mm,
+                        max_lateral_mm: reach,
                         lean_from_vertical_deg: TRUNK_DIAGONAL_LEAN_FROM_VERTICAL_DEG,
-                        min_vertical_leg_mm: MIN_VERTICAL_LEG_MM,
-                        directions: build_direction_fan(outward_xy, DIRECTION_COUNT),
-                        base_fits_at: &mut base_fits_at,
+                        min_vertical_leg_mm: MIN_DROP_MM,
+                        directions: build_direction_fan(outward, DIRECTION_COUNT),
+                        base_fits_at: &mut root_fits,
                     },
                 )
             }
         };
-        let stats = &mut *gates.stats;
+        let stats = &mut *checks.stats;
         stats.joint_searches += 1;
         stats.joint_probes += u64::from(found.probes);
         *stats
@@ -927,110 +678,77 @@ fn route(
             .entry(found.outcome.as_str().to_owned())
             .or_insert(0) += 1;
         let Some(joint) = found.joint else {
-            // The grid could not serve this contact: no node left room for the
-            // drop at a lean the shape rule allows. The contact is reachable,
-            // just not on a node, so the grid is dropped rather than refused.
-            if grid_enabled {
+            // No node gives the drop room at an allowed lean: the contact is
+            // routed again with the grid off.
+            if grid {
                 return None;
             }
             continue;
         };
-        // floor(log2(max(1, probes))) is the probe count's bit length less one.
-        let log2 = 31 - found.probes.max(1).leading_zeros();
-        let bucket = (log2.saturating_sub(6) as usize).min(stats.found_probe_buckets.len() - 1);
+        let bits = 31 - found.probes.max(1).leading_zeros();
+        let bucket = (bits.saturating_sub(6) as usize).min(stats.found_probe_buckets.len() - 1);
         stats.max_found_probes = stats.max_found_probes.max(u64::from(found.probes));
         stats.found_probe_buckets[bucket] += 1;
 
-        let joint_pos = joint.joint;
-        let joint_lean_deg = joint.lean_from_vertical_deg;
-        let joints = vec![joint_pos];
-        // The cone the chain leaves from: aimed at the joint when that lines the
-        // cone up with the shaft, otherwise the socket that cleared.
-        let cone = gates.resolve_cone_socket_and_axis(
-            start_socket,
-            &joints,
-            placement.tip_normal,
-            cone_axis_hint,
-        );
-        if gates.contact_cone_blocked_at(cone.cone_start_pos, cone.socket_pos) {
+        let at = joint.joint;
+        let joints = vec![at];
+        let cone = checks.cone_toward(from, &joints, p.tip_normal, axis_hint);
+        if checks.cone_blocked(cone.cone_start_pos, cone.socket_pos)
+            || checks.segment_blocked(cone.socket_pos, at)
+        {
             continue;
         }
-        if gates.segment_blocked_between(cone.socket_pos, joint_pos) {
-            continue;
-        }
-        // A deviated cone moved the socket, so its diagonal is judged against the
-        // ceiling the joint search itself used.
-        let ceiling_deg = if is_deviated {
+        // A swung cone moved the socket: its diagonal is held to the lean the
+        // search used at most.
+        let lean = if swung {
             TRUNK_DIAGONAL_LEAN_FROM_VERTICAL_DEG
         } else {
-            joint_lean_deg
+            joint.lean_from_vertical_deg
         };
-        if !segment_satisfies_max_angle_from_vertical(
-            cone.socket_pos,
-            joint_pos,
-            ceiling_deg + 0.05,
-        ) {
+        if !segment_satisfies_max_angle_from_vertical(cone.socket_pos, at, lean + 0.05) {
             continue;
         }
-
-        let Some(base) = gates.resolve_base(
-            Xy {
-                x: joint_pos.x,
-                y: joint_pos.y,
-            },
-            joint_pos,
+        let Some(base) = checks.base_for(
+            Xy { x: at.x, y: at.y },
+            at,
             root_top_z,
-            spacing_mm,
-            grid_enabled,
-            base_rings,
+            spacing,
+            grid,
+            rings,
         ) else {
             continue;
         };
-
-        // 3. The leg angles are checked against the real geometry. The diagonal
-        //    is the one segment exempt from the length-aware tightening, bounded
-        //    by the lean ceiling instead.
-        let vertical_leg_ok = !gates.segment_blocked_between(joint_pos, base.root_top_target)
+        // 3. The drop clears and leans no more than its length allows.
+        let drop_ok = !checks.segment_blocked(at, base.root_top)
             && segment_satisfies_length_aware_max_angle_from_vertical(
-                joint_pos,
-                base.root_top_target,
-                js_min(89.0, configured_routed_angle_deg + ROUTED_DETOUR_SLACK_DEG),
-                Some(configured_routed_angle_deg),
+                at,
+                base.root_top,
+                js_min(89.0, routed_deg + DROP_SLACK_DEG),
+                Some(routed_deg),
             );
-        if !vertical_leg_ok {
+        if !drop_ok {
             continue;
         }
-
-        // Same rule on the whole chain: the leg below the joint can be the span
-        // the grid made flat.
-        if grid_enabled
-            && !chain_holds_shape_rule(
-                &[cone.socket_pos, joint_pos, base.root_top_target],
-                clearance_mm,
-            )
-        {
+        if grid && !holds_trunk_shape(&[cone.socket_pos, at, base.root_top], clearance) {
             return None;
         }
-
         return Some(TrunkPlacementResult {
             socket_pos: cone.socket_pos,
             joints: Some(joints),
             construction_joints: Some(Vec::new()),
             base_pos: base.base_pos,
-            unsnapped_bottom_pos: Some(Vec3::new(joint_pos.x, joint_pos.y, 0.0)),
+            unsnapped_bottom_pos: Some(Vec3::new(at.x, at.y, 0.0)),
             snapped_node_key: base.node_key,
             cone_axis: Some(cone.cone_axis),
             error: None,
-            grid_ignored: Some(ignored_grid),
-            ..standard
+            grid_ignored: Some(grid_dropped),
+            ..plain
         });
     }
-
-    // Nothing here can attach this contact: the caller has the cavity fallback
-    // for exactly this case.
+    // Nothing attaches it here; the caller has the cavity bridge.
     Some(TrunkPlacementResult {
         error: Some(LimitationCode::CollisionWithModel),
-        ..standard
+        ..plain
     })
 }
 
@@ -1046,14 +764,12 @@ mod clearance_tests {
         for k in 0..=400 {
             let d = 1.0 + f64::from(k) * 0.001;
             let c = column_clearance_mm(d);
-            let own = d / 2.0 + COLLISION_AVOIDANCE_MM;
+            let own = d / 2.0 + STANDOFF_MM;
             assert!(c >= own - 1e-12, "{d}: {c} < {own}");
             assert!(c - own <= CLEARANCE_RADIUS_STEP_MM + 1e-12, "{d}: {c}");
             clearances.insert((c * 1e6).round() as i64);
         }
-        // 0.4 mm of diameters in 0.001 mm steps: 0.2 mm of radius, 8 steps.
         assert!(clearances.len() <= 9, "{}", clearances.len());
-        // A radius on the step stays there.
-        assert_eq!(column_clearance_mm(1.1), 0.55 + COLLISION_AVOIDANCE_MM);
+        assert_eq!(column_clearance_mm(1.1), 0.55 + STANDOFF_MM);
     }
 }

@@ -1,4 +1,4 @@
-//! DragonFruit `src/supports/autoSupport/settings.ts`.
+//! The auto-support settings, and the size bands a run draws from.
 
 use serde::{Deserialize, Serialize};
 
@@ -6,13 +6,7 @@ use super::constants::MIN_LEAF_FAN_RADIUS_MM;
 use super::zone_rules::ZoneRules;
 use crate::supports::numeric_constraint::{NumericConstraint, clamp_numeric};
 
-/// The seven numbers a run sizes every shaft, tip and root from — a Support
-/// Studio preset's tip, shaft and roots, read as one band.
-///
-/// They are not the auto-support block's own data: `autoSupport.sizingPreset`
-/// names the Support Studio preset the run borrows them from, and the engine
-/// resolves that id on every run. The coupling is deliberate — see the backlog
-/// entry — so editing a manual preset changes what auto-support prints.
+/// The seven numbers a support's tip, shaft and root are drawn from.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SizingBand {
@@ -25,9 +19,8 @@ pub struct SizingBand {
     pub root_cone_height_mm: f64,
 }
 
-/// The three factory Support Studio presets, whose bands `SIZING_BANDS` mirrors.
-/// `presetForArea` still names the tier a supported area falls in for the forest
-/// ledger, and the load budget weighs a support's cross-section against them.
+/// The three base sizes: what a region counts as by its area, and the band
+/// an id that names no size falls back to (`structure`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SizingPreset {
@@ -37,12 +30,6 @@ pub enum SizingPreset {
 }
 
 impl SizingPreset {
-    pub const ALL: [SizingPreset; 3] = [
-        SizingPreset::Detail,
-        SizingPreset::Structure,
-        SizingPreset::Anchor,
-    ];
-
     pub const fn as_str(self) -> &'static str {
         match self {
             SizingPreset::Detail => "detail",
@@ -51,86 +38,54 @@ impl SizingPreset {
         }
     }
 
-    /// The factory bands, mirroring what the three factory Support Studio presets
-    /// carry (detail / structure / anchor). Two consumers: the auto-support built-in
-    /// presets name these tiers, and the *fallback* `activeSizingBand()` uses when the
-    /// id in the settings names no preset at all (`structure` is the baseline).
+    /// The base size's band.
     pub const fn band(self) -> SizingBand {
-        match self {
-            SizingPreset::Detail => SizingBand {
-                shaft_diameter_mm: 0.8,
-                tip_contact_diameter_mm: 0.22,
-                tip_length_mm: 2.5,
-                tip_penetration_mm: 0.0,
-                root_diameter_mm: 2.0,
-                root_disk_height_mm: 0.5,
-                root_cone_height_mm: 1.0,
-            },
-            SizingPreset::Structure => SizingBand {
-                shaft_diameter_mm: 1.0,
-                tip_contact_diameter_mm: 0.28,
-                tip_length_mm: 2.5,
-                tip_penetration_mm: 0.0,
-                root_diameter_mm: 2.0,
-                root_disk_height_mm: 0.5,
-                root_cone_height_mm: 1.0,
-            },
-            SizingPreset::Anchor => SizingBand {
-                shaft_diameter_mm: 1.4,
-                tip_contact_diameter_mm: 0.4,
-                tip_length_mm: 2.5,
-                tip_penetration_mm: 0.0,
-                root_diameter_mm: 2.3,
-                root_disk_height_mm: 0.5,
-                root_cone_height_mm: 1.0,
-            },
+        let (shaft, tip, root) = match self {
+            SizingPreset::Detail => (0.8, 0.22, 2.0),
+            SizingPreset::Structure => (1.0, 0.28, 2.0),
+            SizingPreset::Anchor => (1.4, 0.4, 2.3),
+        };
+        SizingBand {
+            shaft_diameter_mm: shaft,
+            tip_contact_diameter_mm: tip,
+            tip_length_mm: 2.5,
+            tip_penetration_mm: 0.0,
+            root_diameter_mm: root,
+            root_disk_height_mm: 0.5,
+            root_cone_height_mm: 1.0,
         }
     }
 }
 
-/// The auto-support settings block. Field documentation is DragonFruit's;
-/// see `autoSupport/settings.ts` for the calibration notes on each knob.
+/// How auto-support places.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AutoSupportSettings {
-    pub enabled: bool,
-    pub tip_influence_radius_mm: f64,
-    pub prioritize_intersection: bool,
-    /// Max combined leaves + branches that can attach to a single trunk.
+    /// The most leaves and branches one trunk carries.
     pub max_attachments_per_trunk: f64,
-    /// Projected surface area each grid support carries (mm²) — the density knob.
-    /// Grid spacing = √areaPerSupportMm2.
+    /// The area each support holds, mm² (the load budget reads it).
     pub area_per_support_mm2: f64,
-    /// Surface angle from horizontal (deg) at and below which a face counts
-    /// as an overhang needing supports. 0° = flat ceiling; the resin standard
-    /// is 45°. Steeper faces are considered self-supporting.
+    /// Faces flatter than this from horizontal (degrees) are overhangs.
     pub overhang_self_support_angle_deg: f64,
-    /// Master multiplier over the preset sizing bands (shaft/tip/root).
-    pub size_scale: f64,
-    /// The Support Studio preset whose tip, shaft and roots numbers size this run.
-    /// An open id — the three factory presets plus any preset the user made — and a
-    /// value that no longer resolves (a deleted preset) falls back to the factory
-    /// structure band rather than failing the run.
+    /// The id of the band supports are drawn from (a zone size's, or a base
+    /// size); one that names nothing falls back to `structure`.
     pub sizing_preset: String,
-    /// Leaf fanning: max horizontal reach from a trunk shaft (mm).
+    /// How far from a shaft a leaf may hang, mm.
     pub leaf_fan_radius_mm: f64,
-    /// Leaf fanning: max angle from vertical for a fan leaf (deg).
+    /// The most a hung leaf leans from vertical, degrees.
     pub leaf_fan_max_angle_deg: f64,
+    /// No braces.
     pub debug_skip_auto_bracing: bool,
-    /// Least shaft diameter a hosted member takes, as a fraction of the host
-    /// shaft it sprouts from. **Calibration, not a preference** (0.7 measured).
-    /// Read by `memberShaftDiameterMm`.
+    /// The least shaft a member takes, as a share of its host's (measured).
     pub member_host_shaft_ratio: f64,
-    /// Master switch for the run-level model-scale sizing (size × load ×
-    /// height factors). Off pins every one of them to ×1.
+    /// Whether the model-wide size terms apply (the zone rules turn them off).
     pub model_scale_enabled: bool,
-    /// Ceiling of the run-level size factor. **Calibration, not a preference.**
+    /// The size term's cap.
     pub model_size_factor_cap: f64,
-    /// Ceiling of the run-level load factor. **Calibration, not a preference.**
+    /// The load term's cap.
     pub model_load_factor_cap: f64,
-    /// The zone rules (#360): the run picks every support's size and
-    /// spacing by zone and draws each size exactly (no model scaling, no
-    /// tip floor). Miniatures' unless a preset says otherwise.
+    /// The zone rules (#360): every support's size and spacing by the zone
+    /// it lands in, each size drawn as written. Miniatures' by default.
     pub zone_rules: ZoneRules,
 }
 
@@ -140,54 +95,35 @@ impl Default for AutoSupportSettings {
     }
 }
 
+/// The bounds of the numbers above.
 pub mod auto_support_constraints {
     use super::MIN_LEAF_FAN_RADIUS_MM;
     use crate::supports::numeric_constraint::NumericConstraint;
 
-    pub const MIN_ISLAND_AREA_MM2: NumericConstraint =
-        NumericConstraint::new(0.01, 10.0, 0.01, 0.02);
-    pub const TIP_INFLUENCE_RADIUS_MM: NumericConstraint =
-        NumericConstraint::new(0.1, 10.0, 0.1, 0.5);
     pub const MAX_ATTACHMENTS_PER_TRUNK: NumericConstraint =
         NumericConstraint::integer(2.0, 50.0, 1.0, 12.0);
     pub const AREA_PER_SUPPORT_MM2: NumericConstraint =
         NumericConstraint::new(1.0, 30.0, 0.5, 10.0);
-    pub const GRID_AREA_THRESHOLD_MM2: NumericConstraint =
-        NumericConstraint::new(5.0, 200.0, 5.0, 25.0);
     pub const OVERHANG_SELF_SUPPORT_ANGLE_DEG: NumericConstraint =
         NumericConstraint::new(20.0, 75.0, 5.0, 45.0);
-    pub const SIZE_SCALE: NumericConstraint = NumericConstraint::new(0.5, 2.0, 0.05, 1.0);
-    pub const FLAT_DENSITY_BOOST: NumericConstraint = NumericConstraint::new(0.5, 1.0, 0.05, 0.7);
-    pub const SLOPE_RELAX_FACTOR: NumericConstraint = NumericConstraint::new(1.0, 2.0, 0.1, 1.3);
-    pub const SUCTION_AREA_EXPONENT: NumericConstraint =
-        NumericConstraint::new(0.0, 0.4, 0.05, 0.15);
-    pub const COVERAGE_TARGET_PERCENT: NumericConstraint =
-        NumericConstraint::integer(75.0, 100.0, 5.0, 95.0);
     pub const LEAF_FAN_RADIUS_MM: NumericConstraint =
         NumericConstraint::new(MIN_LEAF_FAN_RADIUS_MM, 15.0, 0.5, MIN_LEAF_FAN_RADIUS_MM);
     pub const LEAF_FAN_MAX_ANGLE_DEG: NumericConstraint =
         NumericConstraint::integer(20.0, 80.0, 5.0, 45.0);
-    pub const TIP_CONTACT_MARGIN_SCALE: NumericConstraint =
-        NumericConstraint::new(0.4, 1.0, 0.05, 0.9);
     pub const MEMBER_HOST_SHAFT_RATIO: NumericConstraint =
         NumericConstraint::new(0.5, 1.0, 0.05, 0.7);
     pub const MODEL_SIZE_FACTOR_CAP: NumericConstraint =
         NumericConstraint::new(1.0, 2.0, 0.05, 1.45);
     pub const MODEL_LOAD_FACTOR_CAP: NumericConstraint =
         NumericConstraint::new(1.0, 2.0, 0.05, 1.3);
-    pub const HEIGHT_FACTOR_CAP: NumericConstraint = NumericConstraint::new(1.0, 2.0, 0.05, 1.35);
 }
 
 pub fn create_default_auto_support_settings() -> AutoSupportSettings {
     use auto_support_constraints as c;
     AutoSupportSettings {
-        enabled: true,
-        tip_influence_radius_mm: c::TIP_INFLUENCE_RADIUS_MM.default_value,
-        prioritize_intersection: false,
         max_attachments_per_trunk: c::MAX_ATTACHMENTS_PER_TRUNK.default_value,
         area_per_support_mm2: c::AREA_PER_SUPPORT_MM2.default_value,
         overhang_self_support_angle_deg: c::OVERHANG_SELF_SUPPORT_ANGLE_DEG.default_value,
-        size_scale: c::SIZE_SCALE.default_value,
         sizing_preset: SizingPreset::Structure.as_str().to_owned(),
         leaf_fan_radius_mm: c::LEAF_FAN_RADIUS_MM.default_value,
         leaf_fan_max_angle_deg: c::LEAF_FAN_MAX_ANGLE_DEG.default_value,
@@ -200,30 +136,12 @@ pub fn create_default_auto_support_settings() -> AutoSupportSettings {
     }
 }
 
-/// The tier a block names: any non-empty string is an id to resolve at run time
-/// (a user's own preset is as valid as a factory one, and a deleted one is a
-/// fallback rather than an error), so the only repair here is the default.
-fn normalize_sizing_preset(value: &str, fallback: &str) -> String {
-    if value.trim().is_empty() {
-        fallback.to_owned()
-    } else {
-        value.to_owned()
-    }
-}
-
-/// `normalizeAutoSupportSettings`. Every field of a Rust value is present and
-/// typed, so the type coercions of the TypeScript reduce to the numeric clamps
-/// and the preset id repair. The legacy `sizingBand` migration
-/// (`migrateLegacySizingPreset`) belongs to reading a stored payload and is
-/// done by `migrate_legacy_sizing_preset` on the JSON.
+/// The settings with every number in its bounds, and an empty band id made
+/// the default.
 pub fn normalize_auto_support_settings(source: &AutoSupportSettings) -> AutoSupportSettings {
     use auto_support_constraints as c;
-    let defaults = create_default_auto_support_settings();
-    let clamp = |value: f64, constraint: NumericConstraint| clamp_numeric(Some(value), constraint);
+    let clamp = |value: f64, bounds: NumericConstraint| clamp_numeric(Some(value), bounds);
     AutoSupportSettings {
-        enabled: source.enabled,
-        tip_influence_radius_mm: clamp(source.tip_influence_radius_mm, c::TIP_INFLUENCE_RADIUS_MM),
-        prioritize_intersection: source.prioritize_intersection,
         max_attachments_per_trunk: clamp(
             source.max_attachments_per_trunk,
             c::MAX_ATTACHMENTS_PER_TRUNK,
@@ -233,8 +151,11 @@ pub fn normalize_auto_support_settings(source: &AutoSupportSettings) -> AutoSupp
             source.overhang_self_support_angle_deg,
             c::OVERHANG_SELF_SUPPORT_ANGLE_DEG,
         ),
-        size_scale: clamp(source.size_scale, c::SIZE_SCALE),
-        sizing_preset: normalize_sizing_preset(&source.sizing_preset, &defaults.sizing_preset),
+        sizing_preset: if source.sizing_preset.trim().is_empty() {
+            SizingPreset::Structure.as_str().to_owned()
+        } else {
+            source.sizing_preset.clone()
+        },
         leaf_fan_radius_mm: clamp(source.leaf_fan_radius_mm, c::LEAF_FAN_RADIUS_MM),
         leaf_fan_max_angle_deg: clamp(source.leaf_fan_max_angle_deg, c::LEAF_FAN_MAX_ANGLE_DEG),
         member_host_shaft_ratio: clamp(source.member_host_shaft_ratio, c::MEMBER_HOST_SHAFT_RATIO),
@@ -243,37 +164,5 @@ pub fn normalize_auto_support_settings(source: &AutoSupportSettings) -> AutoSupp
         model_load_factor_cap: clamp(source.model_load_factor_cap, c::MODEL_LOAD_FACTOR_CAP),
         debug_skip_auto_bracing: source.debug_skip_auto_bracing,
         zone_rules: source.zone_rules.clamped(),
-    }
-}
-
-/// The factory preset a band's seven numbers are, or `structure` when they match none.
-fn sizing_preset_for_band(value: &serde_json::Value) -> SizingPreset {
-    let Some(band) = value.as_object() else {
-        return SizingPreset::Structure;
-    };
-    let matches = |preset: SizingPreset| {
-        let expected = serde_json::to_value(preset.band()).expect("band serializes");
-        let expected = expected.as_object().expect("band is an object");
-        expected
-            .iter()
-            .all(|(field, number)| band.get(field).and_then(|v| v.as_f64()) == number.as_f64())
-    };
-    SizingPreset::ALL
-        .into_iter()
-        .find(|&p| matches(p))
-        .unwrap_or(SizingPreset::Structure)
-}
-
-/// Rewrite a stored auto-support block off the removed `sizingBand` object: the
-/// obsolete key is dropped and the factory preset whose band it matched is written
-/// in its place (`structure` for a band the factory never shipped). Unknown keys
-/// pass through untouched, because a preset payload carries keys this build cannot
-/// name and must keep them.
-pub fn migrate_legacy_sizing_preset(payload: &mut serde_json::Map<String, serde_json::Value>) {
-    if let Some(sizing_band) = payload.shift_remove("sizingBand") {
-        payload.insert(
-            "sizingPreset".to_owned(),
-            serde_json::Value::from(sizing_preset_for_band(&sizing_band).as_str()),
-        );
     }
 }

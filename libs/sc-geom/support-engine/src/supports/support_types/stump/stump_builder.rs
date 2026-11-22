@@ -1,32 +1,30 @@
-//! DragonFruit `src/supports/SupportTypes/Stump/stumpBuilder.ts`.
-//!
-//! Settings are passed in (`getSettings()`), ids come from `new_id`
-//! (`uuidv4()`), and the mesh is the model's collision field. DragonFruit
-//! also reads the raft settings here, into values the build never uses (the
-//! stump's vertical offset is fixed at 0), so they are not asked.
+//! A stump: a short frustum standing on the plate, with a joint on top and a
+//! cone stretched from that joint up to a contact close above the plate.
 
 use serde::Serialize;
 
+use crate::geom::Quaternion;
+use crate::geom::math_utils::{js_max, js_min};
 use crate::supports::placement_logic::collision_avoidance::CollisionField;
 use crate::supports::placement_logic::cone_axis_policy::{
     ConeAxisPolicyInput, resolve_cone_axis_policy,
 };
 use crate::supports::rendering::support_builder::SupportData;
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::tips::{
-    ContactCone, SupportTipProfile, TipPrimitive,
-};
-use crate::supports::tips::recompute_contact_cone_for_moved_disk;
 use crate::supports::support_kinds::inline_root_id;
+use crate::supports::tips::{
+    ContactCone, SupportTipProfile, TipPrimitive, recompute_contact_cone_for_moved_disk,
+};
 use crate::supports::types::{Joint, Roots, Stump, SupportEntity, Transform, Vec3};
-use crate::geom::Quaternion;
-use crate::geom::math_utils::{js_max, js_min};
 
-const STUMP_ROOT_BASE_DIAMETER_MM: f64 = 2.0;
-const STUMP_ROOT_TOP_DIAMETER_MM: f64 = 1.5;
-const STUMP_ROOT_HEIGHT_MM: f64 = 1.0;
-const STUMP_JOINT_DIAMETER_MM: f64 = 1.5;
-const ANCHOR_DISK_HEIGHT_MM: f64 = 0.1;
+const ROOT_BASE_DIAMETER_MM: f64 = 2.0;
+const ROOT_TOP_DIAMETER_MM: f64 = 1.5;
+const ROOT_HEIGHT_MM: f64 = 1.0;
+const JOINT_DIAMETER_MM: f64 = 1.5;
+/// Thickness of the disk the root stands on.
+const ROOT_DISK_HEIGHT_MM: f64 = 0.1;
+/// Height of the joint on top of the root: the disk plus the frustum.
+const JOINT_Z_MM: f64 = ROOT_DISK_HEIGHT_MM + ROOT_HEIGHT_MM;
 
 #[derive(Clone, Copy, Debug)]
 pub struct StumpBuildInput<'a> {
@@ -43,6 +41,26 @@ pub struct StumpBuildResult {
     pub support_data: SupportData,
 }
 
+/// How long the cone must be, along `axis` from the contact, to come down to
+/// the joint's height: never shorter than the stock length, and never so
+/// long on a falling axis that its end drops below the joint.
+fn cone_length_to_joint(tip_pos: Vec3, axis: Vec3, stock_length: f64) -> f64 {
+    let fall_per_mm = axis.z;
+    let reach = if fall_per_mm.abs() > 1e-6 {
+        (JOINT_Z_MM - tip_pos.z) / fall_per_mm
+    } else {
+        stock_length
+    };
+    let length = js_max(reach, stock_length);
+    if fall_per_mm < -1e-6 {
+        let longest = (tip_pos.z - JOINT_Z_MM) / -fall_per_mm;
+        if longest > 0.0 {
+            return js_min(length, longest);
+        }
+    }
+    length
+}
+
 pub fn build_stump_data(
     input: &StumpBuildInput<'_>,
     settings: &SupportSettings,
@@ -54,146 +72,112 @@ pub fn build_stump_data(
         model_id,
         mesh,
     } = *input;
+    let tip = &settings.tip;
 
-    let cone_angle_mode = settings.tip.cone_angle_mode.unwrap_or_default();
-    let adaptive_cone_angle_offset_deg =
-        settings.tip.adaptive_cone_angle_offset_deg.unwrap_or(30.0);
-
-    let effective_cone_axis = resolve_cone_axis_policy(ConeAxisPolicyInput {
+    let axis = resolve_cone_axis_policy(ConeAxisPolicyInput {
         surface_normal: tip_normal,
-        cone_angle_mode,
-        adaptive_cone_angle_offset_deg: Some(adaptive_cone_angle_offset_deg),
+        cone_angle_mode: tip.cone_angle_mode.unwrap_or_default(),
+        adaptive_cone_angle_offset_deg: Some(tip.adaptive_cone_angle_offset_deg.unwrap_or(30.0)),
     })
     .cone_axis;
-    let tip_profile = SupportTipProfile {
+    let length = cone_length_to_joint(tip_pos, axis, tip.length_mm);
+
+    // The cone's body is as wide as the joint it ends on.
+    let profile = SupportTipProfile {
         kind: Some(TipPrimitive::Disk),
-        contact_diameter_mm: settings.tip.contact_diameter_mm,
-        body_diameter_mm: settings.tip.body_diameter_mm,
-        length_mm: settings.tip.length_mm,
-        penetration_mm: settings.tip.penetration_mm,
+        contact_diameter_mm: tip.contact_diameter_mm,
+        body_diameter_mm: JOINT_DIAMETER_MM - 0.1,
+        length_mm: length,
+        penetration_mm: tip.penetration_mm,
         disk_thickness_mm: Some(0.1),
         max_standoff_mm: Some(1.5),
-        standoff_angle_threshold: Some(std::f64::consts::PI / 4.0),
-        break_point_mm: settings.tip.breakpoint_mm.filter(|b| *b > 0.0),
+        standoff_angle_threshold: Some(std::f64::consts::FRAC_PI_4),
+        break_point_mm: tip.breakpoint_mm.filter(|b| *b > 0.0),
     };
-
-    // Sphere center Z = verticalOffset + effectiveDiskHeight + coneHeight
-    // (sphere center is at top of cone, not offset by radius); the offset is 0.
-    let vertical_offset = 0.0;
-    let target_socket_z = vertical_offset + ANCHOR_DISK_HEIGHT_MM + STUMP_ROOT_HEIGHT_MM;
-    let dz_per_unit = effective_cone_axis.z;
-    let cone_length = if dz_per_unit.abs() > 1e-6 {
-        (target_socket_z - tip_pos.z) / dz_per_unit
-    } else {
-        tip_profile.length_mm // fallback if cone axis is nearly horizontal
-    };
-
-    // Use the stretched length (but never shorter than the default) — and never
-    // so long that the socket overshoots BELOW the root joint.
-    let mut effective_cone_length = js_max(cone_length, tip_profile.length_mm);
-    if dz_per_unit < -1e-6 {
-        let max_cone_length = (tip_pos.z - target_socket_z) / -dz_per_unit;
-        if max_cone_length > 0.0 {
-            effective_cone_length = js_min(effective_cone_length, max_cone_length);
-        }
-    }
-
-    let guessed_socket_pos = Vec3::new(
-        tip_pos.x + effective_cone_axis.x * effective_cone_length,
-        tip_pos.y + effective_cone_axis.y * effective_cone_length,
-        tip_pos.z + effective_cone_axis.z * effective_cone_length,
+    let aim = Vec3::new(
+        tip_pos.x + axis.x * length,
+        tip_pos.y + axis.y * length,
+        tip_pos.z + axis.z * length,
     );
-    // Stretched length + body diameter matching the joint.
-    let stump_tip_profile = SupportTipProfile {
-        length_mm: effective_cone_length,
-        body_diameter_mm: STUMP_JOINT_DIAMETER_MM - 0.1,
-        ..tip_profile
-    };
-    let authored_cone = recompute_contact_cone_for_moved_disk(
+    let cone = recompute_contact_cone_for_moved_disk(
         &ContactCone {
-            id: "preview-stump-cone".to_owned(),
+            id: "stump-draft".to_owned(),
             pos: tip_pos,
-            normal: effective_cone_axis,
+            normal: axis,
             surface_normal: Some(tip_normal),
             disk_length_override: None,
             placement_surface: None,
-            profile: stump_tip_profile,
+            profile,
             socket_joint_id: None,
         },
         tip_pos,
         tip_normal,
-        Some(guessed_socket_pos),
+        Some(aim),
         mesh,
     );
-    let surface = authored_cone.surface_normal.unwrap_or(tip_normal);
-    let disk = authored_cone.disk_length_override.unwrap_or(0.0);
-    let length = authored_cone.profile.length_mm;
+
+    // The socket at the cone's end: up the surface normal by the disk, then
+    // along the axis by the cone.
+    let surface = cone.surface_normal.unwrap_or(tip_normal);
+    let disk = cone.disk_length_override.unwrap_or(0.0);
+    let cone_length = cone.profile.length_mm;
     let socket_pos = Vec3::new(
-        authored_cone.pos.x + surface.x * disk + authored_cone.normal.x * length,
-        authored_cone.pos.y + surface.y * disk + authored_cone.normal.y * length,
-        authored_cone.pos.z + surface.z * disk + authored_cone.normal.z * length,
+        cone.pos.x + surface.x * disk + cone.normal.x * cone_length,
+        cone.pos.y + surface.y * disk + cone.normal.y * cone_length,
+        cone.pos.z + surface.z * disk + cone.normal.z * cone_length,
     );
 
-    // Root and joint are positioned at the socket XY, vertical stack
+    // The root stands plumb under the socket, with its joint on top.
     let root_pos = Vec3::new(socket_pos.x, socket_pos.y, 0.0);
-    let joint_pos = Vec3::new(socket_pos.x, socket_pos.y, target_socket_z);
     let joint = Joint {
         id: new_id(),
-        pos: joint_pos,
-        diameter: STUMP_JOINT_DIAMETER_MM,
+        pos: Vec3::new(socket_pos.x, socket_pos.y, JOINT_Z_MM),
+        diameter: JOINT_DIAMETER_MM,
     };
-    let socket_joint = Joint {
-        id: new_id(),
-        pos: socket_pos,
-        diameter: STUMP_JOINT_DIAMETER_MM,
-    };
-
+    let socket_joint_id = new_id();
     let contact_cone = ContactCone {
         id: new_id(),
-        socket_joint_id: Some(socket_joint.id.clone()),
-        ..authored_cone
+        socket_joint_id: Some(socket_joint_id),
+        ..cone
     };
 
-    let stump_id = new_id();
-    let stump = Stump {
-        base: SupportEntity {
-            id: stump_id.clone(),
-            model_id: model_id.to_owned(),
-            ..SupportEntity::default()
+    let id = new_id();
+    let entity = |id: String| SupportEntity {
+        id,
+        model_id: model_id.to_owned(),
+        ..SupportEntity::default()
+    };
+    // The preview draws the root through a stand-in roots entity, the same
+    // shape a placed stump draws.
+    let preview_root = Roots {
+        base: entity(inline_root_id(&id)),
+        transform: Transform {
+            pos: root_pos,
+            rot: Quaternion::IDENTITY,
+            scale: None,
         },
+        diameter: ROOT_BASE_DIAMETER_MM,
+        disk_height: ROOT_DISK_HEIGHT_MM,
+        cone_height: ROOT_HEIGHT_MM,
+        height: None,
+        join_cone_mm: None,
+    };
+    let support_data = SupportData {
+        id: id.clone(),
+        roots: Some(preview_root),
+        segments: Vec::new(),
+        contact_cone: Some(contact_cone.clone()),
+        ..SupportData::default()
+    };
+    let stump = Stump {
+        base: entity(id),
         root_pos,
-        root_base_diameter: STUMP_ROOT_BASE_DIAMETER_MM,
-        root_top_diameter: STUMP_ROOT_TOP_DIAMETER_MM,
-        root_height: STUMP_ROOT_HEIGHT_MM,
+        root_base_diameter: ROOT_BASE_DIAMETER_MM,
+        root_top_diameter: ROOT_TOP_DIAMETER_MM,
+        root_height: ROOT_HEIGHT_MM,
         joint,
         segments: Vec::new(),
-        contact_cone: contact_cone.clone(),
-    };
-
-    let support_data = SupportData {
-        id: stump_id.clone(),
-        // Synthetic Roots entity so the generic preview renders the root cone
-        // exactly like the stump renderer does for placed stumps.
-        roots: Some(Roots {
-            base: SupportEntity {
-                id: inline_root_id(&stump_id),
-                model_id: model_id.to_owned(),
-                ..SupportEntity::default()
-            },
-            transform: Transform {
-                pos: root_pos,
-                rot: Quaternion::IDENTITY,
-                scale: None,
-            },
-            diameter: STUMP_ROOT_BASE_DIAMETER_MM,
-            disk_height: ANCHOR_DISK_HEIGHT_MM,
-            cone_height: STUMP_ROOT_HEIGHT_MM,
-            height: None,
-            join_cone_mm: None,
-        }),
-        segments: Vec::new(),
-        contact_cone: Some(contact_cone),
-        ..SupportData::default()
+        contact_cone,
     };
 
     StumpBuildResult {

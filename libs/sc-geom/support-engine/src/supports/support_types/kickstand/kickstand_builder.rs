@@ -1,15 +1,15 @@
-//! DragonFruit `src/supports/SupportTypes/Kickstand/kickstandBuilder.ts`.
-//!
-//! Settings are passed in (`getSettings()`), ids come from `new_id`
-//! (`uuidv4()`), and the collision mesh is the model's distance field
-//! (`isShaftBlocked`).
+//! A kickstand: a column from its own plate root up to a knot on the side
+//! of another support. It rises plumb through two joints, then leans in
+//! through a third to meet its host.
 
 use super::kickstand_rules::{assert_kickstand_host_kind, clamp_kickstand_host_t};
 use super::kickstand_settings::{
     KickstandLayoutOverrides, get_kickstand_knot_diameter_mm, get_kickstand_root_profile,
     resolve_kickstand_layout,
 };
-use super::types::{KickstandBuildResult, KickstandHostTarget, KickstandPlacementLayout};
+use super::types::{KickstandBuildResult, KickstandHostTarget};
+use crate::geom::Quaternion;
+use crate::geom::math_utils::{clamp, js_acos, js_max, rad_to_deg};
 use crate::supports::constants::get_joint_diameter;
 use crate::supports::placement_logic::collision_avoidance::{CollisionField, is_shaft_blocked};
 use crate::supports::settings::types::SupportSettings;
@@ -17,8 +17,13 @@ use crate::supports::types::{
     Joint, Kickstand, KickstandProfile, Knot, LimitationCode, Roots, Segment, SupportEntity,
     Transform, Vec3,
 };
-use crate::geom::Quaternion;
-use crate::geom::math_utils::{clamp, js_acos, js_max, rad_to_deg};
+
+/// How far the third joint goes from the column toward the host, as a share
+/// of the way across.
+const LEAN_IN_SHARE: f64 = 0.65;
+/// The steepest a run may lean off plumb when the shaft setting gives no
+/// limit, in degrees.
+const DEFAULT_MAX_SHAFT_ANGLE_DEG: f64 = 80.0;
 
 #[derive(Clone, Copy, Debug)]
 pub struct KickstandBuildInput<'a> {
@@ -26,117 +31,61 @@ pub struct KickstandBuildInput<'a> {
     pub root_pos: Vec3,
     pub host: &'a KickstandHostTarget,
     pub layout_overrides: Option<KickstandLayoutOverrides>,
-    /// A column known end to end (its top); without one the derived
-    /// four-segment shape applies.
+    /// The top of a column already known end to end. Without one the column
+    /// takes the three-joint shape.
     pub authored_column_top: Option<Vec3>,
-    /// The model the column must not run through. Without one it is not checked.
+    /// The model the column must stay out of; unchecked without one.
     pub collision_mesh: Option<&'a dyn CollisionField>,
-    /// How far a run may lean from vertical, from the shaft setting.
+    /// The steepest a run may lean off plumb, from the shaft setting.
     pub max_shaft_angle_deg: Option<f64>,
 }
 
-fn create_joint(pos: Vec3, diameter: f64, new_id: &mut dyn FnMut() -> String) -> Joint {
-    Joint {
-        id: new_id(),
-        pos,
-        diameter,
-    }
-}
-
-struct JointHeights {
-    first_joint_z: f64,
-    second_joint_z: f64,
-    third_joint_z: f64,
-}
-
-fn create_root_and_joint_heights(input: &KickstandBuildInput<'_>, root_top_z: f64) -> JointHeights {
-    let layout: KickstandPlacementLayout =
-        resolve_kickstand_layout(input.layout_overrides.as_ref());
-
+/// Heights of the three column joints over a root whose top is at
+/// `root_top_z`.
+fn joint_heights(input: &KickstandBuildInput<'_>, root_top_z: f64) -> [f64; 3] {
+    let layout = resolve_kickstand_layout(input.layout_overrides.as_ref());
+    let spacing = layout.min_joint_spacing_mm;
+    let clearance = layout.min_terminal_clearance_mm;
     let host_z = input.host.pos.z;
-    let raw_rise = host_z - root_top_z;
 
-    // Kickstands are grounded columns first. If the host is very low, keep a
-    // tiny positive vertical chain and let the terminal segment angle as needed.
-    let effective_rise = js_max(
-        raw_rise,
-        layout.min_joint_spacing_mm * 2.0 + layout.min_terminal_clearance_mm + 0.01,
+    // A kickstand stands on its column first: under a very low host the
+    // column still rises a little, and the last run leans as it must.
+    let rise = js_max(host_z - root_top_z, spacing * 2.0 + clearance + 0.01);
+    let mut first = root_top_z + rise * layout.first_joint_height_ratio;
+    let mut second = root_top_z + rise * layout.second_joint_height_ratio;
+
+    let lowest_first = root_top_z + 0.01;
+    let highest_second = js_max(lowest_first + spacing, host_z - clearance);
+    if second > highest_second {
+        second = highest_second;
+    }
+    let highest_first = second - spacing;
+    if first > highest_first {
+        first = highest_first;
+    }
+    if first < lowest_first {
+        first = lowest_first;
+    }
+    if second - first < spacing {
+        second = first + spacing;
+    }
+
+    let highest_third = js_max(second + spacing, host_z - clearance);
+    let third = clamp(
+        second + js_max(spacing, (host_z - second) * 0.6),
+        second + spacing,
+        highest_third,
     );
-
-    let mut first_joint_z = root_top_z + effective_rise * layout.first_joint_height_ratio;
-    let mut second_joint_z = root_top_z + effective_rise * layout.second_joint_height_ratio;
-
-    let min_first = root_top_z + 0.01;
-    let max_second = js_max(
-        min_first + layout.min_joint_spacing_mm,
-        host_z - layout.min_terminal_clearance_mm,
-    );
-
-    if second_joint_z > max_second {
-        second_joint_z = max_second;
-    }
-
-    let max_first = second_joint_z - layout.min_joint_spacing_mm;
-    if first_joint_z > max_first {
-        first_joint_z = max_first;
-    }
-    if first_joint_z < min_first {
-        first_joint_z = min_first;
-    }
-
-    if second_joint_z - first_joint_z < layout.min_joint_spacing_mm {
-        second_joint_z = first_joint_z + layout.min_joint_spacing_mm;
-    }
-
-    let max_third = js_max(
-        second_joint_z + layout.min_joint_spacing_mm,
-        host_z - layout.min_terminal_clearance_mm,
-    );
-    let third_joint_z = clamp(
-        second_joint_z + js_max(layout.min_joint_spacing_mm, (host_z - second_joint_z) * 0.6),
-        second_joint_z + layout.min_joint_spacing_mm,
-        max_third,
-    );
-
-    JointHeights {
-        first_joint_z,
-        second_joint_z,
-        third_joint_z,
-    }
+    [first, second, third]
 }
 
-/// At least this far from horizontal, matching the shaft constraint's 80deg default.
-const DEFAULT_MAX_SHAFT_ANGLE_DEG: f64 = 80.0;
-
-/// A descending run means the chain overshot its host and doubled back.
-fn column_shape_error(
-    segments: &[Segment],
-    host_pos: Vec3,
-    max_shaft_angle_deg: Option<f64>,
-) -> Option<LimitationCode> {
-    let limit_deg = max_shaft_angle_deg.unwrap_or(DEFAULT_MAX_SHAFT_ANGLE_DEG);
-    let points = column_points(segments, Some(host_pos));
-
-    for pair in points.windows(2) {
-        let run = Vec3::sub_vectors(pair[1], pair[0]);
-        let span = run.length();
-        if span < 1e-6 {
-            continue;
-        }
-        let angle_from_up_deg = rad_to_deg(js_acos(clamp(run.z / span, -1.0, 1.0)));
-        if angle_from_up_deg > limit_deg {
-            return Some(LimitationCode::AngleTooSteep);
-        }
-    }
-    None
-}
-
-/// The column's joints bottom to top, ending at the host it reaches.
-fn column_points(segments: &[Segment], host_pos: Option<Vec3>) -> Vec<Vec3> {
+/// The column's joints bottom to top: the bottom of the first segment that
+/// has one, then every segment's top, then `host` when given.
+fn column_points(segments: &[Segment], host: Option<Vec3>) -> Vec<Vec3> {
     let mut points = Vec::new();
     for segment in segments {
-        if let Some(bottom) = &segment.bottom_joint
-            && points.is_empty()
+        if points.is_empty()
+            && let Some(bottom) = &segment.bottom_joint
         {
             points.push(bottom.pos);
         }
@@ -144,46 +93,62 @@ fn column_points(segments: &[Segment], host_pos: Option<Vec3>) -> Vec<Vec3> {
             points.push(top.pos);
         }
     }
-    if let Some(host) = host_pos {
-        points.push(host);
-    }
+    points.extend(host);
     points
 }
 
-/// Does the column run through the model? The top run insets off its host.
-fn column_collision(
+/// `AngleTooSteep` when a run of the column, the last one up to the host
+/// included, leans past the limit: the chain overshot its host and doubled
+/// back.
+fn lean_error(
+    segments: &[Segment],
+    host_pos: Vec3,
+    max_shaft_angle_deg: Option<f64>,
+) -> Option<LimitationCode> {
+    let limit_deg = max_shaft_angle_deg.unwrap_or(DEFAULT_MAX_SHAFT_ANGLE_DEG);
+    column_points(segments, Some(host_pos))
+        .windows(2)
+        .any(|run| {
+            let rise = Vec3::sub_vectors(run[1], run[0]);
+            let length = rise.length();
+            length >= 1e-6 && rad_to_deg(js_acos(clamp(rise.z / length, -1.0, 1.0))) > limit_deg
+        })
+        .then_some(LimitationCode::AngleTooSteep)
+}
+
+/// `CollisionWithModel` when the column runs into the model. The top run
+/// stops a radius short of its end, where it meets the host.
+fn collision_error(
     segments: &[Segment],
     body_diameter_mm: f64,
     mesh: Option<&dyn CollisionField>,
 ) -> Option<LimitationCode> {
     let mesh = mesh?;
-
     let radius = js_max(0.001, body_diameter_mm / 2.0);
     let points = column_points(segments, None);
-
-    for i in 0..points.len().saturating_sub(1) {
-        let start = points[i];
-        let end = points[i + 1];
-        let probe_end = if i == points.len() - 2 {
-            inset_towards(end, start, radius)
-        } else {
-            end
-        };
-        if is_shaft_blocked(start, probe_end, radius, mesh) {
-            return Some(LimitationCode::CollisionWithModel);
-        }
-    }
-    None
+    let runs = points.len().saturating_sub(1);
+    (0..runs)
+        .any(|i| {
+            let (start, end) = (points[i], points[i + 1]);
+            let end = if i + 1 == runs {
+                pulled_back(end, start, radius)
+            } else {
+                end
+            };
+            is_shaft_blocked(start, end, radius, mesh)
+        })
+        .then_some(LimitationCode::CollisionWithModel)
 }
 
-/// `from` pulled back toward `towards`, or unchanged when the run is shorter.
-fn inset_towards(from: Vec3, towards: Vec3, distance_mm: f64) -> Vec3 {
-    let run = Vec3::sub_vectors(towards, from);
+/// `point` moved `distance_mm` toward `toward`; unmoved when they are closer
+/// than that.
+fn pulled_back(point: Vec3, toward: Vec3, distance_mm: f64) -> Vec3 {
+    let run = Vec3::sub_vectors(toward, point);
     let length = run.length();
     if length <= distance_mm {
-        return from;
+        return point;
     }
-    from.add_scaled_vector(run.divide_scalar(length), distance_mm)
+    point.add_scaled_vector(run.divide_scalar(length), distance_mm)
 }
 
 pub fn build_kickstand_data(
@@ -194,123 +159,94 @@ pub fn build_kickstand_data(
     let host = input.host;
     assert_kickstand_host_kind(host.support_kind.as_str())?;
 
-    let (root_diameter, root_disk_height, root_cone_height) = get_kickstand_root_profile(settings);
-    let body_diameter_mm = js_max(0.001, host.diameter_mm);
-    let joint_diameter_mm = get_joint_diameter(body_diameter_mm);
+    let (root_diameter, disk_height, cone_height) = get_kickstand_root_profile(settings);
+    let body_diameter = js_max(0.001, host.diameter_mm);
+    let joint_diameter = get_joint_diameter(body_diameter);
+    let entity = |id: String| SupportEntity {
+        id,
+        model_id: input.model_id.to_owned(),
+        ..SupportEntity::default()
+    };
 
     let root_id = new_id();
     let host_knot_id = new_id();
     let kickstand_id = new_id();
-
+    let root_pos = input.root_pos;
     let root = Roots {
-        base: SupportEntity {
-            id: root_id.clone(),
-            model_id: input.model_id.to_owned(),
-            ..SupportEntity::default()
-        },
+        base: entity(root_id.clone()),
         transform: Transform {
-            pos: input.root_pos,
+            pos: root_pos,
             rot: Quaternion::IDENTITY,
             scale: None,
         },
         diameter: root_diameter,
-        disk_height: root_disk_height,
-        cone_height: root_cone_height,
+        disk_height,
+        cone_height,
         height: None,
         join_cone_mm: None,
     };
 
-    let root_top_z = input.root_pos.z + root.disk_height + root.cone_height;
-    let heights = create_root_and_joint_heights(input, root_top_z);
-
-    let joint1 = create_joint(
-        Vec3::new(input.root_pos.x, input.root_pos.y, heights.first_joint_z),
-        joint_diameter_mm,
-        new_id,
-    );
-    let joint2 = create_joint(
-        Vec3::new(input.root_pos.x, input.root_pos.y, heights.second_joint_z),
-        joint_diameter_mm,
-        new_id,
-    );
-    let top_blend = 0.65;
-    let joint3 = create_joint(
+    // The three-joint column is always drawn, even when an authored column
+    // replaces it, so the ids handed out do not depend on which is kept.
+    let [first_z, second_z, third_z] = joint_heights(input, root_pos.z + disk_height + cone_height);
+    let joint = |id: String, pos: Vec3| Joint {
+        id,
+        pos,
+        diameter: joint_diameter,
+    };
+    let run = |id: String, bottom: Option<Joint>, top: Option<Joint>| Segment {
+        bottom_joint: bottom,
+        top_joint: top,
+        ..Segment::straight(id, body_diameter)
+    };
+    let first = joint(new_id(), Vec3::new(root_pos.x, root_pos.y, first_z));
+    let second = joint(new_id(), Vec3::new(root_pos.x, root_pos.y, second_z));
+    let third = joint(
+        new_id(),
         Vec3::new(
-            input.root_pos.x + (host.pos.x - input.root_pos.x) * top_blend,
-            input.root_pos.y + (host.pos.y - input.root_pos.y) * top_blend,
-            heights.third_joint_z,
+            root_pos.x + (host.pos.x - root_pos.x) * LEAN_IN_SHARE,
+            root_pos.y + (host.pos.y - root_pos.y) * LEAN_IN_SHARE,
+            third_z,
         ),
-        joint_diameter_mm,
-        new_id,
     );
+    let foot = run(new_id(), None, Some(first.clone()));
+    let middle = run(new_id(), Some(first), Some(second.clone()));
+    let to_host = run(new_id(), Some(third.clone()), None);
+    let lean_in = run(new_id(), Some(second), Some(third));
 
-    let segment1 = Segment {
-        top_joint: Some(joint1.clone()),
-        ..Segment::straight(new_id(), body_diameter_mm)
-    };
-    let segment2 = Segment {
-        bottom_joint: Some(joint1),
-        top_joint: Some(joint2.clone()),
-        ..Segment::straight(new_id(), body_diameter_mm)
-    };
-    let terminal_segment = Segment {
-        bottom_joint: Some(joint3.clone()),
-        ..Segment::straight(new_id(), body_diameter_mm)
-    };
-    let upper_segment = Segment {
-        bottom_joint: Some(joint2),
-        top_joint: Some(joint3),
-        ..Segment::straight(new_id(), body_diameter_mm)
+    // An authored column is straight already, so it keeps that shape: one
+    // column segment and the run to the host. The derived joints only give
+    // a placed kickstand something to drag, and would bend it.
+    let segments = match input.authored_column_top {
+        Some(top) => {
+            let top = joint(new_id(), top);
+            let column = run(new_id(), None, Some(top.clone()));
+            vec![column, run(new_id(), Some(top), None)]
+        }
+        None => vec![foot, middle, lean_in, to_host],
     };
 
     let host_min_t = host.min_t.unwrap_or(0.0);
-    let host_t = clamp_kickstand_host_t(host.t, host_min_t);
-
     let host_knot = Knot {
         id: host_knot_id.clone(),
         parent_shaft_id: host.segment_id.clone(),
-        t: Some(host_t),
+        t: Some(clamp_kickstand_host_t(host.t, host_min_t)),
         pos: host.pos,
         diameter: Some(get_kickstand_knot_diameter_mm(host.diameter_mm)),
     };
-
-    // An authored column is already straight, so it keeps that shape: one
-    // column segment and one terminal. The derived joints exist to give a
-    // placed kickstand something to drag, and would bend it.
-    let segments = match input.authored_column_top {
-        Some(top_pos) => {
-            let column_top = create_joint(top_pos, joint_diameter_mm, new_id);
-            vec![
-                Segment {
-                    top_joint: Some(column_top.clone()),
-                    ..Segment::straight(new_id(), body_diameter_mm)
-                },
-                Segment {
-                    bottom_joint: Some(column_top),
-                    ..Segment::straight(new_id(), body_diameter_mm)
-                },
-            ]
-        }
-        None => vec![segment1, segment2, upper_segment, terminal_segment],
-    };
-
-    let error = column_shape_error(&segments, host_knot.pos, input.max_shaft_angle_deg)
-        .or_else(|| column_collision(&segments, body_diameter_mm, input.collision_mesh));
+    let error = lean_error(&segments, host_knot.pos, input.max_shaft_angle_deg)
+        .or_else(|| collision_error(&segments, body_diameter, input.collision_mesh));
 
     let kickstand = Kickstand {
-        base: SupportEntity {
-            id: kickstand_id,
-            model_id: input.model_id.to_owned(),
-            ..SupportEntity::default()
-        },
+        base: entity(kickstand_id),
         root_id,
         host_knot_id,
         host_segment_id: host.segment_id.clone(),
         host_min_t,
         segments,
         profile: KickstandProfile {
-            body_diameter_mm,
-            terminal_start_diameter_mm: body_diameter_mm,
+            body_diameter_mm: body_diameter,
+            terminal_start_diameter_mm: body_diameter,
             terminal_end_diameter_mm: js_max(0.001, host.diameter_mm),
         },
     };

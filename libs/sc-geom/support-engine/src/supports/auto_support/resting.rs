@@ -11,8 +11,8 @@
 //! parity: a point inside two parts that overlap crosses an even number of
 //! faces, and is inside all the same.
 
-use crate::geom::{Ray, Vec3};
 use crate::bvh::{BvhMesh, Side};
+use crate::geom::{Ray, Vec3};
 
 /// How many layers of model material below a contact make it rest on it.
 pub const RESTING_LAYERS: f64 = 2.0;
@@ -36,7 +36,11 @@ pub fn inside_material(mesh: BvhMesh<'_>, pos: Vec3) -> bool {
         hits.dedup_by(|a, b| (a.distance - b.distance).abs() < 1e-7);
         hits.iter()
             .map(|hit| {
-                let out = hit.face.normal.transform_direction(mesh.matrix_world).dot(direction);
+                let out = hit
+                    .face
+                    .normal
+                    .transform_direction(mesh.matrix_world)
+                    .dot(direction);
                 let out = if mirrored { -out } else { out };
                 if out > 0.0 { 1 } else { -1 }
             })

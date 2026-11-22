@@ -1,22 +1,15 @@
-//! DragonFruit `src/supports/autoSupport/supportBlockers.ts`, the query the
-//! placement passes make.
-//!
-//! Support blockers ("nogo" paint for supports) are a per-model set of
-//! model-space triangle indices whose surface must never take a support
-//! contact. The paint brush, its store, stroke history and hover state are the
-//! GUI's; the passes are handed the blocked set.
+//! Surfaces painted to take no support: the check the placement passes make.
 
 use std::collections::HashSet;
 
+use crate::bvh::{BvhMesh, Side};
 use crate::geom::Ray;
 use crate::geom::vector3::Vec3;
-use crate::bvh::{BvhMesh, Side};
 
-/// Whether a support contact at the given world point lands on blocked
-/// surface. The known face short-circuits (grid lattice path); otherwise an
-/// upward ray from just below the point resolves the contact face — the same
-/// underside the generator would attach to. An empty mask is `false` with no
-/// raycast. `side` is the mesh material's side, which the raycast honours.
+/// Whether a contact at `point` lands on a face of `blocked` (the model's
+/// faces painted to take no support). With the face known it is that face;
+/// otherwise the face a ray up from 2 mm below the point hits first, the
+/// underside a support would touch. Nothing painted: never.
 pub fn is_support_blocked_contact(
     blocked: Option<&HashSet<usize>>,
     mesh: BvhMesh<'_>,
@@ -24,17 +17,17 @@ pub fn is_support_blocked_contact(
     point: Vec3,
     known_face_index: Option<usize>,
 ) -> bool {
-    let Some(tris) = blocked.filter(|t| !t.is_empty()) else {
+    let Some(faces) = blocked.filter(|f| !f.is_empty()) else {
         return false;
     };
     if let Some(face) = known_face_index {
-        return tris.contains(&face);
+        return faces.contains(&face);
     }
-    let ray = Ray {
+    let up = Ray {
         origin: Vec3::new(point.x, point.y, point.z - 2.0),
         direction: Vec3::new(0.0, 0.0, 1.0),
     };
-    mesh.intersect_object(&ray, side, 0.0, f64::INFINITY, false)
+    mesh.intersect_object(&up, side, 0.0, f64::INFINITY, false)
         .first()
-        .is_some_and(|hit| tris.contains(&hit.face_index))
+        .is_some_and(|hit| faces.contains(&hit.face_index))
 }

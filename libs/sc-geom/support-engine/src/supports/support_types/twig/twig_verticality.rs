@@ -1,19 +1,15 @@
-//! DragonFruit `src/supports/SupportTypes/Twig/twigVerticality.ts`.
-//!
-//! The verticality gate a twig must pass to be worth placing. Looser than the
-//! stick's 20°, for a measured reason: thin-gap and floor twigs build at ≤17°,
-//! pointed-tip props off a nearby wall land 23–43°, and the grazers — the ones
-//! that read as useless whiskers — start at 48°. Enforced in the twig's
-//! registered builder (`contact_bridge`), so every automatic path is covered.
+//! The lean a twig may have and still be kept. It is looser than a stick's,
+//! from measured builds: twigs across thin gaps and off floors lean 17° or
+//! less, props from a pointed tip to a nearby wall 23° to 43°, and the ones
+//! that only graze a surface, which read as stray whiskers, start at 48°.
+//! The contact bridge applies it, so every automatic path is held to it.
 
-use crate::supports::support_types::shaft_verticality::shaft_vertical_cos;
+use crate::supports::support_types::shaft_verticality::leans_at_most;
 use crate::supports::types::Segment;
-use crate::geom::math_utils::js_cos;
 
 pub const MAX_TWIG_SHAFT_ANGLE_DEG: f64 = 45.0;
 
-/// Whether a built twig stands vertical enough to keep.
+/// Whether a built twig stands close enough to plumb to keep.
 pub fn is_twig_shaft_vertical_enough(segments: &[Segment]) -> bool {
-    shaft_vertical_cos(segments)
-        >= js_cos((MAX_TWIG_SHAFT_ANGLE_DEG * std::f64::consts::PI) / 180.0)
+    leans_at_most(segments, MAX_TWIG_SHAFT_ANGLE_DEG)
 }

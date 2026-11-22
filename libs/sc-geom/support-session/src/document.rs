@@ -1,7 +1,7 @@
 //! A support session as data (#145): what a project file keeps of the
 //! supports instead of their mesh, and the session rebuilt from it.
 //!
-//! The document holds the support state (DragonFruit's own serde shape), the
+//! The document holds the support state (its own serde shape), the
 //! recipe of the pipeline settings, the session's id counter, and a
 //! fingerprint of each model it was made on. The models themselves are the
 //! scene's: on reopening, [`SupportSession::from_document`] bakes them from

@@ -74,7 +74,7 @@ fn a_large_set_draws_its_supports_as_a_small_one_does() {
     let (small, padded, scene) = small_and_padded(25_000);
     let visible: HashSet<String> = [scene].into();
     for shaft_style in [
-        ShaftStyle::DragonFruit,
+        ShaftStyle::Segmented,
         ShaftStyle::Smooth(SmoothShaftParams::default()),
     ] {
         let soup_of = |state: &SupportCollections| {

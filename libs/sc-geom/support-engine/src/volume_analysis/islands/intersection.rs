@@ -1,117 +1,64 @@
-//! DragonFruit `src/volumeAnalysis/Islands/intersection.ts`: voxel islands and
-//! mesh minima classified against each other (greedy nearest match within an
-//! XY radius and a Z band).
-
-use serde::{Deserialize, Serialize};
+//! Layer islands and low points that are one place: each layer island takes
+//! the nearest low point not yet taken within 0.5 mm on the plate and a
+//! layer in height, and stands where it is.
 
 use super::types::{DetectedIsland, IslandClass};
 
+/// How near a low point has to be to a layer island to be the same place.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct IntersectionOptions {
     pub xy_tolerance_mm: f64,
     pub z_band_mm: f64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct IntersectionStats {
-    pub voxel_total: usize,
-    pub minima_total: usize,
-    pub matched: usize,
-    pub voxel_only: usize,
-    pub minima_only: usize,
-    pub minima_superset_of_voxel: bool,
-    pub voxel_superset_of_minima: bool,
-    pub mean_match_offset_mm: f64,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ClassifiedIslands {
-    /// Copies of the inputs with `class` and `matchedWith` set, voxel then minima.
-    pub islands: Vec<DetectedIsland>,
-    pub stats: IntersectionStats,
-}
-
-/// `classifyIntersection`. Each voxel island claims the closest unused minimum
-/// within tolerance and snaps its contact to it. DragonFruit writes
-/// `matchedWith: null` on the unmatched; here that is `None`.
+/// The layer islands, then the low points, each marked with whether it met
+/// the other.
 pub fn classify_intersection(
     voxel: &[DetectedIsland],
     minima: &[DetectedIsland],
     opts: IntersectionOptions,
-) -> ClassifiedIslands {
-    let mut v: Vec<DetectedIsland> = voxel.to_vec();
-    let mut m: Vec<DetectedIsland> = minima.to_vec();
-    let xy_tol2 = opts.xy_tolerance_mm * opts.xy_tolerance_mm;
-    let mut minima_used = vec![false; m.len()];
-    let mut matched = 0;
-    let mut offset_sum = 0.0;
-
-    for vi in &mut v {
-        let mut best_idx: Option<usize> = None;
+) -> Vec<DetectedIsland> {
+    let mut layers: Vec<DetectedIsland> = voxel.to_vec();
+    let mut lows: Vec<DetectedIsland> = minima.to_vec();
+    let reach2 = opts.xy_tolerance_mm * opts.xy_tolerance_mm;
+    let mut taken = vec![false; lows.len()];
+    for island in &mut layers {
+        let mut best: Option<usize> = None;
         let mut best_d2 = f64::INFINITY;
-        for (j, mj) in m.iter().enumerate() {
-            if minima_used[j] {
+        for (j, low) in lows.iter().enumerate() {
+            if taken[j] {
                 continue;
             }
-            let dz = vi.base_z - mj.base_z;
+            let dz = island.base_z - low.base_z;
             if dz.abs() > opts.z_band_mm {
                 continue;
             }
-            let dx = vi.contact.x - mj.contact.x;
-            let dy = vi.contact.y - mj.contact.y;
-            let xy2 = dx * dx + dy * dy;
-            if xy2 > xy_tol2 {
+            let (dx, dy) = (island.contact.x - low.contact.x, island.contact.y - low.contact.y);
+            let across2 = dx * dx + dy * dy;
+            if across2 > reach2 {
                 continue;
             }
-            let d2 = xy2 + dz * dz;
+            let d2 = across2 + dz * dz;
             if d2 < best_d2 {
                 best_d2 = d2;
-                best_idx = Some(j);
+                best = Some(j);
             }
         }
-        match best_idx {
+        match best {
             Some(j) => {
-                minima_used[j] = true;
-                vi.class = Some(IslandClass::Intersection);
-                m[j].class = Some(IslandClass::Intersection);
-                vi.matched_with = Some(m[j].id.clone());
-                m[j].matched_with = Some(vi.id.clone());
-                vi.contact = m[j].contact;
-                matched += 1;
-                offset_sum += best_d2.sqrt();
+                taken[j] = true;
+                island.class = Some(IslandClass::Intersection);
+                lows[j].class = Some(IslandClass::Intersection);
+                island.contact = lows[j].contact;
             }
-            None => {
-                vi.class = Some(IslandClass::VoxelOnly);
-                vi.matched_with = None;
-            }
+            None => island.class = Some(IslandClass::VoxelOnly),
         }
     }
-    for (j, mj) in m.iter_mut().enumerate() {
-        if !minima_used[j] {
-            mj.class = Some(IslandClass::MinimaOnly);
-            mj.matched_with = None;
+    for (low, &taken) in lows.iter_mut().zip(&taken) {
+        if !taken {
+            low.class = Some(IslandClass::MinimaOnly);
         }
     }
-
-    let voxel_total = v.len();
-    let minima_total = m.len();
-    let voxel_only = voxel_total - matched;
-    let minima_only = minima_total - matched;
-    let stats = IntersectionStats {
-        voxel_total,
-        minima_total,
-        matched,
-        voxel_only,
-        minima_only,
-        minima_superset_of_voxel: voxel_total > 0 && voxel_only == 0,
-        voxel_superset_of_minima: minima_total > 0 && minima_only == 0,
-        mean_match_offset_mm: if matched > 0 {
-            offset_sum / matched as f64
-        } else {
-            0.0
-        },
-    };
-    v.extend(m);
-    ClassifiedIslands { islands: v, stats }
+    layers.extend(lows);
+    layers
 }

@@ -1,6 +1,5 @@
-//! DragonFruit `src/supports/SupportTypes/Stick/`: the builder and its
-//! verticality rule. Renderer, proxy geometry and marquee shape are the GUI's;
-//! the export group goes with the exporter.
+//! Sticks: straight shafts between two model contacts, and the lean they
+//! may have.
 
 pub mod stick_builder;
 pub mod stick_verticality;

@@ -359,7 +359,6 @@ pub fn figures_70() -> ZonePreset {
     preset
 }
 
-
 /// The self-support angle a zone preset's rules classify by, degrees from
 /// horizontal, inside the bounds the scans accept.
 pub fn zone_self_support_angle_deg(rules: &ZoneRules) -> f64 {
@@ -383,7 +382,6 @@ pub fn apply_zone_preset(zones: &ZonePreset, settings: &mut PipelineSettings, on
     auto.overhang_self_support_angle_deg = zone_self_support_angle_deg(&rules);
     // The sizes are drawn as written: no model scaling.
     auto.model_scale_enabled = false;
-    auto.size_scale = 1.0;
     auto.zone_rules = rules.clone();
     if let Some(i) = rules.default_size_index() {
         apply_zone_size(supports, &rules, i);
@@ -416,7 +414,6 @@ pub fn apply_zone_preset(zones: &ZonePreset, settings: &mut PipelineSettings, on
         .stabilization
         .enabled
         .then_some(STABILIZATION_MAX_ANGLE_DEG as f32);
-    settings.panel.keep_covered_voxel_islands = true;
 }
 
 #[cfg(test)]

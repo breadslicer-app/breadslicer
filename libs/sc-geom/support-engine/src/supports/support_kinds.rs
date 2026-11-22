@@ -573,11 +573,6 @@ pub fn grid_host_types() -> Vec<&'static SupportTypeDescriptor> {
     KINDS.iter().filter(|k| k.can_be_grid_host).collect()
 }
 
-/// Whether a placed kind is one the automatic pass reports (`None`: rejected).
-pub fn is_auto_placed_type(kind: Option<SupportTypeId>) -> bool {
-    kind.is_some_and(|k| get_support_type_descriptor(k).is_auto_placed)
-}
-
 /// The kinds that hang off another shaft by one knot, in the order they are
 /// walked: leaves before branches.
 pub const SHAFT_HOSTED_MEMBER_TYPE_ORDER: [SupportTypeId; 2] =

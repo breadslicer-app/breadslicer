@@ -1,53 +1,50 @@
-//! DragonFruit `src/supports/PlacementLogic/CollisionAvoidance.ts`.
-//!
-//! DragonFruit asks the model's shared distance field (`SDFCache`, from
-//! `SDFCachePool`) and falls back to BVH whisker rays (`checkShaftCollision`)
-//! only for a mesh with no `boundsTree`. SC always builds the field, so these
-//! take the field directly, as [`CollisionField`]: the three queries
-//! DragonFruit makes of an `SDFCache`. The `SDFCache` port implements it.
+//! Collision checks against the model's distance field: shafts as capsules,
+//! tapered pieces as stacks of capsules, tip cones sampled exactly, and how
+//! far off a surface a piece must start to clear it.
 
-use crate::supports::types::Vec3;
 use crate::geom::math_utils::{js_max, js_min, js_round, lerp};
+use crate::supports::types::Vec3;
 
-const DEFAULT_FRUSTUM_SEGMENT_COUNT: f64 = 5.0;
-/// Safety margin used only for contact-cone body sampling.
-const CONTACT_CONE_COLLISION_SAFETY_MM: f64 = 0.05;
-/// Ignore the first tip-adjacent region so contact attachment is still allowed.
-const CONTACT_CONE_TIP_IGNORE_MM: f64 = 0.25;
-/// Extra margin for the first cone sample. The cone is tangent to the surface at
-/// the tip, so the near-tip region is clear by construction — but the sphere
-/// approximation only clears if the sample depth exceeds its radius. With a
-/// fixed 0.25mm ignore the first sample's radius (~0.24mm) leaves 0.015mm of
-/// clearance: pure SDF quantization noise, which flips to a false collision on
-/// sloped geometry. Scale the ignore with the tip radius so the margin is robust.
-const CONE_TIP_SDF_MARGIN_MM: f64 = 0.15;
-/// Target sampling stride for contact-cone checks (adaptive with SDF cell size).
-const CONTACT_CONE_COLLISION_SAMPLE_STEP_MM: f64 = 0.2;
+/// How many capsules a tapered piece is checked as, by default.
+const TAPER_SLICES: f64 = 5.0;
+/// The clearance a tip cone keeps from the model, mm.
+const CONE_CLEARANCE_MM: f64 = 0.05;
+/// The stretch next to the contact a cone check skips at the least, mm: the
+/// cone touches its own surface there by design.
+const CONE_SKIP_MM: f64 = 0.25;
+/// Added to the skipped stretch over the tip's radius, so the first sample
+/// clears the surface by more than the field's rounding, mm.
+const CONE_SKIP_MARGIN_MM: f64 = 0.15;
+/// The longest step between cone samples, mm (shorter on a fine field).
+const CONE_STEP_MM: f64 = 0.2;
 
-/// The distance-field queries collision checks make (`SDFCache`, matrix refreshed).
+/// The queries collision checks make of a model's distance field.
 pub trait CollisionField {
-    /// Grid cell edge (mm) of the quantized cache.
+    /// The edge of the field's grid cells, mm.
     fn cell_size(&self) -> f64;
-    /// Whether a capsule of `radius` around `start..end` comes within the mesh
-    /// (adaptive sphere tracing over the quantized cell cache).
+    /// Whether a capsule of `radius` round `start..end` reaches the model.
     fn segment_blocked(&self, start: Vec3, end: Vec3, radius: f64) -> bool;
-    /// Exact signed distance to the mesh (negative inside), unbounded.
+    /// The exact signed distance to the model (negative inside), mm.
     fn exact_signed_distance_at(&self, point: Vec3) -> f64;
 
-    /// Runs `job(0..jobs)` in parallel, each against its own throwaway view
-    /// of this field, and keeps the expensive answers they computed for the
-    /// real queries that follow until [`clear_prefetch`](Self::clear_prefetch).
-    ///
-    /// Purely a speed-up: the real queries stay sequential and in their own
-    /// order, and a kept answer is exactly what they would have computed, so
-    /// results never change however well the jobs guess. A field with nothing
-    /// worth prefetching runs nothing.
+    /// Runs `job(0..jobs)` in parallel, each on a throwaway view of the
+    /// field, and keeps the costly answers they found for the queries that
+    /// follow, until [`clear_prefetch`](Self::clear_prefetch). Only a
+    /// speed-up: a kept answer is the one the query would compute.
     fn prefetch(&self, _jobs: usize, _job: &(dyn Fn(usize, &dyn CollisionField) + Sync)) {}
 
     /// Drops what [`prefetch`](Self::prefetch) kept.
     fn clear_prefetch(&self) {}
 }
 
+impl std::fmt::Debug for dyn CollisionField + '_ {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CollisionField")
+    }
+}
+
+/// A tapered piece's radius at each end and how many capsules it is checked
+/// as (`None`: [`TAPER_SLICES`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CollisionFrustumProfile {
     pub start_radius: f64,
@@ -55,21 +52,7 @@ pub struct CollisionFrustumProfile {
     pub segment_count: Option<f64>,
 }
 
-fn segment_blocked_with_best_available_method(
-    start: Vec3,
-    end: Vec3,
-    collision_radius: f64,
-    field: &dyn CollisionField,
-) -> bool {
-    field.segment_blocked(start, end, collision_radius)
-}
-
-/// SDF-based shaft collision check — replaces BVH whisker-ray `checkShaftCollision`.
-///
-/// Uses `sdf.segmentBlocked()` with adaptive sphere tracing, which is more
-/// accurate than the 9-ray bundle and shares its cell cache with the router.
-///
-/// `shaft_radius` is the shaft radius in mm (used as clearance margin).
+/// Whether a shaft of `shaft_radius` from `start` to `end` reaches the model.
 pub fn is_shaft_blocked(
     start: Vec3,
     end: Vec3,
@@ -79,7 +62,8 @@ pub fn is_shaft_blocked(
     field.segment_blocked(start, end, shaft_radius)
 }
 
-/// DragonFruit's default `segmentCount` is 5.
+/// Whether a piece tapering from `start_radius` to `end_radius` reaches the
+/// model: cut into `segment_count` capsules, each as wide as its wider end.
 pub fn is_collision_frustum_blocked(
     start: Vec3,
     end: Vec3,
@@ -88,101 +72,56 @@ pub fn is_collision_frustum_blocked(
     field: &dyn CollisionField,
     segment_count: Option<f64>,
 ) -> bool {
-    let segment_count = segment_count.unwrap_or(DEFAULT_FRUSTUM_SEGMENT_COUNT);
-    let normalized_start_radius = js_max(0.001, start_radius);
-    let normalized_end_radius = js_max(0.001, end_radius);
-
-    if (normalized_start_radius - normalized_end_radius).abs() <= 0.000001 {
-        return segment_blocked_with_best_available_method(
-            start,
-            end,
-            normalized_end_radius,
-            field,
-        );
+    let (r0, r1) = (js_max(0.001, start_radius), js_max(0.001, end_radius));
+    if (r0 - r1).abs() <= 0.000001 {
+        return field.segment_blocked(start, end, r1);
     }
-
-    let segment_total = js_max(1.0, js_round(segment_count));
-    let segment_total_count = segment_total as usize;
-
-    for i in 0..segment_total_count {
-        let t0 = i as f64 / segment_total;
-        let t1 = (i + 1) as f64 / segment_total;
-        let seg_start = start.lerp(end, t0);
-        let seg_end = start.lerp(end, t1);
-        let radius0 = lerp(normalized_start_radius, normalized_end_radius, t0);
-        let radius1 = lerp(normalized_start_radius, normalized_end_radius, t1);
-        let slice_radius = js_max(radius0, radius1);
-
-        if segment_blocked_with_best_available_method(seg_start, seg_end, slice_radius, field) {
-            return true;
-        }
-    }
-
-    false
+    let slices = js_max(1.0, js_round(segment_count.unwrap_or(TAPER_SLICES)));
+    (0..slices as usize).any(|i| {
+        let (a, b) = (i as f64 / slices, (i + 1) as f64 / slices);
+        let radius = js_max(lerp(r0, r1, a), lerp(r0, r1, b));
+        field.segment_blocked(start.lerp(end, a), start.lerp(end, b), radius)
+    })
 }
 
-/// The contact cone as a collision subject: disk surface in, socket out.
+/// A tip cone as checked: from the contact disk to the socket, widening.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ContactConeSweep {
-    /// Where the cone leaves the contact disk (tip side, small radius).
+    /// Where the cone leaves the contact disk (its narrow end).
     pub start: Vec3,
-    /// The socket, where the cone meets the shaft (body side, large radius).
+    /// The socket, where the cone meets the shaft (its wide end).
     pub end: Vec3,
     pub start_radius: f64,
     pub end_radius: f64,
 }
 
-/// The contact cone's own collision gate: does the cone body intersect the model?
+/// Whether a tip cone's body reaches the model, sampled along its axis with
+/// exact distances (the grid's rounding is coarser than the cone's
+/// clearance) and the stretch touching its own surface skipped.
 ///
-/// `is_collision_frustum_blocked` slices the frustum and asks the quantized grid,
-/// which is right for a shaft but wrong for a cone: the cone's safety margin
-/// (0.05mm) is far below the grid's cell-centre substitution error
-/// (~cellSize·√3/2), so geometry the cone actually clears reads as intersecting.
-/// Sample the axis and ask for the exact signed distance instead, and skip the
-/// tangent tip region — the cone is tangent to its own attachment surface, so
-/// those samples are clear by construction.
-///
-/// Returns true when the cone body intersects the model.
+/// Samples step by the room the last one found beyond the widest radius
+/// left (the field is 1-Lipschitz, so nothing skipped can be closer), at
+/// least a fixed step, and the socket is always sampled.
 pub fn is_contact_cone_blocked(sdf: &dyn CollisionField, cone: ContactConeSweep) -> bool {
-    let dx = cone.end.x - cone.start.x;
-    let dy = cone.end.y - cone.start.y;
-    let dz = cone.end.z - cone.start.z;
+    let (dx, dy, dz) = (
+        cone.end.x - cone.start.x,
+        cone.end.y - cone.start.y,
+        cone.end.z - cone.start.z,
+    );
     let length = (dx * dx + dy * dy + dz * dz).sqrt();
     if length <= 0.000001 {
         return false;
     }
-
-    let min_step = js_max(
-        js_min(CONTACT_CONE_COLLISION_SAMPLE_STEP_MM, sdf.cell_size() * 0.8),
-        0.1,
+    let least_step = js_max(js_min(CONE_STEP_MM, sdf.cell_size() * 0.8), 0.1);
+    let skip = js_max(
+        CONE_SKIP_MM,
+        cone.start_radius + CONE_CLEARANCE_MM + CONE_SKIP_MARGIN_MM,
     );
-    let tip_ignore = js_max(
-        CONTACT_CONE_TIP_IGNORE_MM,
-        cone.start_radius + CONTACT_CONE_COLLISION_SAFETY_MM + CONE_TIP_SDF_MARGIN_MM,
-    );
-    let start_t = js_min(1.0, tip_ignore / length);
-    // Sphere-trace the axis instead of stepping it at a fixed 0.1 mm.
-    //
-    // This gate cannot use the quantized cell cache (its margins are smaller
-    // than the grid's substitution error), so every sample is a fresh BVH
-    // query, and the router runs the gate for the straight cone plus up to 24
-    // deviations. The field is 1-Lipschitz, so from a sample with distance `d`
-    // every point within `d - r` of it is at least `r` from the mesh: advancing
-    // by `d - maxRadius` therefore skips only points the fixed-step loop would
-    // also have found clear, and the verdict is the same while the queries drop
-    // by an order of magnitude on a cone that is in the open.
-    //
-    // `maxRadius` is the largest radius over the remaining span, since the cone
-    // widens towards the socket; the socket itself is always sampled, because
-    // it is where the cone is widest.
-    let max_radius = cone.end_radius + CONTACT_CONE_COLLISION_SAFETY_MM;
-    let mut t = start_t;
+    let widest = cone.end_radius + CONE_CLEARANCE_MM;
+    let mut t = js_min(1.0, skip / length);
     loop {
-        let radius = cone.start_radius
-            + (cone.end_radius - cone.start_radius) * t
-            + CONTACT_CONE_COLLISION_SAFETY_MM;
-        // Unbounded query, so interior samples still sign negative: a cone
-        // through solid material must stay detected.
+        let radius =
+            cone.start_radius + (cone.end_radius - cone.start_radius) * t + CONE_CLEARANCE_MM;
         let distance = sdf.exact_signed_distance_at(Vec3::new(
             cone.start.x + dx * t,
             cone.start.y + dy * t,
@@ -192,28 +131,18 @@ pub fn is_contact_cone_blocked(sdf: &dyn CollisionField, cone: ContactConeSweep)
             return true;
         }
         if t >= 1.0 {
-            break;
+            return false;
         }
-        let advance_mm = js_max(distance - max_radius, min_step);
-        t = js_min(1.0, t + advance_mm / length);
+        t = js_min(1.0, t + js_max(distance - widest, least_step) / length);
     }
-
-    false
 }
 
-/// Calculates the required standoff distance (offset) from a surface to ensure
-/// a connecting element (like a cone) does not collide with the mesh.
-///
-/// - `surface_pos` - The starting point on the model surface.
-/// - `surface_normal` - The normal vector at the surface point (direction to extend).
-/// - `target_pos` - The target position the element connects to (e.g., Socket).
-/// - `collision_radius` - The radius of the element for collision checking (include safety margin).
-/// - `field` - The model's distance field.
-/// - `min_offset` - The minimum/starting offset to test.
-/// - `max_offset` - The maximum allowable offset.
-/// - `step` - The increment for iterative testing (DragonFruit default: 0.2mm).
-///
-/// Returns the calculated safe offset distance.
+/// How far along `surface_normal` from `surface_pos` a piece reaching to
+/// `target_pos` must start to clear the model: `min_offset` if it clears
+/// there, else the first clear offset found stepping by `step` (at least
+/// 0.025 mm), narrowed by halving six times, or `max_offset` if none clears.
+/// The piece is a capsule of `collision_radius`, or tapered as
+/// `collision_frustum` says.
 #[allow(clippy::too_many_arguments)]
 pub fn calculate_safe_offset(
     surface_pos: Vec3,
@@ -226,61 +155,43 @@ pub fn calculate_safe_offset(
     step: f64,
     collision_frustum: Option<CollisionFrustumProfile>,
 ) -> f64 {
-    let start = surface_pos;
     let normal = surface_normal.normalize();
-    let normalized_step = js_max(0.025, step);
-    let mut previous_blocked_offset = min_offset;
-
-    let test_offset = |offset: f64| -> bool {
-        // Calculate proposed start position: Surface + (Normal * t)
-        let test_start = start.add(normal.multiply_scalar(offset));
-
-        if let Some(frustum) = collision_frustum {
-            return is_collision_frustum_blocked(
-                test_start,
+    let blocked = |offset: f64| {
+        let from = surface_pos.add(normal.multiply_scalar(offset));
+        match collision_frustum {
+            Some(f) => is_collision_frustum_blocked(
+                from,
                 target_pos,
-                frustum.start_radius,
-                frustum.end_radius,
+                f.start_radius,
+                f.end_radius,
                 field,
-                frustum.segment_count,
-            );
+                f.segment_count,
+            ),
+            None => field.segment_blocked(from, target_pos, collision_radius),
         }
-
-        segment_blocked_with_best_available_method(test_start, target_pos, collision_radius, field)
     };
-
-    if !test_offset(min_offset) {
+    if !blocked(min_offset) {
         return min_offset;
     }
-
-    let mut t = min_offset + normalized_step;
+    let step = js_max(0.025, step);
+    let mut last_blocked = min_offset;
+    let mut t = min_offset + step;
     while t <= max_offset + 0.000001 {
-        let clamped_offset = js_min(t, max_offset);
-        if !test_offset(clamped_offset) {
-            let mut low = previous_blocked_offset;
-            let mut high = clamped_offset;
-
+        let offset = js_min(t, max_offset);
+        if !blocked(offset) {
+            let (mut low, mut high) = (last_blocked, offset);
             for _ in 0..6 {
                 let mid = (low + high) / 2.0;
-                if test_offset(mid) {
+                if blocked(mid) {
                     low = mid;
                 } else {
                     high = mid;
                 }
             }
-
             return high;
         }
-
-        previous_blocked_offset = clamped_offset;
-        t += normalized_step;
+        last_blocked = offset;
+        t += step;
     }
-
     max_offset
-}
-
-impl std::fmt::Debug for dyn CollisionField + '_ {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("CollisionField")
-    }
 }

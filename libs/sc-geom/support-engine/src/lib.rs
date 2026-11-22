@@ -1,10 +1,9 @@
-//! Native Rust port of the DragonFruit support system for the SoulCrafted Slicer.
-//!
-//! Modules mirror DragonFruit's `src/supports/` tree in snake case, one Rust
-//! file per DragonFruit file, each naming its origin. See `NOTICE`.
+//! Supports for the SoulCrafted Slicer: where they go, what they are, how they
+//! are braced, and their mesh. Some modules derive from earlier work; see
+//! `NOTICE`.
 
-// `!(x > 0)` is how DragonFruit's comparisons treat NaN (it fails every test);
-// the ported conditions keep that form rather than restate it per call site.
+// `!(x > 0)` reads NaN as failing every test, and the conditions keep that
+// form rather than restate it per call site.
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
 
 pub mod features;

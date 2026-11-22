@@ -1,28 +1,24 @@
-//! DragonFruit `src/supports/SupportTypes/Twig/twigJointStandoff.ts`.
+//! How far a twig's end joint stands off the model.
 
-use crate::supports::tips::ContactDiskProfile;
-use crate::supports::tips::nib_length;
-use crate::supports::types::Vec3;
 use crate::geom::math_utils::js_max;
+use crate::supports::tips::{ContactDiskProfile, nib_length};
+use crate::supports::types::Vec3;
 
-// Small extra distance between the joint sphere's surface and the disk's
-// contact face — keeps the joint visually separate from the disk and prevents
-// any z-fighting on perpendicular placements.
-const TWIG_JOINT_SURFACE_CLEARANCE_MM: f64 = 0.05;
+/// Air left between the joint ball and the disk's contact face, so the two
+/// never share a surface when the disk sits square to the twig.
+const JOINT_CLEARANCE_MM: f64 = 0.05;
 
-/// Twig-only: how far the disk-end joint sits along the disk's surface normal,
-/// away from the model contact face.
-///
-/// At least the angle-based stand-off the disk would normally use, and at
-/// least the joint sphere's own radius (plus a small clearance), so a big joint
-/// never punches into the model when the disk is large.
+/// The distance along the surface normal from the contact to the end joint's
+/// centre: the disk's own angle-based stand-off, or the joint's radius plus
+/// clearance when that is more, so a wide joint never sinks into the model.
 pub fn twig_disk_joint_standoff(
     surface_normal: Vec3,
     cone_axis: Vec3,
     profile: &ContactDiskProfile,
     joint_diameter_mm: f64,
 ) -> f64 {
-    let angle_based = nib_length(surface_normal, cone_axis, Some(profile));
-    let radius_based = joint_diameter_mm / 2.0 + TWIG_JOINT_SURFACE_CLEARANCE_MM;
-    js_max(angle_based, radius_based)
+    js_max(
+        nib_length(surface_normal, cone_axis, Some(profile)),
+        joint_diameter_mm / 2.0 + JOINT_CLEARANCE_MM,
+    )
 }

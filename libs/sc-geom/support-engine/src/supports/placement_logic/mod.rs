@@ -1,4 +1,5 @@
-//! DragonFruit `src/supports/PlacementLogic/`.
+//! Where supports go: leans, collisions, tip cones, the pillars' grid and
+//! the distance field the checks run on.
 
 pub mod collision_avoidance;
 pub mod collision_utils;
