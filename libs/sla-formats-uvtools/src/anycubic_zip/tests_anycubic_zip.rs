@@ -124,6 +124,25 @@ fn the_machine_block_names_the_panel_and_the_variant() {
 }
 
 #[test]
+fn the_firmware_timing_block_is_each_machines_own() {
+    for variant in AnycubicZipVariant::ALL {
+        let file = read_anycubic_zip(Cursor::new(written(variant, AaLevel::X4))).unwrap();
+        let paras = &file.settings["machine_extern"]["firmware_calc_print_time_paras"];
+        let z = if variant == AnycubicZipVariant::Pm7m {
+            20
+        } else {
+            160
+        };
+        assert_eq!(
+            paras["MACHINE_MAX_ACCELERATION"],
+            serde_json::json!([1000, 1000, z, 1000]),
+            "{variant:?}"
+        );
+        assert_eq!(paras["MACHINE_MAX_FEEDRATE"][2], 20, "{variant:?}");
+    }
+}
+
+#[test]
 fn the_active_resin_carries_the_print_settings() {
     let file =
         read_anycubic_zip(Cursor::new(written(AnycubicZipVariant::Pwsz, AaLevel::Off))).unwrap();
