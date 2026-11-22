@@ -6203,6 +6203,12 @@ msgctxt "SupportDialog"
 msgid "support moved to {}: {}"
 msgstr "soporte movido a {}: {}"
 
+#: src/support_run.rs
+#, rust-format
+msgctxt "SupportDialog"
+msgid "support edited at {}: {}"
+msgstr "soporte editado en {}: {}"
+
 #: src/slice_run.rs
 msgctxt "ErrorDialog"
 msgid "Repair"
@@ -9603,8 +9609,8 @@ msgstr "Elegir"
 
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
-msgid "Click a support to pick it, Shift+click to pick more. The numbers below then draw the picked supports again; a size chip gives them that size. Esc lets go."
-msgstr "Hacé clic en un soporte para elegirlo, Shift+clic para elegir más. Los números de abajo dibujan de nuevo los soportes elegidos; una ficha de tamaño les da ese tamaño. Esc los suelta."
+msgid "Click a support to pick it, Shift+click to pick more. The numbers below then draw the picked supports again; a size chip gives them that size. With one picked, its arrows move its trunk or branch (Ctrl snaps to 1 mm, Shift moves finely) and a cube takes that elbow. Esc lets go."
+msgstr "Hacé clic en un soporte para elegirlo, Shift+clic para elegir más. Los números de abajo dibujan de nuevo los soportes elegidos; una ficha de tamaño les da ese tamaño. Con uno elegido, sus flechas mueven su tronco o su rama (Ctrl imanta a 1 mm, Shift mueve fino) y un cubito toma ese codo. Esc los suelta."
 
 #: ui/workspace/support-shape.slint
 msgctxt "Inspector"
@@ -9825,6 +9831,11 @@ msgstr[1] "{n} puntas sobre detalle pintado no se pudieron sacar de ahí; llevan
 msgctxt "Inspector"
 msgid "Own trunk"
 msgstr "Tronco propio"
+
+#: ui/workspace/inspectors.slint
+msgctxt "Inspector"
+msgid "Join onto the first picked"
+msgstr "Unir al primero elegido"
 
 msgctxt "Inspector"
 msgid "Hang from nearest"

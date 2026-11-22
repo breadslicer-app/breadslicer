@@ -2363,6 +2363,8 @@ export component SupportsInspector inherits VerticalLayout {
     callback area-clear();
     // The supports picked routed again (#377), and how many there are.
     callback picked-reroute(bool);
+    // The supports picked after the first joined onto its trunk (#377).
+    callback picked-join();
     in property <int> picked-count;
     in property <[int]> shape-choices;
     in property <[int]> shape-choice-defaults;
@@ -2584,8 +2586,15 @@ export component SupportsInspector inherits VerticalLayout {
                 }
             }
         }
+        if root.tool == 5 && root.picked-count > 1: ScButton {
+            text: @tr("Inspector" => "Join onto the first picked");
+            enabled: !root.running;
+            clicked => {
+                root.picked-join();
+            }
+        }
         if root.tool == 5: Note {
-            text: @tr("Inspector" => "Click a support to pick it, Shift+click to pick more. The numbers below then draw the picked supports again; a size chip gives them that size. Esc lets go.");
+            text: @tr("Inspector" => "Click a support to pick it, Shift+click to pick more. The numbers below then draw the picked supports again; a size chip gives them that size. With one picked, its arrows move its trunk or branch (Ctrl snaps to 1 mm, Shift moves finely) and a cube takes that elbow. Esc lets go.");
         }
         if root.tool == 4: Note {
             text: @tr("Inspector" => "Click a support where the brace starts, then the support it goes to.");

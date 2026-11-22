@@ -251,6 +251,11 @@ pub(crate) struct ViewportController {
     /// first while it is open, and a press it took: where, and whether it
     /// has moved yet.
     cut_handles: RefCell<Option<Rc<dyn CutHandles>>>,
+    /// The Select tool's move gizmo on a picked support (#377), offered the
+    /// pointer in the Supports tab as the Cut tool's is in Transform.
+    part_handles: RefCell<Option<Rc<dyn CutHandles>>>,
+    /// Ctrl and Shift as the pointer last pressed or moved: snap and fine.
+    pointer_mods: Cell<(bool, bool)>,
     cut_press: Cell<Option<([f32; 2], bool)>>,
     /// The focus of the last frame (#523), with the scene revision and the
     /// selection it was worked out for.
@@ -408,6 +413,8 @@ impl ViewportController {
             lasso: RefCell::new(None),
             lasso_handler: RefCell::new(None),
             cut_handles: RefCell::new(None),
+            part_handles: RefCell::new(None),
+            pointer_mods: Cell::new((false, false)),
             cut_press: Cell::new(None),
             focus_cache: RefCell::new(None),
             plate_tool_hovered: Cell::new(None),
@@ -492,6 +499,8 @@ impl ViewportController {
             lasso: RefCell::new(None),
             lasso_handler: RefCell::new(None),
             cut_handles: RefCell::new(None),
+            part_handles: RefCell::new(None),
+            pointer_mods: Cell::new((false, false)),
             cut_press: Cell::new(None),
             focus_cache: RefCell::new(None),
             plate_tool_hovered: Cell::new(None),
@@ -3383,6 +3392,7 @@ impl ViewportController {
     }
 
     pub(crate) fn on_pointer_down(&self, cursor: ScreenPoint, mut modifiers: PointerModifiers) {
+        self.pointer_mods.set((modifiers.control, modifiers.shift));
         if self.lasso_down(cursor) || self.brush_down(cursor, &modifiers) || self.cut_down(cursor) {
             return;
         }
@@ -3436,6 +3446,7 @@ impl ViewportController {
         // Track the cursor in every section so a later paste anchors on it; the
         // gizmo drag and hover run in Prepare and Transform.
         self.input.note_hover_cursor(cursor);
+        self.pointer_mods.set((modifiers.control, modifiers.shift));
         if self.lasso_move(cursor) || self.brush_move(cursor, &modifiers) {
             return;
         }
@@ -4509,6 +4520,28 @@ impl ViewportController {
         *self.cut_handles.borrow_mut() = Some(handles);
     }
 
+    /// Installs the Select tool's move gizmo (#377): offered the pointer in
+    /// the Supports tab first while it shows.
+    pub(crate) fn set_part_handles(&self, handles: Rc<dyn CutHandles>) {
+        *self.part_handles.borrow_mut() = Some(handles);
+    }
+
+    /// Ctrl and Shift as the pointer last pressed or moved: a gizmo drag
+    /// snaps with the one and moves finely with the other.
+    pub(crate) fn pointer_mods(&self) -> (bool, bool) {
+        self.pointer_mods.get()
+    }
+
+    /// The handles of the tab's own gizmo: the Cut tool's in Transform,
+    /// the Select tool's in Supports (#377).
+    fn tab_handles(&self) -> Option<Rc<dyn CutHandles>> {
+        match self.session.section() {
+            WorkspaceSection::Transform => self.cut_handles.borrow().clone(),
+            WorkspaceSection::Supports => self.part_handles.borrow().clone(),
+            _ => None,
+        }
+    }
+
     /// What stays lit while something is selected (#523), worked out again
     /// only when the scene or the selection changed.
     fn focus(&self) -> Vec<sc_scene::NodeId> {
@@ -4543,10 +4576,7 @@ impl ViewportController {
     /// The Cut tool's handles while it is open in the Transform tab: the
     /// object's gizmo then goes, and the object does not move.
     fn open_cut(&self) -> Option<Rc<dyn CutHandles>> {
-        if self.session.section() != WorkspaceSection::Transform {
-            return None;
-        }
-        self.cut_handles.borrow().clone().filter(|h| h.active())
+        self.tab_handles().filter(|h| h.active())
     }
 
     pub(crate) fn cut_on(&self) -> bool {
@@ -4632,7 +4662,7 @@ impl ViewportController {
     /// A move with the Cut tool open: drags what it took, or lights the
     /// handle under the cursor.
     fn cut_move(&self, cursor: ScreenPoint) -> bool {
-        let Some(handles) = self.cut_handles.borrow().clone() else {
+        let Some(handles) = self.tab_handles() else {
             return false;
         };
         let pointer = self.scene_pointer(cursor);
@@ -4662,7 +4692,7 @@ impl ViewportController {
         let Some((_, moved)) = self.cut_press.take() else {
             return false;
         };
-        if let Some(handles) = self.cut_handles.borrow().clone() {
+        if let Some(handles) = self.tab_handles() {
             handles.release(self.scene_pointer(cursor).as_ref(), moved);
         }
         self.mark_dirty();
@@ -4675,7 +4705,7 @@ impl ViewportController {
         if self.cut_press.take().is_none() {
             return false;
         }
-        if let Some(handles) = self.cut_handles.borrow().clone() {
+        if let Some(handles) = self.tab_handles() {
             handles.release(None, true);
         }
         true

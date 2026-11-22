@@ -144,12 +144,14 @@ pub(crate) struct Gizmo {
 
 /// How near the cursor a corner cube is picked, logical pixels: half the
 /// cube and the margin the object's scale cubes have.
-const CORNER_PICK_PX: f64 = 13.0;
+pub(crate) const CORNER_PICK_PX: f64 = 13.0;
+/// How near an arrow the cursor grabs it, logical pixels, as the object's.
+pub(crate) const HANDLE_PX: f64 = HANDLE_PIXEL_RADIUS as f64;
 /// Where the arrow starts grabbing, past the centre, in shafts.
-const ARROW_FROM: f64 = px(16.0) as f64;
+pub(crate) const ARROW_FROM: f64 = px(16.0) as f64;
 /// The arrow cannot be grabbed pointing within 8° of the eye, nor a ring
 /// seen within 8° of edge on, as the object's gizmo (`gizmo::tolerances`).
-const LOCKOUT_COS: f64 = 0.990_268_07;
+pub(crate) const LOCKOUT_COS: f64 = 0.990_268_07;
 const ROTATE_LOCKOUT_COS: f64 = 0.139_173_1;
 const RING_SEGMENTS: usize = 64;
 
@@ -271,7 +273,7 @@ fn inside(p: [f64; 2], ring: &[[f64; 2]]) -> bool {
 }
 
 /// How far `p` lies from the segment `a`–`b`, on the screen.
-fn segment_distance(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
+pub(crate) fn segment_distance(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
     let d = [b[0] - a[0], b[1] - a[1]];
     let len2 = d[0] * d[0] + d[1] * d[1];
     let t = if len2 < 1e-12 {

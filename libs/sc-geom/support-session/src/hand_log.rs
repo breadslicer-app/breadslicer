@@ -86,6 +86,43 @@ pub(crate) struct HandUnbraced {
     pub(crate) to: [f64; 3],
 }
 
+/// A support whose parts the person edited in place (#377): its route
+/// (the trunk moved, an elbow or a branch moved), its widths, or the trunk
+/// it was joined onto. Kept by where its tip touches the model, as the
+/// rest of the log; the last edit of a support says how it stands.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HandRouted {
+    /// The model it touches, by its id in the state.
+    pub(crate) model: String,
+    /// Where its tip touches the model (world mm).
+    pub(crate) tip: [f64; 3],
+    /// Its route when the person moved it: its foot across the plate (a
+    /// trunk) and its elbows from the bottom up (world mm).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) route: Option<HandRoute>,
+    /// The widths the person gave its tip, shaft and foot (mm).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) tip_mm: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) trunk_mm: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) foot_mm: Option<f64>,
+    /// Joined onto the trunk whose tip is here (world mm).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) host: Option<[f64; 3]>,
+}
+
+/// A shaft's route, as [`HandRouted`] keeps it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct HandRoute {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) foot: Option<[f64; 2]>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) elbows: Vec<[f64; 3]>,
+}
+
 /// Every hand edit a session carries, in the order they were made.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -100,6 +137,9 @@ pub(crate) struct HandLog {
     /// Braces of the run removed by hand (#3).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) unbraced: Vec<HandUnbraced>,
+    /// Supports edited part by part (#377).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) routed: Vec<HandRouted>,
     /// Edits were made before the log was kept (a set an older build
     /// saved): its hand-added supports are known by their ids alone, its
     /// removals and moves not at all.
@@ -115,6 +155,7 @@ impl HandLog {
             && self.removed.is_empty()
             && self.braces.is_empty()
             && self.unbraced.is_empty()
+            && self.routed.is_empty()
             && !self.unrecorded
     }
 
@@ -143,6 +184,12 @@ impl HandLog {
                 .unbraced
                 .iter()
                 .filter(|b| b.model == model)
+                .cloned()
+                .collect(),
+            routed: self
+                .routed
+                .iter()
+                .filter(|r| r.model == model)
                 .cloned()
                 .collect(),
             unrecorded: self.unrecorded,
@@ -176,6 +223,19 @@ impl HandLog {
             b.from = point(b.from);
             b.to = point(b.to);
         }
+        for r in log.routed.iter_mut().filter(|r| r.model == model) {
+            r.tip = point(r.tip);
+            r.host = r.host.map(point);
+            if let Some(route) = r.route.as_mut() {
+                route.foot = route.foot.map(|[x, y]| {
+                    let [x, y, _] = point([x, y, 0.0]);
+                    [x, y]
+                });
+                for e in &mut route.elbows {
+                    *e = point(*e);
+                }
+            }
+        }
         log
     }
 }
@@ -189,6 +249,9 @@ pub enum HandEditKind {
     Moved,
     /// A brace laid between two supports.
     Braced,
+    /// A support's parts edited in place: its route, widths or the trunk
+    /// it hangs from (#377).
+    Reshaped,
 }
 
 /// Why a hand edit could not be put back on a set made again.

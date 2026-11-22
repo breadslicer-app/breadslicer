@@ -21,8 +21,9 @@ use support_model::auto_support::zone_rules::SupportSize;
 
 use super::{
     AddNote, AddOptions, At, EditError, EditPreview, FORCED_MAX_ANGLE_DEG, HandShape,
-    MANUAL_MAX_ANGLE_DEG, SupportSession,
+    MANUAL_MAX_ANGLE_DEG, MATCH_TIP_MM, SupportSession, dist,
 };
+use crate::hand_log::{HandRoute, HandRouted};
 
 /// How far apart the axis of a shaft is read against the model, mm.
 const CLEAR_STEP_MM: f64 = 0.2;
@@ -256,6 +257,76 @@ impl SupportSession {
         let moved = self.trunk_moved(id, delta)?;
         let checked = moved.checked(id)?;
         *self = checked;
+        self.log_route(id);
+        Ok(())
+    }
+
+    /// Moves the shaft of support `id` by `delta` (world mm), its tip where
+    /// it is (#377): a trunk across the plate, as [`Self::move_trunk`]; a
+    /// branch by its body, every elbow it has going the same way (one is
+    /// made half way up a branch with none), the knot it hangs from staying.
+    /// On a refusal the session is as it was.
+    pub fn move_shaft(&mut self, id: &str, delta: [f64; 3]) -> Result<(), EditError> {
+        let moved = self.shaft_moved(id, delta)?;
+        let checked = moved.checked(id)?;
+        *self = checked;
+        self.log_route(id);
+        Ok(())
+    }
+
+    /// What [`Self::move_shaft`] would do, as [`Self::preview_move_trunk`].
+    pub fn preview_move_shaft(
+        &self,
+        id: &str,
+        delta: [f64; 3],
+    ) -> Result<(EditPreview, Option<Self>), EditError> {
+        let moved = self.shaft_moved(id, delta);
+        self.preview_part_edit(id, moved)
+    }
+
+    /// Whether support `id` stands on a trunk of its own (and not on
+    /// another support's shaft).
+    pub fn is_trunk(&self, id: &str) -> bool {
+        self.state.collections.trunks.contains_key(id)
+    }
+
+    /// Joins support `id` onto the trunk of support `host` (#377): its tip
+    /// stays where it is, its own shaft and foot go, and it hangs from
+    /// `host`'s trunk, with its size and shape. What hung from it is routed
+    /// again from its own tip, onto `host` where it reaches, else on a
+    /// route of its own. On a refusal the session is as it was.
+    pub fn join_onto(&mut self, id: &str, host: &str) -> Result<(), EditError> {
+        if id == host || !self.is_trunk(host) {
+            return Err(EditError::NothingThere);
+        }
+        let host_tip = self.tip_point(host).ok_or(EditError::NothingThere)?;
+        let at = self.tip_point(id).ok_or(EditError::NothingThere)?;
+        let onto = AddOptions {
+            attach: true,
+            size: None,
+            shape: None,
+        };
+        let mut next = self.clone();
+        let (hangers, _) = next.hung_on(id);
+        for hanger in hangers {
+            let tip = next.tip_point(&hanger).ok_or(EditError::NothingThere)?;
+            let mut hung = next.clone();
+            let joined = hung.move_in_place_on(&hanger, At::Point(tip), &onto, false, Some(host));
+            if joined.is_ok() {
+                next = hung;
+            } else {
+                next.move_in_place_as(&hanger, At::Point(tip), &AddOptions::default(), true)
+                    .map_err(|(err, _)| err)?;
+            }
+        }
+        next.move_in_place_on(id, At::Point(at), &onto, false, Some(host))
+            .map_err(|(err, _)| err)?;
+        let model = next.support_tip_model(at);
+        if let Some(entry) = next.routed_entry(at, model) {
+            entry.host = Some(host_tip);
+            entry.route = None;
+        }
+        *self = next;
         Ok(())
     }
 
@@ -279,6 +350,7 @@ impl SupportSession {
         let moved = self.elbow_moved(id, elbow, to)?;
         let checked = moved.checked(id)?;
         *self = checked;
+        self.log_route(id);
         Ok(())
     }
 
@@ -383,6 +455,13 @@ impl SupportSession {
             next.shaft_clear(id)?;
         }
         *self = next;
+        let at = parts.tip;
+        let model = self.support_tip_model(at);
+        if let Some(entry) = self.routed_entry(at, model) {
+            entry.tip_mm = sizes.tip_mm.or(entry.tip_mm);
+            entry.trunk_mm = sizes.trunk_mm.or(entry.trunk_mm);
+            entry.foot_mm = sizes.foot_mm.or(entry.foot_mm);
+        }
         Ok(())
     }
 
@@ -482,6 +561,138 @@ impl SupportSession {
         }
         *self = next;
         Ok(kept)
+    }
+
+    /// The session with support `id`'s shaft moved by `delta`, unchecked
+    /// but for its order and lean.
+    fn shaft_moved(&self, id: &str, delta: [f64; 3]) -> Result<Self, EditError> {
+        let route = self.route_of(id).ok_or(EditError::NothingThere)?;
+        if route.kind == ShaftKind::Trunk {
+            return self.trunk_moved(id, [delta[0], delta[1]]);
+        }
+        let d = v(delta);
+        let elbows: Vec<(Option<String>, Vec3)> = if route.elbows.is_empty() {
+            vec![(None, route.anchor.lerp(route.socket, 0.5).add(d))]
+        } else {
+            route
+                .elbows
+                .iter()
+                .map(|(e, p)| (Some(e.clone()), p.add(d)))
+                .collect()
+        };
+        self.with_branch_elbows(id, &route, &elbows)
+    }
+
+    /// The session with branch `id` (its route `route`) through `elbows`,
+    /// unchecked but for their order and lean.
+    fn with_branch_elbows(
+        &self,
+        id: &str,
+        route: &Route,
+        elbows: &[(Option<String>, Vec3)],
+    ) -> Result<Self, EditError> {
+        let mut way = vec![route.anchor];
+        way.extend(elbows.iter().map(|(_, p)| *p));
+        way.push(route.socket);
+        if way.windows(2).any(|w| w[1].z < w[0].z + MIN_RISE_MM) {
+            return Err(EditError::CannotAttach(AddNote::OutOfOrder));
+        }
+        if way
+            .windows(2)
+            .any(|w| lean_deg(w[0], w[1]) > FORCED_MAX_ANGLE_DEG)
+        {
+            return Err(EditError::CannotAttach(AddNote::Leans));
+        }
+        let mut next = self.clone();
+        next.reroute_shaft(id, None, elbows);
+        Ok(next)
+    }
+
+    /// The model support tip `at` stands on, by its id in the state.
+    fn support_tip_model(&self, at: [f64; 3]) -> Option<String> {
+        let id = self.tip_near(at, 1e-6)?;
+        self.support_tip(&id).map(|(_, m)| m.to_owned())
+    }
+
+    /// The log's entry for the support whose tip is `at` (#377), made when
+    /// it has none.
+    fn routed_entry(&mut self, at: [f64; 3], model: Option<String>) -> Option<&mut HandRouted> {
+        let log = &mut self.hand_log.routed;
+        let k = match log.iter().position(|r| dist(r.tip, at) <= 1e-6) {
+            Some(k) => k,
+            None => {
+                log.push(HandRouted {
+                    model: model?,
+                    tip: at,
+                    route: None,
+                    tip_mm: None,
+                    trunk_mm: None,
+                    foot_mm: None,
+                    host: None,
+                });
+                log.len() - 1
+            }
+        };
+        log.get_mut(k)
+    }
+
+    /// Notes in the log the route support `id` now takes (#377).
+    fn log_route(&mut self, id: &str) {
+        let Some(parts) = self.parts_of(id) else {
+            return;
+        };
+        let model = self.support_tip(id).map(|(_, m)| m.to_owned());
+        let route = HandRoute {
+            foot: parts.foot.map(|[x, y, _]| [x, y]),
+            elbows: parts.elbows.iter().map(|(_, p)| *p).collect(),
+        };
+        if let Some(entry) = self.routed_entry(parts.tip, model) {
+            entry.route = Some(route);
+            entry.host = None;
+        }
+    }
+
+    /// Makes a part edit of the log again on this session (#408, #377).
+    pub(crate) fn replay_routed(&mut self, r: &HandRouted) -> Result<(), EditError> {
+        let find = |s: &Self| {
+            s.tip_near(r.tip, MATCH_TIP_MM)
+                .ok_or(EditError::NothingThere)
+        };
+        let mut next = self.clone();
+        if let Some(host_tip) = r.host {
+            let id = find(&next)?;
+            let host = next
+                .tip_near(host_tip, MATCH_TIP_MM)
+                .ok_or(EditError::NothingThere)?;
+            next.join_onto(&id, &host)?;
+        }
+        if let Some(route) = &r.route {
+            let id = find(&next)?;
+            let elbows = &route.elbows;
+            match route.foot {
+                Some(foot) => next.set_route(&id, foot, elbows)?,
+                None => {
+                    let way = next.route_of(&id).ok_or(EditError::NothingThere)?;
+                    let kept: Vec<(Option<String>, Vec3)> =
+                        elbows.iter().map(|p| (None, v(*p))).collect();
+                    next = next.with_branch_elbows(&id, &way, &kept)?.checked(&id)?;
+                }
+            }
+            next.log_route(&id);
+        }
+        if r.tip_mm.is_some() || r.trunk_mm.is_some() || r.foot_mm.is_some() {
+            let id = find(&next)?;
+            next.resize_parts(
+                &id,
+                PartSizes {
+                    tip_mm: r.tip_mm,
+                    trunk_mm: r.trunk_mm,
+                    foot_mm: r.foot_mm,
+                },
+            )?;
+        }
+        *self = next;
+        Ok(())
     }
 
     /// The session with support `id`'s trunk moved by `delta`, unchecked.
@@ -863,6 +1074,100 @@ mod part_edit_tests {
         // Under the slab's middle, the way up runs through it.
         assert!(session.move_trunk(&first, [20.0, 0.0]).is_err());
         assert_eq!(session.state, state, "a refusal leaves it as it was");
+    }
+
+    /// Two supports on the slab, each on a trunk of its own.
+    fn two_trunks() -> (SupportSession, String, String) {
+        let mut session = bare_slab(12.0, crate::SupportRequest::default());
+        for at in [[5.0, 5.0, 12.0], [12.0, 5.0, 12.0]] {
+            session
+                .place_at_as(At::Point(at), &AddOptions::default(), true)
+                .map_err(|(err, _)| err)
+                .unwrap();
+        }
+        let first = session.tip_near([5.0, 5.0, 12.0], 0.5).unwrap();
+        let second = session.tip_near([12.0, 5.0, 12.0], 0.5).unwrap();
+        (session, first, second)
+    }
+
+    /// #377: a support joined onto another's trunk keeps its tip, loses its
+    /// own trunk and hangs from that one; joining onto itself, or onto a
+    /// support with no trunk, is refused.
+    #[test]
+    fn a_trunk_joins_onto_another() {
+        let (mut session, first, second) = two_trunks();
+        assert!(session.is_trunk(&first) && session.is_trunk(&second));
+        let tip = session.tip_point(&second).unwrap();
+        assert!(session.join_onto(&second, &second).is_err());
+        session.join_onto(&second, &first).unwrap();
+        let now = session.tip_near(tip, 1e-6).expect("its tip stays");
+        assert!(!session.is_trunk(&now), "it hangs from the first now");
+        assert_eq!(session.state.collections.trunks.len(), 1);
+        assert_eq!(session.hand_log.routed.len(), 1);
+        assert!(session.hand_log.routed[0].host.is_some());
+        assert!(
+            session.join_onto(&first, &now).is_err(),
+            "a branch has no trunk"
+        );
+    }
+
+    /// #377: a branch moved by its body takes its elbows along, the knot it
+    /// hangs from staying; a trunk moved so keeps its tip.
+    #[test]
+    fn a_shaft_moves_by_its_body() {
+        let (mut session, first, second) = two_trunks();
+        session.join_onto(&second, &first).unwrap();
+        let branch = session.tip_near([12.0, 5.0, 12.0], 1e-6).unwrap();
+        let before = session.parts_of(&branch).unwrap();
+        // It leans near the limit both ways: a little higher keeps it in.
+        session.move_shaft(&branch, [0.0, 0.0, 0.1]).unwrap();
+        let after = session.parts_of(&branch).unwrap();
+        assert_eq!(after.tip, before.tip, "its tip stays");
+        assert_eq!(after.anchor, before.anchor, "its knot stays");
+        assert!(!after.elbows.is_empty());
+        assert_ne!(after.elbows, before.elbows);
+        let trunk = session.parts_of(&first).unwrap();
+        session.move_shaft(&first, [-1.0, 0.0, 5.0]).unwrap();
+        let moved = session.parts_of(&first).unwrap();
+        assert_eq!(moved.tip, trunk.tip);
+        assert!((moved.foot.unwrap()[0] - (trunk.foot.unwrap()[0] - 1.0)).abs() < 1e-9);
+        assert!((moved.foot.unwrap()[2] - trunk.foot.unwrap()[2]).abs() < 1e-9);
+    }
+
+    /// #377, #408: a trunk moved and a tip widened by hand come back on a
+    /// set made again, and a support moved by its tip leaves them behind.
+    #[test]
+    fn part_edits_come_back_on_a_set_made_again() {
+        let mut old = bare_slab(12.0, crate::SupportRequest::default());
+        old.add_at([5.0, 5.0, 12.0], &AddOptions::default())
+            .unwrap();
+        let id = old.tip_near([5.0, 5.0, 12.0], 0.5).unwrap();
+        old.move_trunk(&id, [-3.0, 0.0]).unwrap();
+        let tip_mm = old.parts_of(&id).unwrap().tip_mm + 0.1;
+        old.resize_parts(
+            &id,
+            PartSizes {
+                tip_mm: Some(tip_mm),
+                ..PartSizes::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(old.hand_log.routed.len(), 1, "one entry per support");
+        let want = old.parts_of(&id).unwrap();
+        let fresh = bare_slab(12.0, crate::SupportRequest::default());
+        let (kept, report) = fresh.with_hand_edits_of(&old, &|| false).unwrap();
+        assert!(report.lost.is_empty(), "{report:?}");
+        let now = kept.tip_near(want.tip, 1e-6).unwrap();
+        let got = kept.parts_of(&now).unwrap();
+        let foot = |p: &SupportParts| p.foot.unwrap();
+        assert!(dist(foot(&got), foot(&want)) < 1e-6, "{got:?} {want:?}");
+        assert!((got.tip_mm - want.tip_mm).abs() < 1e-9);
+        // Its tip moved elsewhere: the part edits go with the old place.
+        let mut moved = old.clone();
+        moved
+            .move_tip(&id, [8.0, 5.0, 12.0], &AddOptions::default())
+            .unwrap();
+        assert!(moved.hand_log.routed.is_empty());
     }
 
     /// #377: an elbow moved out of order or through the model is refused; one
