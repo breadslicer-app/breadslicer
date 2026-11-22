@@ -17,7 +17,7 @@ use crate::supports::auto_support::constants::{
 };
 use crate::supports::auto_support::parameter_sizing::SizingBands;
 use crate::supports::auto_support::types::{CandidatePoint, CandidateSource};
-use crate::supports::auto_support::zone_rules::{SupportSize, ZoneRules};
+use crate::supports::auto_support::zone_rules::{SupportSize, zone_lives};
 use crate::supports::constants::member_shaft_diameter_mm;
 use crate::supports::placement_logic::collision_avoidance::{CollisionField, is_shaft_blocked};
 use crate::supports::placement_logic::collision_utils::tip_cone_crosses_model;
@@ -208,37 +208,6 @@ impl std::fmt::Debug for PlanCtx<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PlanCtx").finish_non_exhaustive()
     }
-}
-
-/// `settings` as each zone size of its rules draws: that size's tip, shaft
-/// and base, and its band.
-pub fn zone_lives(settings: &SupportSettings) -> Vec<SupportSettings> {
-    let rules = &settings.auto_support.zone_rules;
-    (0..rules.sizes.len())
-        .map(|i| {
-            let mut sized = settings.clone();
-            apply_zone_size(&mut sized, rules, i);
-            sized
-        })
-        .collect()
-}
-
-/// Writes zone size `index` of `rules` into `settings`' tip, shaft and base.
-pub fn apply_zone_size(settings: &mut SupportSettings, rules: &ZoneRules, index: usize) {
-    let size = &rules.sizes[index];
-    settings.tip.contact_diameter_mm = size.tip_diameter_mm;
-    settings.tip.body_diameter_mm = size.trunk_diameter_mm;
-    settings.tip.length_mm = size.tip_length_mm;
-    settings.tip.penetration_mm = size.penetration_mm;
-    settings.tip.breakpoint_mm = Some(size.break_point_mm);
-    settings.shaft.diameter_mm = size.trunk_diameter_mm;
-    settings.roots.diameter_mm = size.base_diameter_mm;
-    settings.roots.disk_height_mm = size.base_thickness_mm;
-    // The base is a disk; its join cone is drawn apart (on the raft, if any).
-    settings.roots.cone_height_mm = 0.0;
-    settings.roots.join_cone_mm = Some(size.join_cone_mm);
-    settings.mesh_to_mesh.base_tip = size.base_tip;
-    settings.auto_support.sizing_preset = rules.band_id(index);
 }
 
 /// The most a member leans from vertical, degrees: the branch angle's

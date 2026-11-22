@@ -29,9 +29,10 @@ use support_engine::supports::auto_support::auto_place::fan::{
     FanArgs, FanHostOrder, FanLeafRefusal, FanLeafResult, add_fanned, fan_leaf_to_host,
 };
 use support_engine::supports::auto_support::auto_place::helpers::{
-    FanShaftPoint, PlanCtx, PlanMesh, apply_zone_size, collect_fan_shaft_points, host_segment_span,
+    FanShaftPoint, PlanCtx, PlanMesh, collect_fan_shaft_points, host_segment_span,
     member_max_angle_from_vertical_deg,
 };
+use support_engine::supports::auto_support::zone_rules::apply_zone_size;
 use support_engine::supports::auto_support::auto_place::place::{
     PlaceArgs, RejectReason, place_one_candidate,
 };

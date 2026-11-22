@@ -7,7 +7,9 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::auto_support::constants::ANCHOR_HEIGHT_THRESHOLD_MM;
-use super::types::{Brace, Branch, Kickstand, Knot, Leaf, Roots, Stick, Stump, Trunk, Twig};
+use super::types::{
+    Brace, Branch, Kickstand, Knot, Leaf, Roots, Stick, Stump, SupportCollections, Trunk, Twig,
+};
 
 /// A kind of support. Its order is the order every walk over kinds takes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -718,3 +720,21 @@ pub fn placement_of_resolved(
         hosted_by,
     }
 }
+
+/// The kind of the store's collection that holds `id`, for an entity whose
+/// kind is not stamped on it; collections are tried in kind order.
+pub fn store_type_of(store: &SupportCollections, id: &str) -> Option<SupportTypeId> {
+    [
+        (SupportTypeId::Trunk, store.trunks.contains_key(id)),
+        (SupportTypeId::Branch, store.branches.contains_key(id)),
+        (SupportTypeId::Leaf, store.leaves.contains_key(id)),
+        (SupportTypeId::Twig, store.twigs.contains_key(id)),
+        (SupportTypeId::Stick, store.sticks.contains_key(id)),
+        (SupportTypeId::Brace, store.braces.contains_key(id)),
+        (SupportTypeId::Stump, store.stumps.contains_key(id)),
+        (SupportTypeId::Kickstand, store.kickstands.contains_key(id)),
+    ]
+    .into_iter()
+    .find_map(|(kind, held)| held.then_some(kind))
+}
+

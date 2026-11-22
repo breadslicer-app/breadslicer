@@ -25,7 +25,6 @@ use super::helpers::{
 use super::place::{PlaceArgs, grid_join_height, place_one_candidate};
 use super::report::{CavityFallback, ForestReport, PlacementDiagnostics};
 use crate::geom::math_utils::{js_max, js_min, js_round};
-use crate::supports::auto_bracing::auto_brace::build_auto_braced_snapshot;
 use crate::supports::auto_bracing::mesh_clearance::BraceMeshes;
 use crate::supports::auto_support::constants::{
     CONSOLIDATION_BRANCH_MIN_HEIGHT_MM, CONSOLIDATION_FAN_RADIUS_MM, CONSOLIDATION_MAX_ANGLE_DEG,
@@ -84,17 +83,36 @@ pub struct AutoSupportPlan {
 }
 
 /// What a run reads beyond the shared context.
-#[derive(Debug)]
 pub struct PlanInput<'a> {
     pub islands: &'a [DetectedIsland],
     pub model_id: &'a str,
     pub settings: &'a AutoSupportSettings,
     /// The supports the run adds to (the other models' already in).
     pub state: &'a SupportState,
-    /// Every model of the plate, which the braces stay clear of.
+    /// Every model of the plate, which supports placed again stay clear of.
     pub brace_meshes: &'a BraceMeshes<'a>,
+    /// Braces a run's supports (the draft, the settings in force, the
+    /// supports already on the plate, a source of ids).
+    pub brace: &'a Brace<'a>,
     pub zone: ZonePlanInput<'a>,
 }
+
+impl std::fmt::Debug for PlanInput<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PlanInput")
+            .field("model_id", &self.model_id)
+            .finish_non_exhaustive()
+    }
+}
+
+/// How a run's supports are braced.
+pub type Brace<'a> = dyn Fn(
+        &SupportState,
+        &crate::supports::settings::types::SupportSettings,
+        &SupportState,
+        &mut dyn FnMut() -> String,
+    ) -> SupportState
+    + 'a;
 
 /// What the zone rules read beyond the islands (#360).
 #[derive(Clone, Copy, Debug)]
@@ -1083,15 +1101,7 @@ pub fn compute_auto_support_plan(
         perf::measure("auto:resize-report");
         if !auto.debug_skip_auto_bracing {
             perf::mark("auto:bracing");
-            let (braced, _) = build_auto_braced_snapshot(
-                &run.draft,
-                &live.auto_bracing,
-                live,
-                input.brace_meshes,
-                input.state,
-                &mut || ctx.id(),
-            );
-            run.draft = braced;
+            run.draft = (input.brace)(&run.draft, live, input.state, &mut || ctx.id());
             perf::measure("auto:bracing");
         }
     }

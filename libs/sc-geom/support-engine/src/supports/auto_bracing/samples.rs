@@ -11,7 +11,7 @@ use crate::supports::shafts::{
     EndpointHosts, ShaftEntity, calculate_knot_position_on_segment_from_t,
     resolve_segment_endpoints,
 };
-use crate::supports::support_kinds::SupportTypeId;
+use crate::supports::support_kinds::{SupportTypeId, store_type_of};
 use crate::supports::types::{Segment, SupportCollections, Vec3};
 use crate::utils::collation::js_locale_compare;
 
@@ -68,23 +68,6 @@ pub(super) struct Anchor {
     pub pos: Vec3,
     /// The diameter of the segment it lands on.
     pub host_diameter_mm: f64,
-}
-
-/// The kind of the store's collection that holds `id`, for an entity whose
-/// kind is not stamped on it; collections are tried in kind order.
-pub fn store_type_of(store: &SupportCollections, id: &str) -> Option<SupportTypeId> {
-    [
-        (SupportTypeId::Trunk, store.trunks.contains_key(id)),
-        (SupportTypeId::Branch, store.branches.contains_key(id)),
-        (SupportTypeId::Leaf, store.leaves.contains_key(id)),
-        (SupportTypeId::Twig, store.twigs.contains_key(id)),
-        (SupportTypeId::Stick, store.sticks.contains_key(id)),
-        (SupportTypeId::Brace, store.braces.contains_key(id)),
-        (SupportTypeId::Stump, store.stumps.contains_key(id)),
-        (SupportTypeId::Kickstand, store.kickstands.contains_key(id)),
-    ]
-    .into_iter()
-    .find_map(|(kind, held)| held.then_some(kind))
 }
 
 /// One entity of `collect_shafts`, before its segments are resolved.

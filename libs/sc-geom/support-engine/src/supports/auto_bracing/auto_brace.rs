@@ -18,7 +18,7 @@ use super::mesh_clearance::BraceMeshes;
 use super::pairing::{
     Edge, bracing_grid, is_cardinal_delta, min_pair_span_mm, model_pairs, pair_key, plan_point,
 };
-pub use super::samples::store_type_of;
+pub use crate::supports::support_kinds::store_type_of;
 use super::samples::{EPS, Shaft, collect_shafts, shared_mid_z, span_at};
 use super::settings::{
     AutoBracingSettings, auto_bracing_hard_rules, normalize_auto_bracing_settings,

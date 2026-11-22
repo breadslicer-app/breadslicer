@@ -35,6 +35,7 @@ use crate::native::overhang::{
 };
 use crate::native::welded::WeldedMesh;
 use crate::perf::{self, PerfFrame};
+use crate::supports::auto_bracing::auto_brace::build_auto_braced_snapshot;
 use crate::supports::auto_bracing::mesh_clearance::{BraceMesh, BraceMeshes};
 use crate::supports::auto_support::auto_place::helpers::{PlanCtx, PlanMesh};
 use crate::supports::auto_support::auto_place::plan::{
@@ -156,7 +157,7 @@ impl PipelineSettings {
             detail_faces: Vec::new(),
         };
         // Every set is placed by zones; Miniatures unless told otherwise.
-        crate::supports::auto_support::presets::apply_zone_preset(
+        apply_zone_preset(
             &crate::supports::auto_support::presets::minis_30(),
             &mut settings,
             false,
@@ -785,6 +786,17 @@ fn run_pipeline(
                 settings: &settings.supports.auto_support,
                 state: &current,
                 brace_meshes: &brace_meshes,
+                brace: &|draft, live, committed, ids| {
+                    build_auto_braced_snapshot(
+                        draft,
+                        &live.auto_bracing,
+                        live,
+                        &brace_meshes,
+                        committed,
+                        ids,
+                    )
+                    .0
+                },
                 zone: ZonePlanInput {
                     keep_out: &settings.keep_out,
                     detail: detail.as_deref(),
@@ -866,3 +878,52 @@ pub fn support_soup(
         draw_rafts: !settings.raft_apart,
     })
 }
+
+/// Writes a zone preset into `settings` (#360): its rules, the overhang
+/// angle the scans classify by, its default size for supports placed by
+/// hand, the scans its zones read, its bracing and its sizes drawn exactly.
+/// Under one raft for all (#576) the grid of pillars is left off: its
+/// supports lean out to pillars fixed on the plate, a hundredth of a degree
+/// of a turn hangs one from another pillar further out, and the room a model
+/// takes swings with it; dropping near the model they keep it compact.
+pub fn apply_zone_preset(zones: &crate::supports::auto_support::presets::ZonePreset, settings: &mut PipelineSettings, one_raft: bool) {
+    let rules = zones.rules.clamped();
+    let supports = &mut settings.supports;
+    let auto = &mut supports.auto_support;
+    auto.overhang_self_support_angle_deg = crate::supports::auto_support::presets::zone_self_support_angle_deg(&rules);
+    // The sizes are drawn as written: no model scaling.
+    auto.model_scale_enabled = false;
+    auto.zone_rules = rules.clone();
+    if let Some(i) = rules.default_size_index() {
+        crate::supports::auto_support::zone_rules::apply_zone_size(supports, &rules, i);
+    }
+    match zones.grid_mm.filter(|_| !one_raft) {
+        Some(spacing_mm) => {
+            supports.grid.enabled = true;
+            supports.grid.spacing_mm = spacing_mm;
+            supports.grid.pillars = true;
+            // A pillar takes all that hangs from its node.
+            supports.auto_support.max_attachments_per_trunk = f64::MAX;
+        }
+        None => {
+            let defaults = crate::supports::settings::types::GridSettings::default();
+            supports.grid.enabled = defaults.enabled;
+            supports.grid.spacing_mm = defaults.spacing_mm;
+            supports.grid.pillars = defaults.pillars;
+            supports.auto_support.max_attachments_per_trunk =
+                crate::supports::auto_support::settings::AutoSupportSettings::default().max_attachments_per_trunk;
+        }
+    }
+    zones.bracing.apply(&mut supports.auto_bracing);
+    supports.auto_bracing.follow_trunks = rules.braces_follow_trunks;
+    settings.tip_drawing.per_support_penetration = true;
+    settings.scan.island_bodies = Some(IslandBodyScan::new(
+        &rules.section_heights_mm(),
+        rules.volume_cap_mm3(),
+    ));
+    settings.scan.steep_angle_deg = rules
+        .stabilization
+        .enabled
+        .then_some(crate::supports::auto_support::zone_rules::STABILIZATION_MAX_ANGLE_DEG as f32);
+}
+

@@ -38,6 +38,7 @@ mod session;
 mod shift;
 /// The zone presets that ship, and how one is applied.
 pub mod zone_presets {
+    pub use support_engine::pipeline::apply_zone_preset;
     pub use support_engine::supports::auto_support::presets::*;
 }
 

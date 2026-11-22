@@ -15,7 +15,7 @@ use indexmap::{IndexMap, IndexSet};
 use super::kickstand_builder::{KickstandBuildInput, build_kickstand_data};
 use super::types::{KickstandBuildResult, KickstandHostTarget};
 use crate::geom::math_utils::{js_atan2, js_cos, js_max, js_min, js_sin};
-use crate::supports::auto_bracing::auto_brace::store_type_of;
+use crate::supports::support_kinds::store_type_of;
 use crate::supports::auto_bracing::mesh_clearance::{
     BraceMesh, BraceMeshes, line_passes_mesh_clearance,
 };

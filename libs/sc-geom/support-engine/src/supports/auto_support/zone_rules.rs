@@ -19,6 +19,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::settings::SizingBand;
+use crate::supports::settings::types::SupportSettings;
 
 /// One support size, every number in millimetres.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -490,6 +491,37 @@ impl ZoneRules {
     pub fn dedup_radius_mm(spacing_a_mm: f64, spacing_b_mm: f64) -> f64 {
         (spacing_a_mm.max(spacing_b_mm) * DEDUP_SPACING_SHARE).max(0.2)
     }
+}
+
+/// `settings` as each zone size of its rules draws: that size's tip, shaft
+/// and base, and its band.
+pub fn zone_lives(settings: &SupportSettings) -> Vec<SupportSettings> {
+    let rules = &settings.auto_support.zone_rules;
+    (0..rules.sizes.len())
+        .map(|i| {
+            let mut sized = settings.clone();
+            apply_zone_size(&mut sized, rules, i);
+            sized
+        })
+        .collect()
+}
+
+/// Writes zone size `index` of `rules` into `settings`' tip, shaft and base.
+pub fn apply_zone_size(settings: &mut SupportSettings, rules: &ZoneRules, index: usize) {
+    let size = &rules.sizes[index];
+    settings.tip.contact_diameter_mm = size.tip_diameter_mm;
+    settings.tip.body_diameter_mm = size.trunk_diameter_mm;
+    settings.tip.length_mm = size.tip_length_mm;
+    settings.tip.penetration_mm = size.penetration_mm;
+    settings.tip.breakpoint_mm = Some(size.break_point_mm);
+    settings.shaft.diameter_mm = size.trunk_diameter_mm;
+    settings.roots.diameter_mm = size.base_diameter_mm;
+    settings.roots.disk_height_mm = size.base_thickness_mm;
+    // The base is a disk; its join cone is drawn apart (on the raft, if any).
+    settings.roots.cone_height_mm = 0.0;
+    settings.roots.join_cone_mm = Some(size.join_cone_mm);
+    settings.mesh_to_mesh.base_tip = size.base_tip;
+    settings.auto_support.sizing_preset = rules.band_id(index);
 }
 
 #[cfg(test)]
