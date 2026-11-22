@@ -359,6 +359,66 @@ pub fn figures_70() -> ZonePreset {
     preset
 }
 
+
+/// The self-support angle a zone preset's rules classify by, degrees from
+/// horizontal, inside the bounds the scans accept.
+pub fn zone_self_support_angle_deg(rules: &ZoneRules) -> f64 {
+    rules.self_support_angle_deg().clamp(
+        auto_support_constraints::OVERHANG_SELF_SUPPORT_ANGLE_DEG.min,
+        auto_support_constraints::OVERHANG_SELF_SUPPORT_ANGLE_DEG.max,
+    )
+}
+
+/// Writes a zone preset into `settings` (#360): its rules, the overhang
+/// angle the scans classify by, its default size for supports placed by
+/// hand, the scans its zones read, its bracing and its sizes drawn exactly.
+/// Under one raft for all (#576) the grid of pillars is left off: its
+/// supports lean out to pillars fixed on the plate, a hundredth of a degree
+/// of a turn hangs one from another pillar further out, and the room a model
+/// takes swings with it; dropping near the model they keep it compact.
+pub fn apply_zone_preset(zones: &ZonePreset, settings: &mut PipelineSettings, one_raft: bool) {
+    let rules = zones.rules.clamped();
+    let supports = &mut settings.supports;
+    let auto = &mut supports.auto_support;
+    auto.overhang_self_support_angle_deg = zone_self_support_angle_deg(&rules);
+    // The sizes are drawn as written: no model scaling.
+    auto.model_scale_enabled = false;
+    auto.size_scale = 1.0;
+    auto.zone_rules = rules.clone();
+    if let Some(i) = rules.default_size_index() {
+        apply_zone_size(supports, &rules, i);
+    }
+    match zones.grid_mm.filter(|_| !one_raft) {
+        Some(spacing_mm) => {
+            supports.grid.enabled = true;
+            supports.grid.spacing_mm = spacing_mm;
+            supports.grid.pillars = true;
+            // A pillar takes all that hangs from its node.
+            supports.auto_support.max_attachments_per_trunk = f64::MAX;
+        }
+        None => {
+            let defaults = crate::supports::settings::types::GridSettings::default();
+            supports.grid.enabled = defaults.enabled;
+            supports.grid.spacing_mm = defaults.spacing_mm;
+            supports.grid.pillars = defaults.pillars;
+            supports.auto_support.max_attachments_per_trunk =
+                AutoSupportSettings::default().max_attachments_per_trunk;
+        }
+    }
+    zones.bracing.apply(&mut supports.auto_bracing);
+    supports.auto_bracing.follow_trunks = rules.braces_follow_trunks;
+    settings.tip_drawing.per_support_penetration = true;
+    settings.scan.island_bodies = Some(IslandBodyScan::new(
+        &rules.section_heights_mm(),
+        rules.volume_cap_mm3(),
+    ));
+    settings.scan.steep_angle_deg = rules
+        .stabilization
+        .enabled
+        .then_some(STABILIZATION_MAX_ANGLE_DEG as f32);
+    settings.panel.keep_covered_voxel_islands = true;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -432,63 +492,4 @@ mod tests {
                 .all(|s| s.penetration_mm == 0.0 && s.break_point_mm == 0.0)
         );
     }
-}
-
-/// The self-support angle a zone preset's rules classify by, degrees from
-/// horizontal, inside the bounds the scans accept.
-pub fn zone_self_support_angle_deg(rules: &ZoneRules) -> f64 {
-    rules.self_support_angle_deg().clamp(
-        auto_support_constraints::OVERHANG_SELF_SUPPORT_ANGLE_DEG.min,
-        auto_support_constraints::OVERHANG_SELF_SUPPORT_ANGLE_DEG.max,
-    )
-}
-
-/// Writes a zone preset into `settings` (#360): its rules, the overhang
-/// angle the scans classify by, its default size for supports placed by
-/// hand, the scans its zones read, its bracing and its sizes drawn exactly.
-/// Under one raft for all (#576) the grid of pillars is left off: its
-/// supports lean out to pillars fixed on the plate, a hundredth of a degree
-/// of a turn hangs one from another pillar further out, and the room a model
-/// takes swings with it; dropping near the model they keep it compact.
-pub fn apply_zone_preset(zones: &ZonePreset, settings: &mut PipelineSettings, one_raft: bool) {
-    let rules = zones.rules.clamped();
-    let supports = &mut settings.supports;
-    let auto = &mut supports.auto_support;
-    auto.overhang_self_support_angle_deg = zone_self_support_angle_deg(&rules);
-    // The sizes are drawn as written: no model scaling.
-    auto.model_scale_enabled = false;
-    auto.size_scale = 1.0;
-    auto.zone_rules = rules.clone();
-    if let Some(i) = rules.default_size_index() {
-        apply_zone_size(supports, &rules, i);
-    }
-    match zones.grid_mm.filter(|_| !one_raft) {
-        Some(spacing_mm) => {
-            supports.grid.enabled = true;
-            supports.grid.spacing_mm = spacing_mm;
-            supports.grid.pillars = true;
-            // A pillar takes all that hangs from its node.
-            supports.auto_support.max_attachments_per_trunk = f64::MAX;
-        }
-        None => {
-            let defaults = crate::supports::settings::types::GridSettings::default();
-            supports.grid.enabled = defaults.enabled;
-            supports.grid.spacing_mm = defaults.spacing_mm;
-            supports.grid.pillars = defaults.pillars;
-            supports.auto_support.max_attachments_per_trunk =
-                AutoSupportSettings::default().max_attachments_per_trunk;
-        }
-    }
-    zones.bracing.apply(&mut supports.auto_bracing);
-    supports.auto_bracing.follow_trunks = rules.braces_follow_trunks;
-    settings.tip_drawing.per_support_penetration = true;
-    settings.scan.island_bodies = Some(IslandBodyScan::new(
-        &rules.section_heights_mm(),
-        rules.volume_cap_mm3(),
-    ));
-    settings.scan.steep_angle_deg = rules
-        .stabilization
-        .enabled
-        .then_some(STABILIZATION_MAX_ANGLE_DEG as f32);
-    settings.panel.keep_covered_voxel_islands = true;
 }
