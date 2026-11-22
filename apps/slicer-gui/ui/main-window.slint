@@ -333,6 +333,7 @@ export component MainWindow inherits Window {
     // The supports picked routed again (#377): on their own, or hung from
     // the nearest.
     callback support-picked-reroute(bool);
+    callback support-picked-join();
     in property <[ZoneRow]> support-zone-rows;
     in property <[string]> support-zone-size-names;
     in property <float> support-zone-angle;
@@ -460,6 +461,9 @@ export component MainWindow inherits Window {
     // A click of the tool at a world point; with Shift, Add hangs the
     // support from the nearest one or places nothing.
     callback support-tool-clicked(float, float, float, bool);
+    // A click of the Select tool on no support: what was picked goes, unless
+    // Shift is held (#377).
+    callback support-tool-missed(bool);
     // The cursor over the model with a tab tool armed: the world point,
     // whether there is one (false clears the preview) and whether Shift is
     // held.
@@ -3293,6 +3297,9 @@ export component MainWindow inherits Window {
                                     }
                                     picked-reroute(own) => {
                                         root.support-picked-reroute(own);
+                                    }
+                                    picked-join => {
+                                        root.support-picked-join();
                                     }
                                     picked-count: root.support-picked-count;
                                     area-clear => {

@@ -12,7 +12,10 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::grouping::{GroupNode, GroupingSettings, group_shafts};
-pub use super::hand::{HandBrace, HandBraceOutcome, HandBraceRefusal, brace_new_shaft, hand_brace};
+pub use super::hand::{
+    HandBrace, HandBraceOutcome, HandBraceRefusal, LostBrace, brace_again, brace_new_shaft,
+    hand_brace,
+};
 use super::ladder::{BraceWriter, brace_tall_shafts, lay_ladder};
 use super::pairing::{
     Edge, bracing_grid, is_cardinal_delta, min_pair_span_mm, model_pairs, pair_key, plan_point,

@@ -136,6 +136,10 @@ pub struct ToolGizmo {
     /// is, only it shows.
     pub hover: Option<ToolHandle>,
     pub active: Option<ToolHandle>,
+    /// A gizmo that only moves (#377): an arrow along each axis set here,
+    /// in its axis colour, and no rings. All unset: the arrow along the
+    /// normal and the two rings.
+    pub arrows: [bool; 3],
 }
 
 impl ToolGizmo {
@@ -156,6 +160,22 @@ impl ToolGizmo {
             corner_count,
             hover,
             active,
+            arrows: [false; 3],
+        }
+    }
+
+    /// A gizmo that only moves (#377): an arrow along each of `axes` that
+    /// `arrows` sets, red, green and blue, and a cube at each of `corners`.
+    pub fn mover(
+        axes: [Vec3; 3],
+        arrows: [bool; 3],
+        corners: &[Vec3],
+        hover: Option<ToolHandle>,
+        active: Option<ToolHandle>,
+    ) -> Self {
+        Self {
+            arrows,
+            ..Self::new(axes, corners, hover, active)
         }
     }
 
@@ -171,6 +191,8 @@ pub enum ToolHandle {
     Arrow,
     Ring(usize),
     Corner(usize),
+    /// A mover's arrow along its axis `k` (#377).
+    Axis(usize),
 }
 
 /// Live cursor-driven drag state, used by the renderer to give real-time
@@ -587,7 +609,24 @@ fn tool_handles(frame: &GizmoFrame, tool: &ToolGizmo) -> Vec<Handle> {
     };
     let dragging = tool.active.is_some();
     let mut out = Vec::with_capacity(7);
-    if let Some(look) = state(ToolHandle::Arrow) {
+    let mover = tool.arrows.iter().any(|&a| a);
+    for k in (0..3).filter(|&k| tool.arrows[k]) {
+        let Some(look) = state(ToolHandle::Axis(k)) else {
+            continue;
+        };
+        let axis = tool.axes[k];
+        out.push(Handle::solid(
+            GizmoMesh::Arrow,
+            basis(axis, tool.axes[(k + 1) % 3]),
+            look.color(AXIS_COLORS[k]),
+            if dragging {
+                1.0
+            } else {
+                dir_fade(axis, frame.view_dir)
+            },
+        ));
+    }
+    if let Some(look) = state(ToolHandle::Arrow).filter(|_| !mover) {
         let alpha = if dragging {
             1.0
         } else {
@@ -601,6 +640,9 @@ fn tool_handles(frame: &GizmoFrame, tool: &ToolGizmo) -> Vec<Handle> {
         ));
     }
     for (k, (axis, side)) in [(u, v), (v, n)].into_iter().enumerate() {
+        if mover {
+            break;
+        }
         let Some(look) = state(ToolHandle::Ring(k)) else {
             continue;
         };
@@ -1038,6 +1080,41 @@ mod tests {
             active,
         ));
         f
+    }
+
+    /// #377: a mover draws an arrow per axis it sets, in that axis colour,
+    /// and no ring; while one is dragged, only it.
+    #[test]
+    fn a_mover_draws_its_arrows_alone() {
+        let mut f = frame(GizmoVisibility::Idle);
+        let axes = [Vec3::X, Vec3::Y, Vec3::Z];
+        f.tool = Some(ToolGizmo::mover(
+            axes,
+            [true, true, false],
+            &[Vec3::Z],
+            None,
+            None,
+        ));
+        let draws = build_gizmo_draws(&f);
+        let arrows = cores(&draws, GizmoMesh::Arrow);
+        assert_eq!(arrows.len(), 2);
+        assert_eq!(rgb(&arrows[0]), AXIS_COLORS[0]);
+        assert_eq!(rgb(&arrows[1]), AXIS_COLORS[1]);
+        assert!(cores(&draws, GizmoMesh::Ring).is_empty());
+        assert_eq!(cores(&draws, GizmoMesh::Cube).len(), 1);
+        f.tool = Some(ToolGizmo::mover(
+            axes,
+            [true, true, true],
+            &[],
+            None,
+            Some(ToolHandle::Axis(2)),
+        ));
+        let draws = build_gizmo_draws(&f);
+        let arrows = cores(&draws, GizmoMesh::Arrow);
+        assert_eq!(arrows.len(), 1);
+        // Lit, but still the blue one.
+        let [r, _, b] = rgb(&arrows[0]);
+        assert!(b > r + 0.3, "{:?}", rgb(&arrows[0]));
     }
 
     #[test]

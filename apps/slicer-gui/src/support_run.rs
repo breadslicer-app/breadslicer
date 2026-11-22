@@ -82,10 +82,8 @@ use crate::support_persist::{
     sets_of_model, support_leaf, support_leaves,
 };
 use crate::viewport::ViewportController;
-#[cfg(test)]
-use crate::viewport::support_drag::DragView;
 use crate::viewport::support_drag::{
-    DragPoint, Project, ScreenHit, SupportDragHandler, SupportDragKind,
+    DragPoint, DragView, Project, ScreenHit, SupportDragHandler, SupportDragKind,
 };
 use crate::{MainWindow, WorkspaceSection};
 
@@ -298,6 +296,12 @@ pub(crate) struct SupportRun {
     /// A drag of a Supports tab tool in flight (#3), and the timer that
     /// sends a box's owed rays between the moves.
     drag: RefCell<Option<DragState>>,
+    /// The Select tool's move gizmo (#377): the elbow it stands on, by the
+    /// support's id and the elbow's (none: on the support's shaft), the
+    /// handle under the cursor, and the arrow being dragged.
+    part_focus: RefCell<Option<(String, String)>>,
+    part_hover: Cell<Option<PartHandle>>,
+    part_arrow: Cell<Option<ArrowGrab>>,
     /// The brace tool's first end (#3), with the set it is on: the next
     /// click on a support lays the brace.
     brace_from: RefCell<Option<(DrawnSet, BraceEnd)>>,
@@ -678,6 +682,9 @@ enum EditOp {
     /// Moves a part of this support (#377): its trunk across the plate, or
     /// an elbow.
     MovePart(String, PartMove),
+    /// Joins the supports whose tips are at these points onto this one's
+    /// trunk (#377).
+    Join(Vec<[f64; 3]>, String),
     /// Gives these supports' parts these widths, their routes as they are
     /// (#377).
     Resize(Vec<String>, PartSizes),
@@ -735,6 +742,12 @@ enum PartMove {
     Trunk([f64; 2]),
     /// This elbow, to this point (world mm).
     Elbow(String, [f64; 3]),
+    /// Its shaft by its body, by this much (world mm): a branch's elbows
+    /// all together, the knot it hangs from staying.
+    Shaft([f64; 3]),
+    /// The knot it hangs from, slid along its host's shaft to this height
+    /// (world mm): the way it leans changes, its tip staying.
+    Knot(f64),
 }
 
 impl PartMove {
@@ -743,6 +756,8 @@ impl PartMove {
         match self {
             PartMove::Trunk(delta) => session.move_trunk(id, *delta),
             PartMove::Elbow(elbow, to) => session.move_elbow(id, elbow, *to),
+            PartMove::Shaft(delta) => session.move_shaft(id, *delta),
+            PartMove::Knot(z) => session.slide_knot(id, *z),
         }
     }
 
@@ -755,6 +770,8 @@ impl PartMove {
         match self {
             PartMove::Trunk(delta) => session.preview_move_trunk(id, *delta),
             PartMove::Elbow(elbow, to) => session.preview_move_elbow(id, elbow, *to),
+            PartMove::Shaft(delta) => session.preview_move_shaft(id, *delta),
+            PartMove::Knot(z) => session.preview_slide_knot(id, *z),
         }
     }
 }
@@ -851,6 +868,7 @@ fn compute_edit(
         | EditOp::Reshape(_)
         | EditOp::Reroute(..)
         | EditOp::MovePart(..)
+        | EditOp::Join(..)
         | EditOp::Resize(..)
         | EditOp::Imported(_) => 0,
     };
@@ -992,6 +1010,16 @@ fn compute_job(
             }
             (EditOp::MovePart(id, part), false) => {
                 took = one(part.make(&mut edited, id));
+            }
+            (EditOp::Join(tips, host), false) => {
+                for tip in tips {
+                    let Some(id) = edited.tip_near(*tip, 1e-6) else {
+                        continue;
+                    };
+                    if one(edited.join_onto(&id, host)) {
+                        took = true;
+                    }
+                }
             }
             (EditOp::Resize(ids, sizes), false) => {
                 for id in ids {
@@ -1159,6 +1187,9 @@ enum DragState {
         id: String,
         grab: [f64; 3],
         elbow: Option<String>,
+        /// It moves on the plane facing the eye: an elbow, or a branch by
+        /// its body; a trunk moves across the plate.
+        free: bool,
         to: Option<PartMove>,
     },
     /// Remove's box or brush: the set it removes from, its supports as
@@ -1350,6 +1381,7 @@ const PART_REACH_MM: f64 = 200.0;
 fn part_target(
     grab: [f64; 3],
     elbow: Option<&str>,
+    free: bool,
     cursor: [f32; 2],
     project: Project<'_>,
 ) -> Option<PartMove> {
@@ -1370,9 +1402,9 @@ fn part_target(
         let n = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
         (n > 1e-9).then(|| d.map(|c| c / n))
     };
-    let dirs = match elbow {
-        None => [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-        Some(_) => {
+    let dirs = match elbow.is_some() || free {
+        false => [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+        true => {
             // The ways that move the elbow most across and up the screen.
             let (x, y, z) = (
                 pull([1.0, 0.0, 0.0])?,
@@ -1415,6 +1447,7 @@ fn part_target(
     // Hundredths of a millimetre: a hair of the cursor asks nothing new.
     let round = |c: f64| (c * 100.0).round() / 100.0;
     Some(match elbow {
+        None if free => PartMove::Shaft(std::array::from_fn(|k| round(p[k] - grab[k]))),
         None => PartMove::Trunk([round(p[0] - grab[0]), round(p[1] - grab[1])]),
         Some(e) => PartMove::Elbow(e.to_owned(), p.map(round)),
     })
@@ -2110,6 +2143,9 @@ impl SupportRun {
             picked: Cell::new(None),
             chosen: RefCell::new(Vec::new()),
             chosen_events: RefCell::new(None),
+            part_focus: RefCell::new(None),
+            part_hover: Cell::new(None),
+            part_arrow: Cell::new(None),
             unborn_hover: RefCell::new(None),
             hand: RefCell::new(load_hand_sizes()),
             share: RefCell::new(Vec::new()),
@@ -2159,6 +2195,17 @@ impl SupportRun {
             ui.on_support_tool_clicked(move |x, y, z, forced| {
                 if let Some(run) = weak.upgrade() {
                     run.on_tool_click_with([x, y, z], forced);
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(&run);
+            ui.on_support_tool_missed(move |add| {
+                if let Some(run) = weak.upgrade()
+                    && let Some(ui) = run.ui.upgrade()
+                    && ui.get_support_tool() == 5
+                {
+                    run.select_click(&ui, None, add);
                 }
             });
         }
@@ -2228,6 +2275,8 @@ impl SupportRun {
         {
             let handler: Rc<dyn SupportDragHandler> = run.clone();
             run.ctrl.set_support_drag_handler(Rc::downgrade(&handler));
+            run.ctrl
+                .set_part_handles(Rc::new(PartHandles(Rc::downgrade(&run))));
         }
         run.reload_presets();
         run.find_card();
@@ -2355,6 +2404,10 @@ impl SupportRun {
         {
             let run = run.clone();
             ui.on_support_picked_reroute(move |own| run.reroute_chosen(own));
+        }
+        {
+            let run = run.clone();
+            ui.on_support_picked_join(move || run.join_chosen());
         }
         {
             let run = run.clone();
@@ -5749,17 +5802,19 @@ impl SupportRun {
     /// picked, alone, or with `add` (Shift) joins the picked ones or leaves
     /// them. A click on no support lets go of them all, a Shift+click
     /// leaves them.
-    fn select_click(&self, ui: &MainWindow, point: [f32; 3], add: bool) {
-        let p = point.map(f64::from);
-        let found = self
-            .sets_in_force()
-            .into_iter()
-            .filter_map(|drawn| Some((drawn.session.remove_distance(p)?, drawn)))
-            .min_by(|a, b| a.0.total_cmp(&b.0))
-            .and_then(|(_, drawn)| {
-                let id = drawn.session.support_near(p, SELECT_REACH_MM)?;
-                Some((drawn.leaf, drawn.session.tip_point(&id)?))
-            });
+    fn select_click(&self, ui: &MainWindow, point: Option<[f32; 3]>, add: bool) {
+        // A click takes the gizmo back to the support's own part.
+        self.part_focus.borrow_mut().take();
+        let found = point.map(|p| p.map(f64::from)).and_then(|p| {
+            self.sets_in_force()
+                .into_iter()
+                .filter_map(|drawn| Some((drawn.session.remove_distance(p)?, drawn)))
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .and_then(|(_, drawn)| {
+                    let id = support_picked_at(&drawn.session, p)?;
+                    Some((drawn.leaf, drawn.session.tip_point(&id)?))
+                })
+        });
         {
             let mut chosen = self.chosen.borrow_mut();
             let same = |a: [f64; 3], b: [f64; 3]| (0..3).all(|k| (a[k] - b[k]).abs() < 1e-6);
@@ -5841,7 +5896,7 @@ impl SupportRun {
         ui.set_support_picked_count(count as i32);
         let pieces: Vec<Arc<OverlayMesh>> = now
             .iter()
-            .filter_map(|(drawn, ids)| drawn.session.drawing_of(ids).ok())
+            .filter_map(|(drawn, ids)| drawn.session.own_drawing_of(ids).ok())
             .filter(|mesh| !mesh.faces().is_empty())
             .map(|mesh| Arc::new(overlay_of(&mesh, OverlayTint::Picked)))
             .collect();
@@ -5861,8 +5916,8 @@ impl SupportRun {
             (
                 ctr!(
                     "Inspector",
-                    "{n} picked support holds others up and stays as it is: pick the ones at the ends.",
-                    "{n} picked supports hold others up and stay as they are: pick the ones at the ends.",
+                    "{n} picked support holds others up: it moves with its gizmo, and the sizes below leave it as it is.",
+                    "{n} picked supports hold others up: they move with the gizmo, and the sizes below leave them as they are.",
                     carrying
                 ),
                 true,
@@ -5871,8 +5926,8 @@ impl SupportRun {
             (
                 ctr!(
                     "Inspector",
-                    "{n} support picked: the numbers below draw it again; drag its trunk or an elbow to move it.",
-                    "{n} supports picked: the numbers below draw them again; drag a trunk or an elbow to move it.",
+                    "{n} support picked: the numbers below draw it again; move it with its gizmo, a cube takes an elbow.",
+                    "{n} supports picked: the numbers below draw them again; pick one alone to move it.",
                     count
                 ),
                 false,
@@ -6022,7 +6077,7 @@ impl SupportRun {
     fn part_grab(&self, press: &DragPoint) -> Option<DragState> {
         let at = press.support?.map(f64::from);
         for (drawn, ids) in self.chosen_now() {
-            let Some(id) = drawn.session.support_near(at, SELECT_REACH_MM) else {
+            let Some(id) = support_picked_at(&drawn.session, at) else {
                 continue;
             };
             if !ids.contains(&id) {
@@ -6032,14 +6087,17 @@ impl SupportRun {
             let elbow = drawn.session.elbow_near(&id, at, ELBOW_GRAB_MM);
             let grab = match &elbow {
                 Some(e) => parts.elbows.iter().find(|(x, _)| x == e)?.1,
-                None if parts.foot.is_some() => at,
+                None if parts.trunk_mm.is_some() => at,
+                // A tip on a knot has no shaft to move.
                 None => return None,
             };
+            let free = elbow.is_some() || parts.foot.is_none();
             return Some(DragState::MovePart {
                 drawn,
                 id,
                 grab,
                 elbow,
+                free,
                 to: None,
             });
         }
@@ -6056,6 +6114,27 @@ impl SupportRun {
         for (drawn, ids) in self.chosen_now() {
             if !ids.is_empty() {
                 self.start_gesture(&ui, drawn, EditOp::Reroute(ids, own), None);
+            }
+        }
+    }
+
+    /// The supports picked after the first that stands on a trunk are
+    /// joined onto that trunk (#377), each set as one Undo step.
+    fn join_chosen(self: &Rc<Self>) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        for (drawn, ids) in self.chosen_now() {
+            let Some(host) = ids.iter().find(|id| drawn.session.is_trunk(id)).cloned() else {
+                continue;
+            };
+            let tips: Vec<[f64; 3]> = ids
+                .iter()
+                .filter(|id| **id != host)
+                .filter_map(|id| drawn.session.tip_point(id))
+                .collect();
+            if !tips.is_empty() {
+                self.start_gesture(&ui, drawn, EditOp::Join(tips, host), None);
             }
         }
     }
@@ -6245,7 +6324,7 @@ impl SupportRun {
             return;
         }
         if tool == 5 {
-            self.select_click(&ui, point, forced);
+            self.select_click(&ui, Some(point), forced);
             return;
         }
         if tool == 6 {
@@ -8757,6 +8836,440 @@ impl SupportRun {
     }
 }
 
+/// A handle of the Select tool's move gizmo (#377).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PartHandle {
+    /// The arrow along world axis `k` (X, Y, Z).
+    Axis(usize),
+    /// The cube on the gizmo's elbow `k`.
+    Elbow(usize),
+}
+
+impl PartHandle {
+    fn drawn(self) -> crate::mesh_render::ToolHandle {
+        match self {
+            PartHandle::Axis(k) => crate::mesh_render::ToolHandle::Axis(k),
+            PartHandle::Elbow(k) => crate::mesh_render::ToolHandle::Corner(k),
+        }
+    }
+}
+
+/// An arrow of the move gizmo being dragged: along world axis `axis`, the
+/// pointer read `from` along it at the press.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ArrowGrab {
+    axis: usize,
+    /// The way the arrow points (world).
+    dir: [f64; 3],
+    from: f64,
+    /// It slides the knot the support hangs from.
+    knot: bool,
+}
+
+/// The Select tool's move gizmo on the one support picked (#377).
+struct PartGizmo {
+    drawn: DrawnSet,
+    id: String,
+    /// The elbow it moves; `None`: the support's shaft.
+    elbow: Option<String>,
+    /// Where the part is (world mm): the gizmo's centre, following a drag.
+    center: [f64; 3],
+    /// Where the part was before the drag in flight.
+    rest: [f64; 3],
+    /// Which world axes it has an arrow along: a trunk moves across the
+    /// plate alone.
+    arrows: [bool; 3],
+    /// The cubes on its other elbows, by id: a press on one takes it.
+    cubes: Vec<(String, [f64; 3])>,
+    /// The cubes on the knots supports hang from on its shaft, by the
+    /// support: a press on one picks that support.
+    hangs: Vec<(String, [f64; 3])>,
+    /// It stands on a trunk of its own (its shaft moves across the plate).
+    trunk: bool,
+    /// The ways its arrows point (world): the world's axes, or for the knot
+    /// a support hangs from, up its host's shaft last.
+    axes: [[f64; 3]; 3],
+    /// It slides the knot the support hangs from along its host's shaft.
+    knot: bool,
+}
+
+/// How far up a hung support from its knot the cube that picks it stands,
+/// mm (at most half way to its first bend).
+const HANG_CUBE_MM: f64 = 1.5;
+
+/// The world's axes, as the gizmo's arrows point.
+const WORLD_AXES: [[f64; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+
+/// How far a gizmo arrow's drag goes for the pointer's travel along it, mm:
+/// to the hundredth; with Shift a tenth of it; with Ctrl to the
+/// millimetre, or with both to the tenth (#275).
+fn arrow_travel(travel: f64, snap: bool, fine: bool) -> f64 {
+    let travel = if fine { travel * 0.1 } else { travel };
+    let step = match (snap, fine) {
+        (true, false) => 1.0,
+        (true, true) => 0.1,
+        _ => 0.01,
+    };
+    (travel / step).round() * step
+}
+
+/// The part move a drag of `grab`'s part `travel` mm along world axis
+/// `axis` asks for.
+fn arrow_move(grab: [f64; 3], elbow: Option<&str>, free: bool, arrow: ArrowGrab, travel: f64) -> PartMove {
+    let d: [f64; 3] = std::array::from_fn(|k| arrow.dir[k] * travel);
+    match elbow {
+        Some(e) => PartMove::Elbow(e.to_owned(), std::array::from_fn(|k| grab[k] + d[k])),
+        None if arrow.knot => PartMove::Knot(grab[2] + d[2]),
+        None if free => PartMove::Shaft(d),
+        None => PartMove::Trunk([d[0], d[1]]),
+    }
+}
+
+/// How near a click must come to a support's axis to pick it, mm, past
+/// its own width.
+const SHAFT_PICK_MM: f64 = 1.5;
+
+/// The support a click of the Select tool at `p` (world mm) picks (#377):
+/// the one whose own shaft passes nearest, trunk, branch or tip; else the
+/// one with a tip, joint or foot nearest, within reach.
+fn support_picked_at(session: &SupportSession, p: [f64; 3]) -> Option<String> {
+    session
+        .shaft_near(p, SHAFT_PICK_MM)
+        .or_else(|| session.support_near(p, SELECT_REACH_MM))
+}
+
+/// The handle of `g` the pointer is on: an elbow's cube first, then an
+/// arrow, as the object's gizmo picks.
+fn part_pick(g: &PartGizmo, pointer: &crate::cut_gizmo::ScenePointer) -> Option<PartHandle> {
+    use crate::cut_gizmo::{ARROW_FROM, CORNER_PICK_PX, HANDLE_PX, LOCKOUT_COS, dot, segment_distance};
+    let at = pointer.cursor;
+    let cube = g
+        .cubes
+        .iter()
+        .chain(&g.hangs)
+        .enumerate()
+        .filter_map(|(k, (_, p))| {
+            let s = (pointer.project)(*p)?;
+            let d = (s[0] - at[0]).hypot(s[1] - at[1]);
+            (d <= CORNER_PICK_PX).then_some((k, d))
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1));
+    if let Some((k, _)) = cube {
+        return Some(PartHandle::Elbow(k));
+    }
+    let shaft = (pointer.scale_at)(g.center)?;
+    let along = |axis: [f64; 3], t: f64| -> [f64; 3] {
+        std::array::from_fn(|k| g.center[k] + axis[k] * shaft * t)
+    };
+    (0..3)
+        .filter(|&k| g.arrows[k])
+        .filter(|&k| dot(g.axes[k], pointer.direction).abs() <= LOCKOUT_COS)
+        .filter_map(|k| {
+            let a = (pointer.project)(along(g.axes[k], ARROW_FROM))?;
+            let b = (pointer.project)(along(g.axes[k], pointer.arrow_tip))?;
+            let d = segment_distance(at, a, b);
+            (d <= HANDLE_PX).then_some((k, d))
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(k, _)| PartHandle::Axis(k))
+}
+
+impl SupportRun {
+    /// The Select tool's move gizmo, while one support is picked and has a
+    /// shaft to move (#377).
+    fn part_gizmo(&self) -> Option<PartGizmo> {
+        let ui = self.ui.upgrade()?;
+        if ui.get_support_tool() != 5 || self.handle.borrow().is_some() {
+            return None;
+        }
+        let mut now = self.chosen_now();
+        if now.len() != 1 || now[0].1.len() != 1 {
+            return None;
+        }
+        let (drawn, mut ids) = now.pop()?;
+        let id = ids.pop()?;
+        let parts = drawn.session.parts_of(&id)?;
+        let focus = self
+            .part_focus
+            .borrow()
+            .as_ref()
+            .filter(|(of, _)| *of == id)
+            .map(|(_, e)| e.clone())
+            .filter(|e| parts.elbows.iter().any(|(x, _)| x == e));
+        let trunk = parts.foot.is_some();
+        // A support hung from another: its gizmo slides the knot it hangs
+        // from, so the way it leans changes.
+        let knot = match (&focus, trunk) {
+            (None, false) => drawn.session.knot_of(&id),
+            _ => None,
+        };
+        if knot.is_none() && parts.trunk_mm.is_none() {
+            return None;
+        }
+        let (rest, axes) = match (&focus, knot) {
+            (Some(e), _) => (parts.elbows.iter().find(|(x, _)| x == e)?.1, WORLD_AXES),
+            (None, Some((at, up))) => (at, [WORLD_AXES[0], WORLD_AXES[1], up]),
+            (None, None) if trunk => (parts.anchor, WORLD_AXES),
+            (None, None) => (
+                std::array::from_fn(|k| (parts.anchor[k] + parts.socket[k]) / 2.0),
+                WORLD_AXES,
+            ),
+        };
+        let center = match self.drag.borrow().as_ref() {
+            Some(DragState::MovePart {
+                id: moving,
+                to: Some(to),
+                ..
+            }) if *moving == id => match to {
+                PartMove::Trunk([dx, dy]) => [rest[0] + dx, rest[1] + dy, rest[2]],
+                PartMove::Shaft(d) => std::array::from_fn(|k| rest[k] + d[k]),
+                PartMove::Elbow(_, p) => *p,
+                PartMove::Knot(z) if axes[2][2].abs() > 1e-6 => {
+                    let t = (z - rest[2]) / axes[2][2];
+                    std::array::from_fn(|k| rest[k] + axes[2][k] * t)
+                }
+                PartMove::Knot(_) => rest,
+            },
+            _ => rest,
+        };
+        let cubes: Vec<(String, [f64; 3])> = parts
+            .elbows
+            .iter()
+            .filter(|(e, _)| Some(e) != focus.as_ref())
+            .cloned()
+            .collect();
+        let room = crate::mesh_render::MAX_TOOL_CORNERS.saturating_sub(cubes.len());
+        // Each a little way up its support from the knot, off the elbow
+        // the knot often sits on.
+        let hangs = drawn
+            .session
+            .hung_from(&id)
+            .into_iter()
+            .take(room)
+            .map(|(h, knot)| {
+                let up = drawn.session.parts_of(&h).map_or(knot, |p| {
+                    p.elbows.first().map_or(p.tip, |(_, e)| *e)
+                });
+                let d: [f64; 3] = std::array::from_fn(|k| up[k] - knot[k]);
+                let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+                let t = if len > 1e-9 { (HANG_CUBE_MM / len).min(0.5) } else { 0.0 };
+                (h, std::array::from_fn(|k| knot[k] + d[k] * t))
+            })
+            .collect();
+        let arrows = match (&focus, knot) {
+            (Some(_), _) => [true, true, true],
+            (None, Some(_)) => [false, false, true],
+            (None, None) => [true, true, !trunk],
+        };
+        Some(PartGizmo {
+            arrows,
+            drawn,
+            id,
+            elbow: focus,
+            center,
+            rest,
+            cubes,
+            hangs,
+            trunk,
+            axes,
+            knot: knot.is_some(),
+        })
+    }
+
+    /// Asks the preview of `part` for the part drag in flight (#377).
+    fn ask_part_preview(self: &Rc<Self>, part: PartMove) {
+        let mut drag = self.drag.borrow_mut();
+        let Some(DragState::MovePart { drawn, id, to, .. }) = drag.as_mut() else {
+            return;
+        };
+        if to.as_ref() == Some(&part) {
+            return;
+        }
+        *to = Some(part.clone());
+        let base = drawn.session.clone();
+        let from = session_key(drawn);
+        let tip = Some(id.clone());
+        drop(drag);
+        self.ask_drag_preview(move |generation| HoverAsk {
+            generation,
+            base,
+            from,
+            point: [0.0; 3],
+            tool: 10,
+            how: AddOptions::default(),
+            tip,
+            tips: Arc::from([]),
+            others: Vec::new(),
+            brace_from: None,
+            part: Some(part),
+        });
+    }
+
+    /// Starts a drag of `g`'s part from `grab` (#377), as a drag of the
+    /// Select tool on the support itself starts.
+    fn start_part_drag(&self, g: PartGizmo, elbow: Option<String>, grab: [f64; 3]) {
+        let free = elbow.is_some() || !g.trunk;
+        self.end_previews();
+        self.ctrl.set_preview_overlay(None);
+        crate::breadcrumbs::note("supports: move part started (gizmo)");
+        *self.drag.borrow_mut() = Some(DragState::MovePart {
+            drawn: g.drawn,
+            id: g.id,
+            grab,
+            elbow,
+            free,
+            to: None,
+        });
+    }
+}
+
+/// The Select tool's move gizmo, as the viewport offers it the pointer in
+/// the Supports tab (#377).
+struct PartHandles(std::rc::Weak<SupportRun>);
+
+impl crate::cut_gizmo::CutHandles for PartHandles {
+    fn active(&self) -> bool {
+        self.0.upgrade().is_some_and(|run| run.part_gizmo().is_some())
+    }
+
+    fn gizmo(
+        &self,
+    ) -> Option<(
+        [f64; 3],
+        crate::mesh_render::ToolGizmo,
+        Option<crate::cut_gizmo::RingTurn>,
+    )> {
+        let run = self.0.upgrade()?;
+        let g = run.part_gizmo()?;
+        let v3 = |p: [f64; 3]| glam::Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32);
+        let cubes: Vec<glam::Vec3> = g.cubes.iter().chain(&g.hangs).map(|(_, p)| v3(*p)).collect();
+        let active = run
+            .part_arrow
+            .get()
+            .map(|a| PartHandle::Axis(a.axis).drawn());
+        let hover = run.part_hover.get().map(PartHandle::drawn);
+        let tool = crate::mesh_render::ToolGizmo::mover(
+            g.axes.map(v3),
+            g.arrows,
+            &cubes,
+            hover,
+            active,
+        );
+        Some((g.center, tool, None))
+    }
+
+    fn hover(&self, pointer: Option<&crate::cut_gizmo::ScenePointer>) -> bool {
+        let Some(run) = self.0.upgrade() else {
+            return false;
+        };
+        let now = pointer.and_then(|p| part_pick(&run.part_gizmo()?, p));
+        run.part_hover.replace(now) != now
+    }
+
+    fn press(&self, pointer: &crate::cut_gizmo::ScenePointer) -> bool {
+        let Some(run) = self.0.upgrade() else {
+            return false;
+        };
+        let Some(g) = run.part_gizmo() else {
+            return false;
+        };
+        match part_pick(&g, pointer) {
+            Some(PartHandle::Axis(axis)) => {
+                let dir = g.axes[axis];
+                let Some(from) = pointer.along_line(g.rest, dir) else {
+                    return false;
+                };
+                run.part_arrow.set(Some(ArrowGrab {
+                    axis,
+                    dir,
+                    from,
+                    knot: g.knot,
+                }));
+                let (elbow, rest) = (g.elbow.clone(), g.rest);
+                run.start_part_drag(g, elbow, rest);
+                true
+            }
+            Some(PartHandle::Elbow(k)) if k >= g.cubes.len() => {
+                // A knot a support hangs from: that support is picked, its
+                // gizmo on the knot.
+                let hanger = &g.hangs[k - g.cubes.len()].0;
+                let Some(tip) = g.drawn.session.tip_point(hanger) else {
+                    return false;
+                };
+                *run.chosen.borrow_mut() = vec![(g.drawn.leaf, tip)];
+                run.part_focus.borrow_mut().take();
+                run.part_hover.set(None);
+                if let Some(ui) = run.ui.upgrade() {
+                    run.show_chosen(&ui);
+                }
+                true
+            }
+            Some(PartHandle::Elbow(k)) => {
+                let (e, at) = g.cubes[k].clone();
+                *run.part_focus.borrow_mut() = Some((g.id.clone(), e.clone()));
+                run.part_arrow.set(None);
+                run.start_part_drag(g, Some(e), at);
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn drag(&self, pointer: &crate::cut_gizmo::ScenePointer) {
+        let Some(run) = self.0.upgrade() else {
+            return;
+        };
+        let (grab, elbow, free) = match run.drag.borrow().as_ref() {
+            Some(DragState::MovePart {
+                grab, elbow, free, ..
+            }) => (*grab, elbow.clone(), *free),
+            _ => return,
+        };
+        let part = match run.part_arrow.get() {
+            Some(arrow) => {
+                let Some(t) = pointer.along_line(grab, arrow.dir) else {
+                    return;
+                };
+                let (snap, fine) = run.ctrl.pointer_mods();
+                let travel = arrow_travel(t - arrow.from, snap, fine);
+                arrow_move(grab, elbow.as_deref(), free, arrow, travel)
+            }
+            None => {
+                // A cube dragged: its elbow on the plane facing the eye.
+                let project = |p: [f32; 3]| {
+                    (pointer.project)(p.map(f64::from)).map(|q| [q[0] as f32, q[1] as f32])
+                };
+                let hits = |pixels: &[[f32; 2]]| vec![None; pixels.len()];
+                let view = DragView {
+                    project: &project,
+                    hits: &hits,
+                };
+                let cursor = [pointer.cursor[0] as f32, pointer.cursor[1] as f32];
+                let Some(part) = part_target(grab, elbow.as_deref(), free, cursor, &view) else {
+                    return;
+                };
+                part
+            }
+        };
+        run.ask_part_preview(part);
+    }
+
+    fn release(&self, pointer: Option<&crate::cut_gizmo::ScenePointer>, moved: bool) {
+        let Some(run) = self.0.upgrade() else {
+            return;
+        };
+        run.part_arrow.set(None);
+        SupportDragHandler::drag_end(&*run, moved && pointer.is_some());
+        if !moved && let Some(ui) = run.ui.upgrade() {
+            run.show_chosen(&ui);
+        }
+    }
+
+    fn click(&self, _: &crate::cut_gizmo::ScenePointer) -> bool {
+        false
+    }
+}
+
 impl SupportDragHandler for SupportRun {
     fn drag_start(&self, kind: SupportDragKind, press: &DragPoint, project: Project<'_>) -> bool {
         let Some(run) = self.me() else {
@@ -8916,9 +9429,11 @@ impl SupportDragHandler for SupportRun {
                 id,
                 grab,
                 elbow,
+                free,
                 to,
             }) => {
-                let Some(part) = part_target(*grab, elbow.as_deref(), at.cursor, project) else {
+                let Some(part) = part_target(*grab, elbow.as_deref(), *free, at.cursor, project)
+                else {
                     return;
                 };
                 if to.as_ref() == Some(&part) {
@@ -9260,6 +9775,7 @@ fn lost_line(edit: &LostEdit) -> slint::SharedString {
         HandEditKind::Added => ctr!("SupportDialog", "support added at {}: {}", at, why),
         HandEditKind::Moved => ctr!("SupportDialog", "support moved to {}: {}", at, why),
         HandEditKind::Braced => ctr!("SupportDialog", "brace from {}: {}", at, why),
+        HandEditKind::Reshaped => ctr!("SupportDialog", "support edited at {}: {}", at, why),
     }
 }
 
@@ -13725,6 +14241,281 @@ mod hand_edit_tests {
                 (foot[1] - was[1] - delta[1]).abs() < 0.05,
                 "{foot:?} from {was:?}"
             );
+            assert!(document.undo().unwrap(), "one undo");
+            assert!(Arc::ptr_eq(&in_force_session(&run).unwrap(), &generated));
+        });
+    }
+
+    /// A pointer straight above the world point under `cursor`, with the
+    /// camera of [`FROM_ABOVE`] (10 px a millimetre) and a 12 mm gizmo shaft.
+    fn pointer_above(cursor: [f64; 2]) -> crate::cut_gizmo::ScenePointer {
+        crate::cut_gizmo::ScenePointer {
+            origin: [cursor[0] / 10.0, cursor[1] / 10.0, 100.0],
+            direction: [0.0, 0.0, -1.0],
+            cursor,
+            project: Box::new(|p| Some([p[0] * 10.0, p[1] * 10.0])),
+            scale_at: Box::new(|_| Some(12.0)),
+            ring_radius: 0.85,
+            arrow_tip: 1.18,
+        }
+    }
+
+    /// #377: a gizmo arrow's drag snaps to the millimetre with Ctrl, moves
+    /// a tenth as far with Shift, and to the tenth with both.
+    #[test]
+    fn an_arrow_drag_snaps_and_moves_finely() {
+        assert!((arrow_travel(2.345, false, false) - 2.35).abs() < 1e-9);
+        assert!((arrow_travel(2.6, true, false) - 3.0).abs() < 1e-9);
+        assert!((arrow_travel(2.6, false, true) - 0.26).abs() < 1e-9);
+        assert!((arrow_travel(2.6, true, true) - 0.3).abs() < 1e-9);
+        let arrow = |axis: usize, knot: bool| ArrowGrab {
+            axis,
+            dir: WORLD_AXES[axis],
+            from: 0.0,
+            knot,
+        };
+        assert_eq!(
+            arrow_move([1.0, 2.0, 3.0], None, false, arrow(1, false), 2.0),
+            PartMove::Trunk([0.0, 2.0])
+        );
+        assert_eq!(
+            arrow_move([1.0, 2.0, 3.0], None, true, arrow(2, false), 1.0),
+            PartMove::Shaft([0.0, 0.0, 1.0])
+        );
+        assert_eq!(
+            arrow_move([1.0, 2.0, 3.0], Some("e"), true, arrow(0, false), 1.0),
+            PartMove::Elbow("e".to_owned(), [2.0, 2.0, 3.0])
+        );
+        assert_eq!(
+            arrow_move([1.0, 2.0, 3.0], None, true, arrow(2, true), -1.5),
+            PartMove::Knot(1.5)
+        );
+    }
+
+    /// #377: with one trunk picked the Select tool shows a move gizmo at
+    /// its foot, arrows across the plate alone; dragging its X arrow moves
+    /// the trunk that far as one undo, and the gizmo goes with more picked.
+    #[test]
+    fn a_picked_trunk_moves_by_its_gizmo_arrow() {
+        on_fresh_slint_thread(|| {
+            use crate::cut_gizmo::CutHandles;
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run) = supported_slab(&window);
+            let generated = in_force_session(&run).expect("editable");
+            let (id, dx) = generated
+                .tips()
+                .into_iter()
+                .filter(|(id, _)| generated.is_trunk(id))
+                .find_map(|(id, _)| {
+                    [-2.0, 2.0]
+                        .into_iter()
+                        .find(|d| {
+                            generated
+                                .preview_move_trunk(&id, [*d, 0.0])
+                                .is_ok_and(|(p, _)| p.valid)
+                        })
+                        .map(|d| (id, d))
+                })
+                .expect("a trunk that moves");
+            let parts = generated.parts_of(&id).unwrap();
+            window.set_support_page(1);
+            window.set_support_tool(5);
+            run.on_tool_changed();
+            run.on_tool_click_with(parts.tip.map(|c| c as f32), false);
+            assert_eq!(window.get_support_picked_count(), 1);
+            let handles = PartHandles(Rc::downgrade(&run));
+            assert!(handles.active());
+            let (center, tool, _) = handles.gizmo().expect("its gizmo");
+            assert_eq!(tool.arrows, [true, true, false], "a trunk moves across");
+            assert!((center[0] - parts.anchor[0]).abs() < 1e-9);
+            // On its X arrow, then along it.
+            let on = [(center[0] + 12.0 * 0.9) * 10.0, center[1] * 10.0];
+            assert!(handles.press(&pointer_above(on)));
+            handles.drag(&pointer_above([on[0] + dx * 10.0, on[1]]));
+            wait_preview(&run);
+            let (moved_center, _, _) = handles.gizmo().expect("still there");
+            assert!((moved_center[0] - center[0] - dx).abs() < 1e-6, "it follows");
+            handles.release(Some(&pointer_above([on[0] + dx * 10.0, on[1]])), true);
+            settle_click(&run);
+            let moved = in_force_session(&run).unwrap();
+            let now = moved.tip_near(parts.tip, 0.05).expect("its tip stays");
+            let foot = moved.parts_of(&now).unwrap().foot.unwrap();
+            let was = parts.foot.unwrap();
+            assert!((foot[0] - was[0] - dx).abs() < 0.02, "{foot:?} from {was:?}");
+            assert!((foot[1] - was[1]).abs() < 1e-6);
+            assert!(document.undo().unwrap(), "one undo");
+            assert!(Arc::ptr_eq(&in_force_session(&run).unwrap(), &generated));
+            // A press off its handles is not the gizmo's.
+            assert!(!handles.press(&pointer_above([-500.0, -500.0])));
+        });
+    }
+
+    /// #377: a trunk others hang from shows a cube on each knot they hang
+    /// from; a press on one picks that support, its gizmo on the knot.
+    #[test]
+    fn a_knot_cube_picks_the_support_hung_there() {
+        on_fresh_slint_thread(|| {
+            use crate::cut_gizmo::CutHandles;
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (_document, run) = supported_slab(&window);
+            let generated = in_force_session(&run).expect("editable");
+            let (trunk, hung) = generated
+                .tips()
+                .into_iter()
+                .map(|(id, _)| id)
+                .filter(|id| generated.is_trunk(id))
+                .find_map(|id| {
+                    let hung = generated.hung_from(&id);
+                    (!hung.is_empty()).then_some((id, hung))
+                })
+                .expect("a trunk something hangs from");
+            window.set_support_page(1);
+            window.set_support_tool(5);
+            run.on_tool_changed();
+            run.on_tool_click_with(generated.tip_point(&trunk).unwrap().map(|c| c as f32), false);
+            let g = run.part_gizmo().expect("its gizmo");
+            assert_eq!(g.hangs.len(), hung.len(), "a cube on each knot");
+            let (hanger, knot) = hung[0].clone();
+            let cube = g.hangs[0].1;
+            assert!(cube[2] > knot[2] + 0.1, "the cube stands up its support, off the knot");
+            let handles = PartHandles(Rc::downgrade(&run));
+            // From the side: from above the knot stands right over the
+            // trunk's elbow.
+            let side = crate::cut_gizmo::ScenePointer {
+                origin: [cube[0], -100.0, cube[2]],
+                direction: [0.0, 1.0, 0.0],
+                cursor: [cube[0] * 10.0, -cube[2] * 10.0],
+                project: Box::new(|p| Some([p[0] * 10.0, -p[2] * 10.0])),
+                scale_at: Box::new(|_| Some(12.0)),
+                ring_radius: 0.85,
+                arrow_tip: 1.18,
+            };
+            assert!(handles.press(&side));
+            let now = run.chosen_now();
+            assert_eq!(now[0].1, vec![hanger.clone()], "the support hung there");
+            let g = run.part_gizmo().expect("its gizmo");
+            assert!(g.knot && (0..3).all(|k| (g.center[k] - knot[k]).abs() < 1e-9));
+        });
+    }
+
+    /// #377: a trunk is picked by a click low on its shaft, far from its
+    /// tip and elbows; the scene shows it alone; a click on no support lets
+    /// it go.
+    #[test]
+    fn a_trunk_is_picked_low_on_its_shaft_and_let_go_on_a_miss() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (_document, run) = supported_slab(&window);
+            let generated = in_force_session(&run).expect("editable");
+            let (id, foot) = generated
+                .tips()
+                .into_iter()
+                .filter_map(|(id, _)| Some((id.clone(), generated.parts_of(&id)?.foot?)))
+                .next()
+                .expect("a trunk");
+            window.set_support_page(1);
+            window.set_support_tool(5);
+            run.on_tool_changed();
+            let low = [foot[0], foot[1], foot[2] + 1.0];
+            run.on_tool_click_with(low.map(|c| c as f32), false);
+            let now = run.chosen_now();
+            assert_eq!(now.len(), 1);
+            assert_eq!(now[0].1, vec![id.clone()], "the trunk under the click");
+            let own = generated.own_drawing_of(std::slice::from_ref(&id)).unwrap();
+            let shown: usize = run.last_ghost.borrow().iter().map(|m| m.indices.len() / 3).sum();
+            assert_eq!(shown, own.faces().len(), "it alone is lit");
+            window.invoke_support_tool_missed(false);
+            assert_eq!(window.get_support_picked_count(), 0, "a miss lets it go");
+        });
+    }
+
+    /// #377: a support hung from another shows a gizmo with one arrow, up
+    /// its host's shaft, that slides the knot it hangs from.
+    #[test]
+    fn a_hung_support_slides_its_knot_by_its_gizmo() {
+        on_fresh_slint_thread(|| {
+            use crate::cut_gizmo::CutHandles;
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (_document, run) = supported_slab(&window);
+            let generated = in_force_session(&run).expect("editable");
+            let trunks: Vec<String> = generated
+                .tips()
+                .into_iter()
+                .map(|(id, _)| id)
+                .filter(|id| generated.is_trunk(id))
+                .collect();
+            let (host, joiner) = trunks
+                .iter()
+                .flat_map(|a| trunks.iter().map(move |b| (a, b)))
+                .find(|(a, b)| a != b && generated.as_ref().clone().join_onto(b, a).is_ok())
+                .expect("two trunks that join");
+            let host_tip = generated.tip_point(host).unwrap();
+            let joiner_tip = generated.tip_point(joiner).unwrap();
+            window.set_support_page(1);
+            window.set_support_tool(5);
+            run.on_tool_changed();
+            run.on_tool_click_with(host_tip.map(|c| c as f32), false);
+            run.on_tool_click_with(joiner_tip.map(|c| c as f32), true);
+            run.join_chosen();
+            settle_click(&run);
+            let joined = in_force_session(&run).unwrap();
+            let branch = joined.tip_near(joiner_tip, 1e-6).unwrap();
+            let (knot, up) = joined.knot_of(&branch).expect("it hangs from a knot");
+            run.on_tool_click_with(joiner_tip.map(|c| c as f32), false);
+            let handles = PartHandles(Rc::downgrade(&run));
+            let (center, tool, _) = handles.gizmo().expect("its gizmo");
+            assert_eq!(tool.arrows, [false, false, true], "one arrow up the host");
+            assert!((0..3).all(|k| (center[k] - knot[k]).abs() < 1e-9), "at the knot");
+            let g = run.part_gizmo().unwrap();
+            assert!(g.knot && (0..3).all(|k| (g.axes[2][k] - up[k]).abs() < 1e-9));
+            assert!(
+                joined
+                    .preview_slide_knot(&branch, knot[2] - 1.0)
+                    .is_ok_and(|(p, done)| p.valid && done.is_some()),
+                "a slide down the host"
+            );
+        });
+    }
+
+    /// #377: picked supports join onto the trunk of the first picked that
+    /// stands on one, their tips where they were, as one undo.
+    #[test]
+    fn picked_supports_join_onto_the_first_trunk() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run) = supported_slab(&window);
+            let generated = in_force_session(&run).expect("editable");
+            let trunks: Vec<String> = generated
+                .tips()
+                .into_iter()
+                .map(|(id, _)| id)
+                .filter(|id| generated.is_trunk(id))
+                .collect();
+            let (host, joiner) = trunks
+                .iter()
+                .flat_map(|a| trunks.iter().map(move |b| (a, b)))
+                .find(|(a, b)| a != b && generated.as_ref().clone().join_onto(b, a).is_ok())
+                .expect("two trunks that join");
+            let host_tip = generated.tip_point(host).unwrap();
+            let joiner_tip = generated.tip_point(joiner).unwrap();
+            window.set_support_page(1);
+            window.set_support_tool(5);
+            run.on_tool_changed();
+            run.on_tool_click_with(host_tip.map(|c| c as f32), false);
+            run.on_tool_click_with(joiner_tip.map(|c| c as f32), true);
+            assert_eq!(window.get_support_picked_count(), 2);
+            use crate::cut_gizmo::CutHandles;
+            assert!(
+                PartHandles(Rc::downgrade(&run)).gizmo().is_none(),
+                "two picked: no gizmo"
+            );
+            run.join_chosen();
+            settle_click(&run);
+            let joined = in_force_session(&run).unwrap();
+            let now = joined.tip_near(joiner_tip, 1e-6).expect("its tip stays");
+            assert!(!joined.is_trunk(&now), "it hangs from the first");
+            let count = |s: &SupportSession| s.tips().iter().filter(|(id, _)| s.is_trunk(id)).count();
+            assert_eq!(count(&joined) + 1, count(&generated));
             assert!(document.undo().unwrap(), "one undo");
             assert!(Arc::ptr_eq(&in_force_session(&run).unwrap(), &generated));
         });

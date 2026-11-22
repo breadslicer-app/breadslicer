@@ -14,7 +14,9 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::{Arc, OnceLock};
 
-use bread_support_bracing::auto_brace::{HandBrace, HandBraceRefusal, brace_new_shaft, hand_brace};
+use bread_support_bracing::auto_brace::{
+    HandBrace, HandBraceRefusal, LostBrace, brace_again, brace_new_shaft, hand_brace,
+};
 use bread_support_geom::bvh::{MeshBvh, Side};
 use bread_support_geom::geom::ray::Ray;
 use bread_support_geom::geom::{Matrix4, Vec3};
@@ -86,6 +88,9 @@ const MANUAL_MAX_ANGLE_DEG: f64 = 45.0;
 const FORCED_ATTACH_REACH_MM: f64 = 30.0;
 /// How far from vertical a forced attach may lean.
 const FORCED_MAX_ANGLE_DEG: f64 = 60.0;
+/// How far a support joined onto a chosen one reaches for it (#377): the
+/// person picked the host, so it may stand farther than the nearest.
+const JOIN_REACH_MM: f64 = 60.0;
 /// How far from a support a click may land and still remove it.
 const REMOVE_REACH_MM: f64 = 3.0;
 /// How far off a brace's surface a point may lie and still be on it, for
@@ -703,13 +708,18 @@ fn hang(
     ctx: &PlanCtx<'_>,
     reach_mm: f64,
     order: FanHostOrder,
+    host: Option<&str>,
 ) -> Result<(), AddNote> {
     let live = ctx.live();
     let max_angle_deg = live
         .auto_support
         .leaf_fan_max_angle_deg
         .min(member_max_angle_from_vertical_deg(live));
-    let pool = hand_pool(state);
+    let mut pool = hand_pool(state);
+    // Joined onto a chosen support (#377): its shaft alone.
+    if let Some(host) = host {
+        pool.retain(|p| p.host_id == host);
+    }
     let fan = fan_leaf_to_host(
         &FanArgs {
             target: candidate.tip_pos,
@@ -1559,6 +1569,18 @@ impl SupportSession {
         how: &AddOptions,
         own: bool,
     ) -> Result<Placed, (EditError, Option<AddNote>)> {
+        self.place_at_on(at, how, own, None)
+    }
+
+    /// [`Self::place_at_as`]; with `host`, an attach hangs the support
+    /// from that support's shaft alone (#377).
+    fn place_at_on(
+        &mut self,
+        at: At,
+        how: &AddOptions,
+        own: bool,
+        host: Option<&str>,
+    ) -> Result<Placed, (EditError, Option<AddNote>)> {
         // The tip goes exactly where the person points (#3): a surface that
         // looks up is no place for one, nor is a wall (a run keeps its
         // trunks off one), and that is said rather than the tip going to
@@ -1635,8 +1657,13 @@ impl SupportSession {
                     &candidate,
                     &mut state,
                     &ctx,
-                    FORCED_ATTACH_REACH_MM,
+                    if host.is_some() {
+                        JOIN_REACH_MM
+                    } else {
+                        FORCED_ATTACH_REACH_MM
+                    },
                     FanHostOrder::Nearest,
+                    host,
                 )
                 .map(|()| None)
                 .map_err(|note| (EditError::CannotAttach(note), Some(note)))
@@ -1645,7 +1672,14 @@ impl SupportSession {
                 let hung = if own {
                     Err(AddNote::TooFar)
                 } else {
-                    hang(&candidate, &mut state, &ctx, reach, FanHostOrder::Steepest)
+                    hang(
+                        &candidate,
+                        &mut state,
+                        &ctx,
+                        reach,
+                        FanHostOrder::Steepest,
+                        None,
+                    )
                 };
                 match hung {
                     Ok(()) => Ok(None),
@@ -2421,6 +2455,12 @@ impl SupportSession {
                 }
             }
         }
+        // A support gone takes its part edits along (#377).
+        for id in picked.iter().filter(|id| gone.contains(*id)) {
+            if let Some((tip, _)) = self.support_tip(id) {
+                self.hand_log.routed.retain(|r| dist(r.tip, tip) > 1e-6);
+            }
+        }
         for id in picked {
             if !gone.contains(id) || is_hand_id(id) {
                 continue;
@@ -2580,6 +2620,26 @@ impl SupportSession {
                     }
                     EditError::CannotBrace(why) => LostWhy::BraceRefused(why),
                 })),
+            }
+        }
+        // Supports edited part by part (#377), once the supports they name
+        // stand where they were placed.
+        for routed in &log.routed {
+            if cancelled() {
+                return None;
+            }
+            match session.replay_routed(routed) {
+                Ok(()) => report.kept += 1,
+                Err(err) => report.lost.push(LostEdit {
+                    kind: HandEditKind::Reshaped,
+                    at: routed.tip,
+                    why: match err {
+                        EditError::NothingThere => LostWhy::SurfaceChanged,
+                        EditError::CannotAttach(AddNote::CarriesOthers) => LostWhy::CarriesOthers,
+                        EditError::CannotAttach(_) => LostWhy::CannotAttach,
+                        _ => LostWhy::NoRoute,
+                    },
+                }),
             }
         }
         // The braces last: a support placed by hand may hold one end, and a
@@ -2782,6 +2842,94 @@ impl SupportSession {
             .filter(|trunk| self.support_tip(trunk).is_some())
     }
 
+    /// The support whose own shaft passes nearest `point` (world mm), within
+    /// `reach_mm` of its axis (#377): the trunk for a point on a trunk, the
+    /// branch for a point on that branch, as each is drawn, not its nearest
+    /// tip or joint.
+    pub fn shaft_near(&self, point: [f64; 3], reach_mm: f64) -> Option<String> {
+        self.support_paths()
+            .into_iter()
+            .filter_map(|(id, path)| {
+                let d = match path.len() {
+                    0 => return None,
+                    1 => dist(point, path[0]),
+                    _ => path
+                        .windows(2)
+                        .map(|w| segment_dist(point, w[0], w[1]))
+                        .fold(f64::INFINITY, f64::min),
+                };
+                Some((d, id))
+            })
+            .filter(|(d, _)| *d <= reach_mm)
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, id)| id)
+    }
+
+    /// The parts of supports `ids` alone, drawn (#377): each one's shaft,
+    /// tip and foot, without what hangs from it.
+    pub fn own_drawing_of(&self, ids: &[String]) -> Result<IndexedMesh, EditError> {
+        let c = &self.state.collections;
+        let own: HashSet<String> = ids
+            .iter()
+            .flat_map(|id| {
+                // A trunk is drawn with its root; a support hung from
+                // another with the knot it hangs from.
+                let root = c.trunks.get(id).map(|t| t.root_id.clone());
+                let knot = c
+                    .branches
+                    .get(id)
+                    .map(|b| b.parent_knot_id.clone())
+                    .or_else(|| c.leaves.get(id).map(|l| l.parent_knot_id.clone()));
+                std::iter::once(id.clone()).chain(root).chain(knot)
+            })
+            .collect();
+        self.mesh_of(|id| own.contains(id))
+    }
+
+    /// Braces shaft `id` to the shafts beside it as a run braces its
+    /// trunks (#377): after it moved, the braces it lost come back where
+    /// they still reach.
+    pub(crate) fn rebrace(&mut self, id: &str) {
+        self.brace_shaft(id, None);
+    }
+
+    /// Lays again on shaft `id` the braces `lost` it had before it moved
+    /// (#377), between the same shafts at the same heights.
+    pub(crate) fn brace_again(&mut self, id: &str, lost: &[LostBrace]) {
+        self.brace_shaft(id, Some(lost));
+    }
+
+    /// Braces shaft `id`: again as it was (`lost`), or to its neighbours.
+    fn brace_shaft(&mut self, id: &str, lost: Option<&[LostBrace]>) {
+        if self.settings.supports.auto_support.debug_skip_auto_bracing {
+            return;
+        }
+        let Some(model) = self.support_tip(id).map(|(_, m)| m.to_owned()) else {
+            return;
+        };
+        let Some(i) = self.models.iter().position(|m| m.id == model) else {
+            return;
+        };
+        let bvh = self.bvh(i);
+        let meshes: BraceMeshes<'_> = [(
+            model,
+            BraceMesh {
+                bvh: &bvh.bvh,
+                matrix: bvh.to_world,
+            },
+        )]
+        .into();
+        let settings = self.settings.clone();
+        let (bracing, live) = (&settings.supports.auto_bracing, &settings.supports);
+        let braced = match lost {
+            Some(lost) => brace_again(&mut self.state, id, lost, bracing, live, &meshes),
+            None => brace_new_shaft(&mut self.state, id, bracing, live, &meshes),
+        };
+        if braced > 0 {
+            self.removal_index = Arc::default();
+        }
+    }
+
     /// Whether other supports hang from support `id`: one that cannot be
     /// moved or drawn again alone (#567).
     pub fn carries_others(&self, id: &str) -> bool {
@@ -2884,6 +3032,18 @@ impl SupportSession {
         how: &AddOptions,
         own: bool,
     ) -> Result<(Placed, HashSet<String>), (EditError, Option<AddNote>)> {
+        self.move_in_place_on(tip, to, how, own, None)
+    }
+
+    /// [`Self::move_in_place_as`]; with `host`, as [`Self::place_at_on`].
+    fn move_in_place_on(
+        &mut self,
+        tip: &str,
+        to: At,
+        how: &AddOptions,
+        own: bool,
+        host: Option<&str>,
+    ) -> Result<(Placed, HashSet<String>), (EditError, Option<AddNote>)> {
         let gone = self
             .removal_of(&[tip.to_owned()])
             .map_err(|err| (err, None))?;
@@ -2904,6 +3064,7 @@ impl SupportSession {
             ));
         }
         let how = self.moved_how(tip, how);
+        let old_tip = self.support_tip(tip).map(|(at, _)| at);
         // The log (#408): a support of the run keeps where the run had it,
         // one placed by hand where it first came from.
         let moved_from = match self.hand_log.placed.iter().position(|p| p.id == tip) {
@@ -2914,11 +3075,23 @@ impl SupportSession {
         self.forget_braces(&gone);
         self.state.collections = filtered(&self.state.collections, |id| !gone.contains(id));
         self.removal_index = Arc::default();
-        let placed = self.place_at_as(to, &how, own)?;
+        let placed = self.place_at_on(to, &how, own, host)?;
         if let Some(last) = self.hand_log.placed.last_mut()
             && placed.added.contains(&last.id)
         {
             last.moved_from = moved_from;
+        }
+        // A tip moved elsewhere leaves its part edits behind (#377); one
+        // routed again where it is keeps them.
+        if let Some(old) = old_tip {
+            let stays = placed
+                .added
+                .iter()
+                .filter_map(|id| self.support_tip(id))
+                .any(|(at, _)| dist(at, old) <= 1e-6);
+            if !stays {
+                self.hand_log.routed.retain(|r| dist(r.tip, old) > 1e-6);
+            }
         }
         Ok((placed, gone))
     }
