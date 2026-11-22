@@ -8,7 +8,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use sc_arrange::Plate;
+use bread_arrange::Plate;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_scene::{LeafPayload, NodeId, PAINTED, PaintChanges, PaintKind, Scene, UNPAINTED};
@@ -85,7 +85,7 @@ fn apart(a: &AffineTransform3D, b: &AffineTransform3D) -> bool {
 }
 
 /// Whether the fill moved the model of body `body` to let more copies in.
-fn moved(filled: &sc_arrange::Filled, body: usize) -> bool {
+fn moved(filled: &bread_arrange::Filled, body: usize) -> bool {
     filled.moved.iter().any(|m| m.source == body)
 }
 
@@ -356,8 +356,8 @@ fn fill_bed_on_a_real_model() {
     // In the plate's middle, as it stands.
     let t = world.translation();
     let world = AffineTransform3D::from_linear_and_translation(*world.linear(), [0.0, 0.0, t[2]]);
-    let mut bodies = vec![sc_arrange::Body {
-        parts: vec![sc_arrange::Part { mesh, world }],
+    let mut bodies = vec![bread_arrange::Body {
+        parts: vec![bread_arrange::Part { mesh, world }],
         fixed: false,
     }];
     // Measured with the supports it will get, as the window does (#556):
@@ -393,7 +393,7 @@ fn fill_bed_on_a_real_model() {
         bodies[0].parts.len()
     );
     for squeeze in [false, true] {
-        let s = sc_arrange::Settings {
+        let s = bread_arrange::Settings {
             squeeze,
             ..ArrangeOptions {
                 one_raft,
@@ -403,7 +403,7 @@ fn fill_bed_on_a_real_model() {
             .settings()
         };
         let started = std::time::Instant::now();
-        let filled = sc_arrange::fill(
+        let filled = bread_arrange::fill(
             &bodies,
             &[0],
             &plate,
@@ -523,8 +523,8 @@ fn fill_then_generate_keeps_the_supports_on_the_plate() {
             0.0
         },
     };
-    let mut bodies = vec![sc_arrange::Body {
-        parts: vec![sc_arrange::Part {
+    let mut bodies = vec![bread_arrange::Body {
+        parts: vec![bread_arrange::Part {
             mesh: mesh.clone(),
             world,
         }],
@@ -538,7 +538,7 @@ fn fill_then_generate_keeps_the_supports_on_the_plate() {
         ..ArrangeOptions::default()
     }
     .settings();
-    let filled = sc_arrange::fill(
+    let filled = bread_arrange::fill(
         &bodies,
         &[0],
         &plate,

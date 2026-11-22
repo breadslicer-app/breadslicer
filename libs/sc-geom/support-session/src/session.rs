@@ -2838,6 +2838,78 @@ impl SupportSession {
             .filter(|trunk| self.support_tip(trunk).is_some())
     }
 
+    /// The support whose own shaft passes nearest `point` (world mm), within
+    /// `reach_mm` of its axis (#377): the trunk for a point on a trunk, the
+    /// branch for a point on that branch, as each is drawn, not its nearest
+    /// tip or joint.
+    pub fn shaft_near(&self, point: [f64; 3], reach_mm: f64) -> Option<String> {
+        self.support_paths()
+            .into_iter()
+            .filter_map(|(id, path)| {
+                let d = match path.len() {
+                    0 => return None,
+                    1 => dist(point, path[0]),
+                    _ => path
+                        .windows(2)
+                        .map(|w| segment_dist(point, w[0], w[1]))
+                        .fold(f64::INFINITY, f64::min),
+                };
+                Some((d, id))
+            })
+            .filter(|(d, _)| *d <= reach_mm)
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, id)| id)
+    }
+
+    /// The parts of supports `ids` alone, drawn (#377): each one's shaft,
+    /// tip and foot, without what hangs from it.
+    pub fn own_drawing_of(&self, ids: &[String]) -> Result<IndexedMesh, EditError> {
+        let c = &self.state.collections;
+        let own: HashSet<String> = ids
+            .iter()
+            .flat_map(|id| {
+                let root = c.trunks.get(id).map(|t| t.root_id.clone());
+                std::iter::once(id.clone()).chain(root)
+            })
+            .collect();
+        self.mesh_of(|id| own.contains(id))
+    }
+
+    /// Braces shaft `id` to the shafts beside it as a run braces its
+    /// trunks (#377): after it moved, the braces it lost come back where
+    /// they still reach.
+    pub(crate) fn rebrace(&mut self, id: &str) {
+        if self.settings.supports.auto_support.debug_skip_auto_bracing {
+            return;
+        }
+        let Some(model) = self.support_tip(id).map(|(_, m)| m.to_owned()) else {
+            return;
+        };
+        let Some(i) = self.models.iter().position(|m| m.id == model) else {
+            return;
+        };
+        let bvh = self.bvh(i);
+        let meshes: BraceMeshes<'_> = [(
+            model,
+            BraceMesh {
+                bvh: &bvh.bvh,
+                matrix: bvh.to_world,
+            },
+        )]
+        .into();
+        let settings = self.settings.clone();
+        let braced = brace_new_shaft(
+            &mut self.state,
+            id,
+            &settings.supports.auto_bracing,
+            &settings.supports,
+            &meshes,
+        );
+        if braced > 0 {
+            self.removal_index = Arc::default();
+        }
+    }
+
     /// Whether other supports hang from support `id`: one that cannot be
     /// moved or drawn again alone (#567).
     pub fn carries_others(&self, id: &str) -> bool {

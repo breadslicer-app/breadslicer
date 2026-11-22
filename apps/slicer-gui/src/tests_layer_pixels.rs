@@ -17,7 +17,7 @@ use sc_sl1cer::geom2d::Point2D;
 use sc_sl1cer::profile::{LayerSchedule, UniformSchedule};
 use sc_sla_formats::layer_images::layer_pixels;
 use sc_sla_formats::{AnycubicZipVariant, CxdlpVersion, PrinterFileFormat};
-use sc_sla_formats_uvtools::read::{read_anycubic_zip, read_cxdlp};
+use bread_sla_formats_uvtools::read::{read_anycubic_zip, read_cxdlp};
 
 use super::*;
 
@@ -87,7 +87,7 @@ fn shown(
     format: PrinterFileFormat,
 ) -> Shown {
     // The formats' writers, and what they store.
-    sc_sla_formats_uvtools::install();
+    bread_sla_formats_uvtools::install();
     let setup = export_raster(contours, printer, aa);
     let raster = layer_pixels(&contours.stack().layers()[1], &setup);
     let layer = PixelLayer::new(&raster, &setup);
@@ -144,7 +144,7 @@ fn export(
     format: PrinterFileFormat,
     name: &str,
 ) -> Vec<u8> {
-    sc_sla_formats_uvtools::install();
+    bread_sla_formats_uvtools::install();
     let job = prepare_export(
         contours.clone(),
         printer,

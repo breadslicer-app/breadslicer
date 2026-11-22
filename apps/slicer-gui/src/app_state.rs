@@ -3576,14 +3576,14 @@ mod window_wiring_tests {
                 .flatten()
                 .expect("the cube's mesh");
             let started = std::time::Instant::now();
-            while sc_arrange::kept_parts_of(&mesh) == 0
+            while bread_arrange::kept_parts_of(&mesh) == 0
                 && started.elapsed() < std::time::Duration::from_secs(10)
             {
                 settle();
                 thread::sleep(std::time::Duration::from_millis(50));
             }
             (
-                sc_arrange::kept_parts_of(&mesh),
+                bread_arrange::kept_parts_of(&mesh),
                 crate::support_forecast::is_kept_for(&mesh),
             )
         });
@@ -5713,7 +5713,7 @@ mod window_wiring_tests {
                 println!(
                     "before run {run} (gap {gap}): window busy {busy:.2} s, longest pass {longest:.2} s, {} drawings, footprints {:.0} MB, memory {:.0} MB",
                     document.support_sessions().borrow().len(),
-                    sc_arrange::kept_bytes() as f64 / 1e6,
+                    bread_arrange::kept_bytes() as f64 / 1e6,
                     memory_mb()
                 );
                 let started = Instant::now();

@@ -360,7 +360,7 @@ mod tests {
     fn a_lychee_scene_opens_hollowed_and_supported() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("box.lys");
-        std::fs::write(&path, sc_lys::fixture::box_on_second_plate()).expect("write");
+        std::fs::write(&path, bread_lys::fixture::box_on_second_plate()).expect("write");
         let loaded = sc_project_formats::load_scene(&path, None, |_| {}).expect("reads");
         let volume = sc_print_primitives::BuildVolume::new(128.0, 81.0, 160.0).unwrap();
         let opened = crate::mesh_loader::opened_scene(loaded, &path, volume).expect("opens");

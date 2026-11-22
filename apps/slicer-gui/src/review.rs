@@ -6,13 +6,13 @@
 //! The pre-flight review of a slice (#90), run on the slice worker right
 //! after the engine finishes and before the per-leaf stacks are merged.
 //!
-//! `sc_review` reads the model leaves' contours. Supports made here enter as
+//! `bread_review` reads the model leaves' contours. Supports made here enter as
 //! data, what the graph knows of their tips (#432): their geometry is never
 //! read, so the review's cost grows with the model and not with them. A
 //! support leaf no session drew has no such data, and is reviewed as a model.
 //!
 //! Cavities the user marked to fill (#132) arrive as one more stack, cut on
-//! the slice's schedule ([`sc_review::fill_stack`]): it is reviewed as model
+//! the slice's schedule ([`bread_review::fill_stack`]): it is reviewed as model
 //! solid here, and merged with the plate's stacks for the preview and the
 //! printer file, so all three see the same cured pixels.
 //!
@@ -38,12 +38,12 @@ use std::time::Duration;
 
 use sc_geom::supports::{SupportContact, recommended_lift_mm};
 use sc_print_glue::{PlateFrame, SlicedPlate};
-use sc_review::finding::sort_findings;
-use sc_review::{
+use bread_review::finding::sort_findings;
+use bread_review::{
     CavityFill, Finding, Growth, Island, IslandStart, ReviewInput, ReviewLeaf, ReviewOptions,
     SweepWatch, TipCone, TipPlan, TipPlanOptions, erase_stack, plan_all_tips, review_with,
 };
-use sc_review::{ReviewReport, deleted_island_note};
+use bread_review::{ReviewReport, deleted_island_note};
 use sc_scene::NodeId;
 use sc_sl1cer::contour::{ContourLayer, ContourStack};
 use sc_sl1cer::profile::{LayerSchedule, SliceProfile};
@@ -77,7 +77,7 @@ pub(crate) enum ReviewOutcome {
         /// How long the review took, the sweep included.
         took: Duration,
         /// What the models pull on the film with, layer by layer (#94).
-        loads: Arc<sc_review::PlateLoads>,
+        loads: Arc<bread_review::PlateLoads>,
     },
     /// Cancel stopped it: the run is cancelled with it.
     Cancelled,
@@ -336,7 +336,7 @@ fn without_deleted(mut report: ReviewReport, deleted: &[FindingKey]) -> ReviewRe
         if !deleted.iter().any(|key| key.finds(finding)) {
             continue;
         }
-        if let Some(sc_review::SuggestedFix::AddSupport { at }) = finding.fix {
+        if let Some(bread_review::SuggestedFix::AddSupport { at }) = finding.fix {
             let first_layer = finding.first_layer;
             report
                 .islands
@@ -495,7 +495,7 @@ pub(crate) fn tips_in_model_for_test(plate: &SlicedPlate, sets: &[SupportSet]) -
         .collect();
     let input = ReviewInput::from_profile(review_leaves(plate.leaves(), sets), plate.profile())
         .expect("the slice's leaves");
-    (ends.len(), sc_review::tips_outside_model(&input, &ends))
+    (ends.len(), bread_review::tips_outside_model(&input, &ends))
 }
 
 /// The name of the filled cavities' leaf in the review.
@@ -517,7 +517,7 @@ mod review_tests {
 
     use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
     use sc_mesh_fixtures::unit_cube_mesh;
-    use sc_review::CheckKind;
+    use bread_review::CheckKind;
     use sc_scene::{LeafPayload, Scene, SceneMetadata};
     use sc_sl1cer::contour::merge_stacks;
     use sc_sl1cer::profile::{
@@ -785,12 +785,12 @@ mod review_tests {
             .iter()
             .find(|f| f.check == CheckKind::ResinTrap)
             .unwrap_or_else(|| panic!("no trap in {findings:?}"));
-        assert_eq!(trap.severity, sc_review::Severity::Warning);
+        assert_eq!(trap.severity, bread_review::Severity::Warning);
         assert_eq!((trap.first_layer, trap.last_layer), (8, 15));
-        let Some(sc_review::SuggestedFix::Fill { cavity, .. }) = trap.fix else {
+        let Some(bread_review::SuggestedFix::Fill { cavity, .. }) = trap.fix else {
             panic!("a medium trap is filled, got {:?}", trap.fix);
         };
-        let filled = sc_review::fill_stack([&fills[cavity]], profile.layer_schedule())
+        let filled = bread_review::fill_stack([&fills[cavity]], profile.layer_schedule())
             .expect("the cavity has pixels");
 
         // Reviewed with the fill, the trap is gone.

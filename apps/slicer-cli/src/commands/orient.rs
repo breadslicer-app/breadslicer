@@ -4,7 +4,7 @@
  */
 
 //! `orient`: finds the best "up" direction of a model for a resin printer
-//! (`sc_orient`) and prints three options with their physical breakdown and
+//! (`bread_orient`) and prints three options with their physical breakdown and
 //! the time each stage of the search took. With `--output`, writes the model
 //! in the recommended pose (or in the option `--option` names), turned about
 //! the centre of its footprint with its lowest point where it was.
@@ -20,7 +20,7 @@ use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_formats::filetypes::{WriteFormat, infer_mesh_file_format_from_extension};
 use sc_mesh_formats::scene_writer::flatten_graph_to_mesh;
 use sc_mesh_formats::{DEFAULT_MAX_MESH_FILE_SIZE_BYTES, load_mesh_from_path};
-use sc_orient::{
+use bread_orient::{
     Candidate, CostBreakdown, DEFAULT_AREA_PER_TIP_MM2, DEFAULT_LIFT_MM,
     DEFAULT_OVERHANG_ANGLE_DEG, Fit, KEEP_MARGIN, Note, OrientAnalysis, OrientContext, Preset,
     SearchOutcome, turned_about_footprint,

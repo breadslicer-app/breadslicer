@@ -284,6 +284,135 @@ impl SupportSession {
         self.preview_part_edit(id, moved)
     }
 
+    /// Slides the knot support `id` hangs from (a branch or a tip on a
+    /// knot) along its host's shaft to height `z` (world mm), its tip where
+    /// it is (#377): the angle it leans at changes. Kept between the ends of
+    /// the host's shaft; one that would lean past a forced attach, or come
+    /// up to its own first elbow, is refused, and the session is as it was.
+    pub fn slide_knot(&mut self, id: &str, z: f64) -> Result<(), EditError> {
+        let moved = self.knot_slid(id, z)?;
+        let checked = moved.checked(id)?;
+        *self = checked;
+        self.log_route(id);
+        Ok(())
+    }
+
+    /// What [`Self::slide_knot`] would do, as [`Self::preview_move_trunk`].
+    pub fn preview_slide_knot(
+        &self,
+        id: &str,
+        z: f64,
+    ) -> Result<(EditPreview, Option<Self>), EditError> {
+        let moved = self.knot_slid(id, z);
+        self.preview_part_edit(id, moved)
+    }
+
+    /// The knot support `id` hangs from: where it is (world mm) and the
+    /// way its host's shaft runs there, up; `None` for a support on a trunk
+    /// of its own.
+    pub fn knot_of(&self, id: &str) -> Option<([f64; 3], [f64; 3])> {
+        let c = &self.state.collections;
+        let knot_id = c
+            .branches
+            .get(id)
+            .map(|b| &b.parent_knot_id)
+            .or_else(|| c.leaves.get(id).map(|l| &l.parent_knot_id))?;
+        let knot = c.knots.get(knot_id)?;
+        let (_, _, from, to) = self.host_span(&knot.parent_shaft_id)?;
+        let d = to.sub(from);
+        let n = (d.x * d.x + d.y * d.y + d.z * d.z).sqrt();
+        let up = if n > 1e-9 {
+            [d.x / n, d.y / n, d.z / n]
+        } else {
+            [0.0, 0.0, 1.0]
+        };
+        Some((a(knot.pos), up))
+    }
+
+    /// Segment `segment`'s shaft and route: the shaft's id, the points of
+    /// its route from the bottom up, and the segment's two ends.
+    fn host_span(&self, segment: &str) -> Option<(String, Vec<(String, Vec3, Vec3)>, Vec3, Vec3)> {
+        let c = &self.state.collections;
+        let host = c
+            .trunks
+            .iter()
+            .find(|(_, t)| t.segments.iter().any(|s| s.id == segment))
+            .map(|(id, _)| id.clone())
+            .or_else(|| {
+                c.branches
+                    .iter()
+                    .find(|(_, b)| b.segments.iter().any(|s| s.id == segment))
+                    .map(|(id, _)| id.clone())
+            })?;
+        let route = self.route_of(&host)?;
+        let (_, segments) = self.shaft_segments(&host)?;
+        let mut points = vec![route.anchor];
+        points.extend(route.elbows.iter().map(|(_, p)| *p));
+        points.push(route.socket);
+        let spans: Vec<(String, Vec3, Vec3)> = segments
+            .iter()
+            .zip(points.windows(2))
+            .map(|(s, w)| (s.id.clone(), w[0], w[1]))
+            .collect();
+        let (_, from, to) = spans.iter().find(|(s, _, _)| s == segment)?.clone();
+        Some((host, spans, from, to))
+    }
+
+    /// The session with support `id`'s knot slid to height `z`, unchecked
+    /// but for its order and lean.
+    fn knot_slid(&self, id: &str, z: f64) -> Result<Self, EditError> {
+        let c = &self.state.collections;
+        let knot_id = c
+            .branches
+            .get(id)
+            .map(|b| b.parent_knot_id.clone())
+            .or_else(|| c.leaves.get(id).map(|l| l.parent_knot_id.clone()))
+            .ok_or(EditError::NothingThere)?;
+        let knot = c.knots.get(&knot_id).ok_or(EditError::NothingThere)?;
+        let (_, spans, _, _) = self
+            .host_span(&knot.parent_shaft_id)
+            .ok_or(EditError::NothingThere)?;
+        let (Some(first), Some(last)) = (spans.first(), spans.last()) else {
+            return Err(EditError::NothingThere);
+        };
+        let z = z.clamp(first.1.z + MIN_RISE_MM, last.2.z - MIN_RISE_MM);
+        let (segment, from, to) = spans
+            .iter()
+            .find(|(_, from, to)| z >= from.z && z <= to.z)
+            .cloned()
+            .ok_or(EditError::CannotAttach(AddNote::OutOfOrder))?;
+        let t = if to.z - from.z > 1e-9 {
+            ((z - from.z) / (to.z - from.z)).clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        let pos = from.lerp(to, t);
+        // What it hangs from rises from the knot: its first elbow, or its
+        // tip's socket.
+        let above = match self.route_of(id) {
+            Some(route) => route.elbows.first().map_or(route.socket, |(_, p)| *p),
+            None => {
+                let parts = self.parts_of(id).ok_or(EditError::NothingThere)?;
+                v(parts.socket)
+            }
+        };
+        if above.z < pos.z + MIN_RISE_MM {
+            return Err(EditError::CannotAttach(AddNote::OutOfOrder));
+        }
+        if lean_deg(pos, above) > FORCED_MAX_ANGLE_DEG {
+            return Err(EditError::CannotAttach(AddNote::Leans));
+        }
+        let mut next = self.clone();
+        if let Some(k) = next.state.collections.knots.get_mut(&knot_id) {
+            k.pos = pos;
+            k.parent_shaft_id = segment;
+            k.t = Some(t);
+        }
+        next.removal_index = Default::default();
+        next.hand_edited = true;
+        Ok(next)
+    }
+
     /// Whether support `id` stands on a trunk of its own (and not on
     /// another support's shaft).
     pub fn is_trunk(&self, id: &str) -> bool {
@@ -644,6 +773,7 @@ impl SupportSession {
         let model = self.support_tip(id).map(|(_, m)| m.to_owned());
         let route = HandRoute {
             foot: parts.foot.map(|[x, y, _]| [x, y]),
+            knot_z: parts.foot.is_none().then_some(parts.anchor[2]),
             elbows: parts.elbows.iter().map(|(_, p)| *p).collect(),
         };
         if let Some(entry) = self.routed_entry(parts.tip, model) {
@@ -669,8 +799,12 @@ impl SupportSession {
         if let Some(route) = &r.route {
             let id = find(&next)?;
             let elbows = &route.elbows;
+            if let Some(z) = route.knot_z {
+                next.slide_knot(&id, z)?;
+            }
             match route.foot {
                 Some(foot) => next.set_route(&id, foot, elbows)?,
+                None if elbows.is_empty() => {}
                 None => {
                     let way = next.route_of(&id).ok_or(EditError::NothingThere)?;
                     let kept: Vec<(Option<String>, Vec3)> =
@@ -890,7 +1024,10 @@ impl SupportSession {
     /// again from its tip and the braces on it gone, and its shaft checked
     /// against the model.
     fn checked(mut self, id: &str) -> Result<Self, EditError> {
-        self.shaft_clear(id)?;
+        // A tip on a knot has no shaft to keep off the model.
+        if self.route_of(id).is_some() {
+            self.shaft_clear(id)?;
+        }
         let (hangers, others) = self.hung_on(id);
         if !others.is_empty() {
             let gone = self.removal_of(&others)?;
@@ -903,6 +1040,10 @@ impl SupportSession {
             let tip = self.tip_point(&hanger).ok_or(EditError::NothingThere)?;
             self.move_in_place_as(&hanger, At::Point(tip), &AddOptions::default(), false)
                 .map_err(|(err, _)| err)?;
+        }
+        // The braces it lost go back where they still reach.
+        if self.route_of(id).is_some() {
+            self.rebrace(id);
         }
         Ok(self)
     }
@@ -1132,6 +1273,69 @@ mod part_edit_tests {
         assert_eq!(moved.tip, trunk.tip);
         assert!((moved.foot.unwrap()[0] - (trunk.foot.unwrap()[0] - 1.0)).abs() < 1e-9);
         assert!((moved.foot.unwrap()[2] - trunk.foot.unwrap()[2]).abs() < 1e-9);
+    }
+
+    /// #377: a support is picked anywhere along its own shaft, its foot's
+    /// end too, and a point off every shaft picks nothing.
+    #[test]
+    fn a_shaft_is_picked_anywhere_along_it() {
+        let (session, first, second) = two_trunks();
+        let foot = session.parts_of(&first).unwrap().foot.unwrap();
+        let low = [foot[0], foot[1], foot[2] + 1.0];
+        assert_eq!(session.shaft_near(low, 0.6).as_deref(), Some(first.as_str()));
+        let other = session.parts_of(&second).unwrap().foot.unwrap();
+        let low = [other[0] + 0.3, other[1], other[2] + 2.0];
+        assert_eq!(session.shaft_near(low, 0.6).as_deref(), Some(second.as_str()));
+        assert!(session.shaft_near([40.0, 40.0, 1.0], 0.6).is_none());
+        let own = session.own_drawing_of(std::slice::from_ref(&first)).unwrap();
+        let all = session.drawing_of(&[first.clone(), second.clone()]).unwrap();
+        assert!(own.faces().len() < all.faces().len());
+    }
+
+    /// #377: a branch's knot slides down its host's shaft, its tip staying,
+    /// so it leans another way; the slide is logged and comes back on a set
+    /// made again.
+    #[test]
+    fn a_knot_slides_along_its_host() {
+        let (mut session, first, second) = two_trunks();
+        session.join_onto(&second, &first).unwrap();
+        let branch = session.tip_near([12.0, 5.0, 12.0], 1e-6).unwrap();
+        let (knot, up) = session.knot_of(&branch).expect("it hangs from a knot");
+        assert!(up[2] > 0.5, "the host runs up there: {up:?}");
+        let before = session.parts_of(&branch).unwrap();
+        let z = knot[2] - 1.5;
+        session.slide_knot(&branch, z).unwrap();
+        let after = session.parts_of(&branch).unwrap();
+        assert_eq!(after.tip, before.tip, "its tip stays");
+        assert!((after.anchor[2] - z).abs() < 1e-6, "{after:?}");
+        let fresh = bare_slab(12.0, crate::SupportRequest::default());
+        let (kept, report) = fresh.with_hand_edits_of(&session, &|| false).unwrap();
+        assert!(report.lost.is_empty(), "{report:?}");
+        let now = kept.tip_near(after.tip, 1e-6).unwrap();
+        let got = kept.parts_of(&now).unwrap();
+        assert!((got.anchor[2] - z).abs() < 1e-6, "{got:?}");
+    }
+
+    /// #377: a trunk moved across the plate is braced to its neighbour
+    /// again where a brace still reaches.
+    #[test]
+    fn a_moved_trunk_is_braced_again() {
+        let mut session = bare_slab(30.0, crate::SupportRequest::default());
+        for at in [[5.0, 5.0, 30.0], [12.0, 5.0, 30.0]] {
+            session
+                .place_at_as(At::Point(at), &AddOptions::default(), true)
+                .map_err(|(err, _)| err)
+                .unwrap();
+        }
+        let first = session.tip_near([5.0, 5.0, 30.0], 0.5).unwrap();
+        let braces = session.state.collections.braces.len();
+        assert!(braces > 0, "the two trunks are braced");
+        session.move_trunk(&first, [-0.5, 0.0]).unwrap();
+        assert_eq!(
+            session.state.collections.braces.len(),
+            braces,
+            "the braces it lost come back, once"
+        );
     }
 
     /// #377, #408: a trunk moved and a tip widened by hand come back on a

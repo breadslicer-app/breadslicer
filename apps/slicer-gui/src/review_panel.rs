@@ -31,7 +31,7 @@
 //! slice": the mark keeps the cavity's pixels ([`ReviewMarks`]), and the next
 //! slice cures them in the preview, the printer file and its review. "Fill
 //! all small traps" marks every trap offering a fill. Any other cavity is
-//! warned about, with no fill to offer ([`sc_review::checks::traps`]). An
+//! warned about, with no fill to offer ([`bread_review::checks::traps`]). An
 //! island, a cavity or a sudden growth can be ignored, which hides it on
 //! every list made for the same models: the list is made again on each slice,
 //! and that decision is what stays, in the scene's `.bread` too (#432). The
@@ -43,7 +43,7 @@
 //! go every fix the app can make by itself, then slices again, and the review
 //! of that slice, whole, is the new list:
 //!
-//! - islands get their tips ([`sc_review::plan_tips`]), all of them in one
+//! - islands get their tips ([`bread_review::plan_tips`]), all of them in one
 //!   undoable edit ([`SupportRun::start_supports_at`]);
 //! - the small resin traps are marked to fill, as "Fill all small traps"
 //!   does.
@@ -80,7 +80,7 @@
 //! list one that has them all; one that got fewer says how many it has and
 //! why not the rest.
 //!
-//! An island gets what [`sc_review::plan_tips`] says, by its row, by Fix All
+//! An island gets what [`bread_review::plan_tips`] says, by its row, by Fix All
 //! and by the question that ends a slice (#437): "N islands have no
 //! support. Add supports?". A plan is candidates: each is placed through the
 //! engine and judged there and then by the very decision the review makes
@@ -123,7 +123,7 @@ use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_spatial::SceneSpatial;
 use sc_print_glue::PlateFrame;
-use sc_review::{
+use bread_review::{
     CavityFill, CheckKind, Finding, Growth, Island, PlatePoint, Severity, SuggestedFix, TipPlan,
 };
 use sc_scene::NodeId;
@@ -849,7 +849,7 @@ impl ReviewPanel {
         };
         self.ctrl.set_section(WorkspaceSection::Transform);
         self.document.set_selection(Selection::One(LeafId(leaf)));
-        orient.search_with(sc_orient::Preset::NoCups);
+        orient.search_with(bread_orient::Preset::NoCups);
     }
 
     /// Marks every resin trap that offers a fill.
@@ -2023,7 +2023,7 @@ impl ReviewPanel {
 
     /// The peel loads of the review held, while it is of the slice held
     /// (#94).
-    pub(crate) fn held_loads(&self) -> Option<Arc<sc_review::PlateLoads>> {
+    pub(crate) fn held_loads(&self) -> Option<Arc<bread_review::PlateLoads>> {
         let held = self.held.borrow();
         let held = held.as_ref()?;
         if held.generation != self.document.slice_generation() {
@@ -2597,7 +2597,7 @@ impl IslandTips<'_> {
     }
 
     /// What a tip of a region must do, each of them by itself.
-    fn hold(&self, start: &Arc<sc_review::IslandStart>) -> TipHold {
+    fn hold(&self, start: &Arc<bread_review::IslandStart>) -> TipHold {
         TipHold {
             start: start.clone(),
             frame: self.frame.cloned().unwrap_or_default(),
@@ -3248,7 +3248,7 @@ fn delete_offer(finding: &Finding, i: usize, marks: &RowMarks) -> (i32, SharedSt
 }
 
 /// The indices of the traps that offer a fill: those "Fill all small traps"
-/// marks. Only a small sealed trap has one ([`sc_review::checks::traps`]).
+/// marks. Only a small sealed trap has one ([`bread_review::checks::traps`]).
 fn small_traps<'f>(
     findings: &'f [Finding],
     hollows: &'f [Option<usize>],

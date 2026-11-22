@@ -745,6 +745,9 @@ enum PartMove {
     /// Its shaft by its body, by this much (world mm): a branch's elbows
     /// all together, the knot it hangs from staying.
     Shaft([f64; 3]),
+    /// The knot it hangs from, slid along its host's shaft to this height
+    /// (world mm): the way it leans changes, its tip staying.
+    Knot(f64),
 }
 
 impl PartMove {
@@ -754,6 +757,7 @@ impl PartMove {
             PartMove::Trunk(delta) => session.move_trunk(id, *delta),
             PartMove::Elbow(elbow, to) => session.move_elbow(id, elbow, *to),
             PartMove::Shaft(delta) => session.move_shaft(id, *delta),
+            PartMove::Knot(z) => session.slide_knot(id, *z),
         }
     }
 
@@ -767,6 +771,7 @@ impl PartMove {
             PartMove::Trunk(delta) => session.preview_move_trunk(id, *delta),
             PartMove::Elbow(elbow, to) => session.preview_move_elbow(id, elbow, *to),
             PartMove::Shaft(delta) => session.preview_move_shaft(id, *delta),
+            PartMove::Knot(z) => session.preview_slide_knot(id, *z),
         }
     }
 }
@@ -2190,6 +2195,17 @@ impl SupportRun {
             ui.on_support_tool_clicked(move |x, y, z, forced| {
                 if let Some(run) = weak.upgrade() {
                     run.on_tool_click_with([x, y, z], forced);
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(&run);
+            ui.on_support_tool_missed(move |add| {
+                if let Some(run) = weak.upgrade()
+                    && let Some(ui) = run.ui.upgrade()
+                    && ui.get_support_tool() == 5
+                {
+                    run.select_click(&ui, None, add);
                 }
             });
         }
@@ -5786,17 +5802,19 @@ impl SupportRun {
     /// picked, alone, or with `add` (Shift) joins the picked ones or leaves
     /// them. A click on no support lets go of them all, a Shift+click
     /// leaves them.
-    fn select_click(&self, ui: &MainWindow, point: [f32; 3], add: bool) {
-        let p = point.map(f64::from);
-        let found = self
-            .sets_in_force()
-            .into_iter()
-            .filter_map(|drawn| Some((drawn.session.remove_distance(p)?, drawn)))
-            .min_by(|a, b| a.0.total_cmp(&b.0))
-            .and_then(|(_, drawn)| {
-                let id = drawn.session.support_near(p, SELECT_REACH_MM)?;
-                Some((drawn.leaf, drawn.session.tip_point(&id)?))
-            });
+    fn select_click(&self, ui: &MainWindow, point: Option<[f32; 3]>, add: bool) {
+        // A click takes the gizmo back to the support's own part.
+        self.part_focus.borrow_mut().take();
+        let found = point.map(|p| p.map(f64::from)).and_then(|p| {
+            self.sets_in_force()
+                .into_iter()
+                .filter_map(|drawn| Some((drawn.session.remove_distance(p)?, drawn)))
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .and_then(|(_, drawn)| {
+                    let id = support_picked_at(&drawn.session, p)?;
+                    Some((drawn.leaf, drawn.session.tip_point(&id)?))
+                })
+        });
         {
             let mut chosen = self.chosen.borrow_mut();
             let same = |a: [f64; 3], b: [f64; 3]| (0..3).all(|k| (a[k] - b[k]).abs() < 1e-6);
@@ -5878,7 +5896,7 @@ impl SupportRun {
         ui.set_support_picked_count(count as i32);
         let pieces: Vec<Arc<OverlayMesh>> = now
             .iter()
-            .filter_map(|(drawn, ids)| drawn.session.drawing_of(ids).ok())
+            .filter_map(|(drawn, ids)| drawn.session.own_drawing_of(ids).ok())
             .filter(|mesh| !mesh.faces().is_empty())
             .map(|mesh| Arc::new(overlay_of(&mesh, OverlayTint::Picked)))
             .collect();
@@ -5898,8 +5916,8 @@ impl SupportRun {
             (
                 ctr!(
                     "Inspector",
-                    "{n} picked support holds others up and stays as it is: pick the ones at the ends.",
-                    "{n} picked supports hold others up and stay as they are: pick the ones at the ends.",
+                    "{n} picked support holds others up: it moves with its gizmo, and the sizes below leave it as it is.",
+                    "{n} picked supports hold others up: they move with the gizmo, and the sizes below leave them as they are.",
                     carrying
                 ),
                 true,
@@ -5908,8 +5926,8 @@ impl SupportRun {
             (
                 ctr!(
                     "Inspector",
-                    "{n} support picked: the numbers below draw it again; drag its trunk or an elbow to move it.",
-                    "{n} supports picked: the numbers below draw them again; drag a trunk or an elbow to move it.",
+                    "{n} support picked: the numbers below draw it again; move it with its gizmo, a cube takes an elbow.",
+                    "{n} supports picked: the numbers below draw them again; pick one alone to move it.",
                     count
                 ),
                 false,
@@ -6059,7 +6077,7 @@ impl SupportRun {
     fn part_grab(&self, press: &DragPoint) -> Option<DragState> {
         let at = press.support?.map(f64::from);
         for (drawn, ids) in self.chosen_now() {
-            let Some(id) = drawn.session.support_near(at, SELECT_REACH_MM) else {
+            let Some(id) = support_picked_at(&drawn.session, at) else {
                 continue;
             };
             if !ids.contains(&id) {
@@ -6306,7 +6324,7 @@ impl SupportRun {
             return;
         }
         if tool == 5 {
-            self.select_click(&ui, point, forced);
+            self.select_click(&ui, Some(point), forced);
             return;
         }
         if tool == 6 {
@@ -8841,7 +8859,11 @@ impl PartHandle {
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct ArrowGrab {
     axis: usize,
+    /// The way the arrow points (world).
+    dir: [f64; 3],
     from: f64,
+    /// It slides the knot the support hangs from.
+    knot: bool,
 }
 
 /// The Select tool's move gizmo on the one support picked (#377).
@@ -8861,6 +8883,11 @@ struct PartGizmo {
     cubes: Vec<(String, [f64; 3])>,
     /// It stands on a trunk of its own (its shaft moves across the plate).
     trunk: bool,
+    /// The ways its arrows point (world): the world's axes, or for the knot
+    /// a support hangs from, up its host's shaft last.
+    axes: [[f64; 3]; 3],
+    /// It slides the knot the support hangs from along its host's shaft.
+    knot: bool,
 }
 
 /// The world's axes, as the gizmo's arrows point.
@@ -8881,13 +8908,27 @@ fn arrow_travel(travel: f64, snap: bool, fine: bool) -> f64 {
 
 /// The part move a drag of `grab`'s part `travel` mm along world axis
 /// `axis` asks for.
-fn arrow_move(grab: [f64; 3], elbow: Option<&str>, free: bool, axis: usize, travel: f64) -> PartMove {
-    let d: [f64; 3] = std::array::from_fn(|k| WORLD_AXES[axis][k] * travel);
+fn arrow_move(grab: [f64; 3], elbow: Option<&str>, free: bool, arrow: ArrowGrab, travel: f64) -> PartMove {
+    let d: [f64; 3] = std::array::from_fn(|k| arrow.dir[k] * travel);
     match elbow {
         Some(e) => PartMove::Elbow(e.to_owned(), std::array::from_fn(|k| grab[k] + d[k])),
+        None if arrow.knot => PartMove::Knot(grab[2] + d[2]),
         None if free => PartMove::Shaft(d),
         None => PartMove::Trunk([d[0], d[1]]),
     }
+}
+
+/// How near a click must come to a support's axis to pick it, mm, past
+/// its own width.
+const SHAFT_PICK_MM: f64 = 1.5;
+
+/// The support a click of the Select tool at `p` (world mm) picks (#377):
+/// the one whose own shaft passes nearest, trunk, branch or tip; else the
+/// one with a tip, joint or foot nearest, within reach.
+fn support_picked_at(session: &SupportSession, p: [f64; 3]) -> Option<String> {
+    session
+        .shaft_near(p, SHAFT_PICK_MM)
+        .or_else(|| session.support_near(p, SELECT_REACH_MM))
 }
 
 /// The handle of `g` the pointer is on: an elbow's cube first, then an
@@ -8914,10 +8955,10 @@ fn part_pick(g: &PartGizmo, pointer: &crate::cut_gizmo::ScenePointer) -> Option<
     };
     (0..3)
         .filter(|&k| g.arrows[k])
-        .filter(|&k| dot(WORLD_AXES[k], pointer.direction).abs() <= LOCKOUT_COS)
+        .filter(|&k| dot(g.axes[k], pointer.direction).abs() <= LOCKOUT_COS)
         .filter_map(|k| {
-            let a = (pointer.project)(along(WORLD_AXES[k], ARROW_FROM))?;
-            let b = (pointer.project)(along(WORLD_AXES[k], pointer.arrow_tip))?;
+            let a = (pointer.project)(along(g.axes[k], ARROW_FROM))?;
+            let b = (pointer.project)(along(g.axes[k], pointer.arrow_tip))?;
             let d = segment_distance(at, a, b);
             (d <= HANDLE_PX).then_some((k, d))
         })
@@ -8940,7 +8981,6 @@ impl SupportRun {
         let (drawn, mut ids) = now.pop()?;
         let id = ids.pop()?;
         let parts = drawn.session.parts_of(&id)?;
-        parts.trunk_mm?;
         let focus = self
             .part_focus
             .borrow()
@@ -8949,15 +8989,23 @@ impl SupportRun {
             .map(|(_, e)| e.clone())
             .filter(|e| parts.elbows.iter().any(|(x, _)| x == e));
         let trunk = parts.foot.is_some();
-        let mid = |a: [f64; 3], b: [f64; 3]| -> [f64; 3] { std::array::from_fn(|k| (a[k] + b[k]) / 2.0) };
-        let rest = match &focus {
-            Some(e) => parts.elbows.iter().find(|(x, _)| x == e)?.1,
-            None if trunk => parts.anchor,
-            None if parts.elbows.is_empty() => mid(parts.anchor, parts.socket),
-            None => {
-                let n = parts.elbows.len() as f64;
-                std::array::from_fn(|k| parts.elbows.iter().map(|(_, p)| p[k]).sum::<f64>() / n)
-            }
+        // A support hung from another: its gizmo slides the knot it hangs
+        // from, so the way it leans changes.
+        let knot = match (&focus, trunk) {
+            (None, false) => drawn.session.knot_of(&id),
+            _ => None,
+        };
+        if knot.is_none() && parts.trunk_mm.is_none() {
+            return None;
+        }
+        let (rest, axes) = match (&focus, knot) {
+            (Some(e), _) => (parts.elbows.iter().find(|(x, _)| x == e)?.1, WORLD_AXES),
+            (None, Some((at, up))) => (at, [WORLD_AXES[0], WORLD_AXES[1], up]),
+            (None, None) if trunk => (parts.anchor, WORLD_AXES),
+            (None, None) => (
+                std::array::from_fn(|k| (parts.anchor[k] + parts.socket[k]) / 2.0),
+                WORLD_AXES,
+            ),
         };
         let center = match self.drag.borrow().as_ref() {
             Some(DragState::MovePart {
@@ -8968,6 +9016,11 @@ impl SupportRun {
                 PartMove::Trunk([dx, dy]) => [rest[0] + dx, rest[1] + dy, rest[2]],
                 PartMove::Shaft(d) => std::array::from_fn(|k| rest[k] + d[k]),
                 PartMove::Elbow(_, p) => *p,
+                PartMove::Knot(z) if axes[2][2].abs() > 1e-6 => {
+                    let t = (z - rest[2]) / axes[2][2];
+                    std::array::from_fn(|k| rest[k] + axes[2][k] * t)
+                }
+                PartMove::Knot(_) => rest,
             },
             _ => rest,
         };
@@ -8977,16 +9030,22 @@ impl SupportRun {
             .filter(|(e, _)| Some(e) != focus.as_ref())
             .cloned()
             .collect();
+        let arrows = match (&focus, knot) {
+            (Some(_), _) => [true, true, true],
+            (None, Some(_)) => [false, false, true],
+            (None, None) => [true, true, !trunk],
+        };
         Some(PartGizmo {
-            arrows: [true, true, !trunk || focus.is_some()],
+            arrows,
             drawn,
             id,
             elbow: focus,
             center,
             rest,
-
             cubes,
             trunk,
+            axes,
+            knot: knot.is_some(),
         })
     }
 
@@ -9063,7 +9122,7 @@ impl crate::cut_gizmo::CutHandles for PartHandles {
             .map(|a| PartHandle::Axis(a.axis).drawn());
         let hover = run.part_hover.get().map(PartHandle::drawn);
         let tool = crate::mesh_render::ToolGizmo::mover(
-            [glam::Vec3::X, glam::Vec3::Y, glam::Vec3::Z],
+            g.axes.map(v3),
             g.arrows,
             &cubes,
             hover,
@@ -9089,10 +9148,16 @@ impl crate::cut_gizmo::CutHandles for PartHandles {
         };
         match part_pick(&g, pointer) {
             Some(PartHandle::Axis(axis)) => {
-                let Some(from) = pointer.along_line(g.rest, WORLD_AXES[axis]) else {
+                let dir = g.axes[axis];
+                let Some(from) = pointer.along_line(g.rest, dir) else {
                     return false;
                 };
-                run.part_arrow.set(Some(ArrowGrab { axis, from }));
+                run.part_arrow.set(Some(ArrowGrab {
+                    axis,
+                    dir,
+                    from,
+                    knot: g.knot,
+                }));
                 let (elbow, rest) = (g.elbow.clone(), g.rest);
                 run.start_part_drag(g, elbow, rest);
                 true
@@ -9120,12 +9185,12 @@ impl crate::cut_gizmo::CutHandles for PartHandles {
         };
         let part = match run.part_arrow.get() {
             Some(arrow) => {
-                let Some(t) = pointer.along_line(grab, WORLD_AXES[arrow.axis]) else {
+                let Some(t) = pointer.along_line(grab, arrow.dir) else {
                     return;
                 };
                 let (snap, fine) = run.ctrl.pointer_mods();
                 let travel = arrow_travel(t - arrow.from, snap, fine);
-                arrow_move(grab, elbow.as_deref(), free, arrow.axis, travel)
+                arrow_move(grab, elbow.as_deref(), free, arrow, travel)
             }
             None => {
                 // A cube dragged: its elbow on the plane facing the eye.
@@ -11503,7 +11568,7 @@ mod hand_edit_tests {
                 .iter()
                 .map(|&l| set_of(&document, &run, l).1)
                 .collect();
-            let plate = sc_arrange::Plate {
+            let plate = bread_arrange::Plate {
                 min: [0.0, 0.0],
                 max: [60.0, 40.0],
                 floor: 0.0,
@@ -11573,7 +11638,7 @@ mod hand_edit_tests {
                 .flatten()
                 .unwrap();
             document.set_selection(Selection::One(LeafId(original)));
-            let plate = sc_arrange::Plate {
+            let plate = bread_arrange::Plate {
                 min: [0.0, 0.0],
                 max: [60.0, 40.0],
                 floor: 0.0,
@@ -11716,7 +11781,7 @@ mod hand_edit_tests {
                 t.elapsed().as_secs_f64() * 1e3
             );
             document.set_selection(Selection::One(LeafId(leaf)));
-            let plate = sc_arrange::Plate {
+            let plate = bread_arrange::Plate {
                 min: [0.0, 0.0],
                 max: [223.642, 126.976],
                 floor: 0.0,
@@ -11785,7 +11850,7 @@ mod hand_edit_tests {
                     ]
                 })
                 .map(|half| half * 2.0 + 1.6);
-            let plate = sc_arrange::Plate {
+            let plate = bread_arrange::Plate {
                 min: [20.0 - 2.0 * size[0] - 5.0, 20.0 - size[1] - 5.0],
                 max: [20.0 + 2.0 * size[0] + 5.0, 20.0 + size[1] + 5.0],
                 floor: 0.0,
@@ -11831,7 +11896,7 @@ mod hand_edit_tests {
             let (_, set_mesh) = set_of(&document, &run, leaves[0]);
             document.set_selection(Selection::One(LeafId(leaves[0])));
             // A quarter turn about the model's middle, then 15 mm along X.
-            let placement = sc_arrange::Placement {
+            let placement = bread_arrange::Placement {
                 angle: std::f64::consts::FRAC_PI_2,
                 translation: [55.0, 0.0],
                 on_plate: true,
@@ -12044,7 +12109,7 @@ mod hand_edit_tests {
             let orient =
                 OrientRun::install(&window, document.clone(), ctrl.dialogs(), ctrl, run.clone());
             let tilting = orient
-                .search_now(sc_orient::SearchMode::Quick)
+                .search_now(bread_orient::SearchMode::Quick)
                 .iter()
                 .position(|c| c.tilt_deg >= 1.0)
                 .expect("an option tilts the cube");
@@ -14161,17 +14226,27 @@ mod hand_edit_tests {
         assert!((arrow_travel(2.6, true, false) - 3.0).abs() < 1e-9);
         assert!((arrow_travel(2.6, false, true) - 0.26).abs() < 1e-9);
         assert!((arrow_travel(2.6, true, true) - 0.3).abs() < 1e-9);
+        let arrow = |axis: usize, knot: bool| ArrowGrab {
+            axis,
+            dir: WORLD_AXES[axis],
+            from: 0.0,
+            knot,
+        };
         assert_eq!(
-            arrow_move([1.0, 2.0, 3.0], None, false, 1, 2.0),
+            arrow_move([1.0, 2.0, 3.0], None, false, arrow(1, false), 2.0),
             PartMove::Trunk([0.0, 2.0])
         );
         assert_eq!(
-            arrow_move([1.0, 2.0, 3.0], None, true, 2, 1.0),
+            arrow_move([1.0, 2.0, 3.0], None, true, arrow(2, false), 1.0),
             PartMove::Shaft([0.0, 0.0, 1.0])
         );
         assert_eq!(
-            arrow_move([1.0, 2.0, 3.0], Some("e"), true, 0, 1.0),
+            arrow_move([1.0, 2.0, 3.0], Some("e"), true, arrow(0, false), 1.0),
             PartMove::Elbow("e".to_owned(), [2.0, 2.0, 3.0])
+        );
+        assert_eq!(
+            arrow_move([1.0, 2.0, 3.0], None, true, arrow(2, true), -1.5),
+            PartMove::Knot(1.5)
         );
     }
 
@@ -14230,6 +14305,85 @@ mod hand_edit_tests {
             assert!(Arc::ptr_eq(&in_force_session(&run).unwrap(), &generated));
             // A press off its handles is not the gizmo's.
             assert!(!handles.press(&pointer_above([-500.0, -500.0])));
+        });
+    }
+
+    /// #377: a trunk is picked by a click low on its shaft, far from its
+    /// tip and elbows; the scene shows it alone; a click on no support lets
+    /// it go.
+    #[test]
+    fn a_trunk_is_picked_low_on_its_shaft_and_let_go_on_a_miss() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (_document, run) = supported_slab(&window);
+            let generated = in_force_session(&run).expect("editable");
+            let (id, foot) = generated
+                .tips()
+                .into_iter()
+                .filter_map(|(id, _)| Some((id.clone(), generated.parts_of(&id)?.foot?)))
+                .next()
+                .expect("a trunk");
+            window.set_support_page(1);
+            window.set_support_tool(5);
+            run.on_tool_changed();
+            let low = [foot[0], foot[1], foot[2] + 1.0];
+            run.on_tool_click_with(low.map(|c| c as f32), false);
+            let now = run.chosen_now();
+            assert_eq!(now.len(), 1);
+            assert_eq!(now[0].1, vec![id.clone()], "the trunk under the click");
+            let own = generated.own_drawing_of(std::slice::from_ref(&id)).unwrap();
+            let shown: usize = run.last_ghost.borrow().iter().map(|m| m.indices.len() / 3).sum();
+            assert_eq!(shown, own.faces().len(), "it alone is lit");
+            window.invoke_support_tool_missed(false);
+            assert_eq!(window.get_support_picked_count(), 0, "a miss lets it go");
+        });
+    }
+
+    /// #377: a support hung from another shows a gizmo with one arrow, up
+    /// its host's shaft, that slides the knot it hangs from.
+    #[test]
+    fn a_hung_support_slides_its_knot_by_its_gizmo() {
+        on_fresh_slint_thread(|| {
+            use crate::cut_gizmo::CutHandles;
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (_document, run) = supported_slab(&window);
+            let generated = in_force_session(&run).expect("editable");
+            let trunks: Vec<String> = generated
+                .tips()
+                .into_iter()
+                .map(|(id, _)| id)
+                .filter(|id| generated.is_trunk(id))
+                .collect();
+            let (host, joiner) = trunks
+                .iter()
+                .flat_map(|a| trunks.iter().map(move |b| (a, b)))
+                .find(|(a, b)| a != b && generated.as_ref().clone().join_onto(b, a).is_ok())
+                .expect("two trunks that join");
+            let host_tip = generated.tip_point(host).unwrap();
+            let joiner_tip = generated.tip_point(joiner).unwrap();
+            window.set_support_page(1);
+            window.set_support_tool(5);
+            run.on_tool_changed();
+            run.on_tool_click_with(host_tip.map(|c| c as f32), false);
+            run.on_tool_click_with(joiner_tip.map(|c| c as f32), true);
+            run.join_chosen();
+            settle_click(&run);
+            let joined = in_force_session(&run).unwrap();
+            let branch = joined.tip_near(joiner_tip, 1e-6).unwrap();
+            let (knot, up) = joined.knot_of(&branch).expect("it hangs from a knot");
+            run.on_tool_click_with(joiner_tip.map(|c| c as f32), false);
+            let handles = PartHandles(Rc::downgrade(&run));
+            let (center, tool, _) = handles.gizmo().expect("its gizmo");
+            assert_eq!(tool.arrows, [false, false, true], "one arrow up the host");
+            assert!((0..3).all(|k| (center[k] - knot[k]).abs() < 1e-9), "at the knot");
+            let g = run.part_gizmo().unwrap();
+            assert!(g.knot && (0..3).all(|k| (g.axes[2][k] - up[k]).abs() < 1e-9));
+            assert!(
+                joined
+                    .preview_slide_knot(&branch, knot[2] - 1.0)
+                    .is_ok_and(|(p, done)| p.valid && done.is_some()),
+                "a slide down the host"
+            );
         });
     }
 

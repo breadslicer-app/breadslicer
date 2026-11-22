@@ -35,7 +35,7 @@
 use crate::finding::{CheckKind, Finding, PlatePoint, RoleScope, Severity, SuggestedFix};
 use crate::loads::{BodyPeak, PlateLoads};
 use crate::runner::ReviewContext;
-use sc_peel::PeelModel;
+use bread_peel::PeelModel;
 
 /// Default of [`TipLoadOptions::warn_utilization`].
 pub const DEFAULT_WARN_UTILIZATION: f64 = 1.0;

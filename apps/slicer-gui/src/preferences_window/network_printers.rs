@@ -51,7 +51,7 @@ fn read_known() -> Known {
 /// it is kept for.
 fn row_of(
     catalog: &ProfileCatalog,
-    printer: &sc_printer_link::sdcp::Printer,
+    printer: &bread_printer_link::sdcp::Printer,
     own: &OwnSettings,
 ) -> NetworkPrinterRow {
     let its = own_choices(catalog, &printer.model, own).its;
@@ -291,7 +291,7 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use sc_print_primitives::NetworkProtocol;
-    use sc_printer_link::sdcp::Printer;
+    use bread_printer_link::sdcp::Printer;
     use slint::Model;
 
     use super::*;

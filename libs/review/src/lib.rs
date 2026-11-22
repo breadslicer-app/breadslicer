@@ -5,7 +5,7 @@
 
 //! Pre-flight review of a sliced resin plate.
 //!
-//! `sc-review` reads the contours of one slicing run's models and what the
+//! `bread-review` reads the contours of one slicing run's models and what the
 //! engine knows of its supports, and reports what is likely to fail before
 //! anything is printed: islands, sudden growth of the surface, resin traps
 //! and suction cups, and output problems (plate edges, maximum height, empty

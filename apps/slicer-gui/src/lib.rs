@@ -179,14 +179,14 @@ mod workspace_section;
 use std::error::Error;
 
 // The interface Slint generates, compiled in a crate of its own (#361).
-use sc_slicer_gui_ui as slint_ui;
-pub use sc_slicer_gui_ui::*;
+use bread_gui_ui as slint_ui;
+pub use bread_gui_ui::*;
 
 // The 3D view and the base the GUI crates share, in crates of their own
 // (#361). The integration tests reach the view's modules through this crate.
-use sc_slicer_gui_base::{breadcrumbs, startup_timing};
-pub use sc_slicer_gui_render::{build_volume, camera, graphics_adapter, mesh_render};
-use sc_slicer_gui_render::{
+use bread_gui_base::{breadcrumbs, startup_timing};
+pub use bread_gui_render::{build_volume, camera, graphics_adapter, mesh_render};
+use bread_gui_render::{
     front_label, gizmo, picking, plates, print_file_preview, slice_cap, under_plate,
 };
 
@@ -254,7 +254,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     startup_timing::mark("single instance");
     // The formats ported from UVtools write through `sc-sla-formats` once
     // installed. No threads start here.
-    sc_sla_formats_uvtools::install();
+    bread_sla_formats_uvtools::install();
     // Before anything reads or writes the per-user folders (logs, settings).
     let migrated = sc_app_paths::migrate_legacy_user_dirs();
     install_crash_log();

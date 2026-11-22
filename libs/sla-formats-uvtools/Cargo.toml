@@ -1,5 +1,5 @@
 [package]
-name = "sc-sla-formats-uvtools"
+name = "bread-sla-formats-uvtools"
 version = "0.1.0"
 edition.workspace = true
 # Ported from UVtools, which is published as AGPL-3.0-or-later; see NOTICE.

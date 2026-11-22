@@ -5394,7 +5394,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sc-arrange"
+name = "bread-arrange"
 version = "0.1.0"
 dependencies = [
  "png 0.18.1",
@@ -5405,7 +5405,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sc-cut"
+name = "bread-cut"
 version = "0.1.0"
 dependencies = [
  "manifold-rust",
@@ -5442,7 +5442,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sc-lys"
+name = "bread-lys"
 version = "0.1.0"
 dependencies = [
  "sc-mesh-core",
@@ -5508,7 +5508,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sc-orient"
+name = "bread-orient"
 version = "0.1.0"
 dependencies = [
  "meshopt",
@@ -5518,7 +5518,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sc-peel"
+name = "bread-peel"
 version = "0.1.0"
 
 [[package]]
@@ -5566,7 +5566,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sc-printer-link"
+name = "bread-printer-link"
 version = "0.1.0"
 dependencies = [
  "futures-util",
@@ -5606,7 +5606,7 @@ dependencies = [
  "bread-format",
  "rayon",
  "sc-3mf",
- "sc-lys",
+ "bread-lys",
  "sc-mesh-core",
  "sc-mesh-fixtures",
  "sc-mesh-formats",
@@ -5623,11 +5623,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "sc-review"
+name = "bread-review"
 version = "0.1.0"
 dependencies = [
  "rayon",
- "sc-peel",
+ "bread-peel",
  "sc-print-primitives",
  "sc-sl1cer",
  "serde",
@@ -5686,7 +5686,7 @@ dependencies = [
  "sc-mesh-core",
  "sc-mesh-fixtures",
  "sc-mesh-formats",
- "sc-peel",
+ "bread-peel",
  "sc-print-primitives",
  "sc-scene",
  "sc-sl1cer",
@@ -5695,7 +5695,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sc-sla-formats-uvtools"
+name = "bread-sla-formats-uvtools"
 version = "0.1.0"
 dependencies = [
  "png 0.18.1",
@@ -5726,16 +5726,16 @@ dependencies = [
  "sc-mesh-core",
  "sc-mesh-fixtures",
  "sc-mesh-formats",
- "sc-orient",
+ "bread-orient",
  "sc-print-glue",
  "sc-print-primitives",
  "sc-print-profiles",
  "sc-project-formats",
- "sc-review",
+ "bread-review",
  "sc-scene",
  "sc-sl1cer",
  "sc-sla-formats",
- "sc-sla-formats-uvtools",
+ "bread-sla-formats-uvtools",
  "serde_json",
  "support-bracing",
  "support-geom",
@@ -5772,32 +5772,32 @@ dependencies = [
  "rayon",
  "rfd",
  "sc-app-paths",
- "sc-arrange",
- "sc-cut",
+ "bread-arrange",
+ "bread-cut",
  "sc-geom",
- "sc-lys",
+ "bread-lys",
  "sc-mesh-core",
  "sc-mesh-fixtures",
  "sc-mesh-formats",
  "sc-mesh-spatial",
  "sc-message-catalog",
- "sc-orient",
- "sc-peel",
+ "bread-orient",
+ "bread-peel",
  "sc-print-glue",
  "sc-print-primitives",
  "sc-print-profiles",
- "sc-printer-link",
+ "bread-printer-link",
  "sc-project-formats",
- "sc-review",
+ "bread-review",
  "sc-scene",
  "sc-scene-edit",
  "sc-scene-fixtures",
  "sc-sl1cer",
  "sc-sla-formats",
- "sc-sla-formats-uvtools",
- "sc-slicer-gui-base",
- "sc-slicer-gui-render",
- "sc-slicer-gui-ui",
+ "bread-sla-formats-uvtools",
+ "bread-gui-base",
+ "bread-gui-render",
+ "bread-gui-ui",
  "semver",
  "serde",
  "serde_json",
@@ -5813,7 +5813,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sc-slicer-gui-base"
+name = "bread-gui-base"
 version = "0.4.0-alpha.1"
 dependencies = [
  "sc-app-paths",
@@ -5823,7 +5823,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sc-slicer-gui-render"
+name = "bread-gui-render"
 version = "0.4.0-alpha.1"
 dependencies = [
  "anyhow",
@@ -5844,8 +5844,8 @@ dependencies = [
  "sc-scene",
  "sc-sl1cer",
  "sc-sla-formats",
- "sc-slicer-gui-base",
- "sc-slicer-gui-ui",
+ "bread-gui-base",
+ "bread-gui-ui",
  "serde",
  "slint",
  "swash",
@@ -5853,7 +5853,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sc-slicer-gui-ui"
+name = "bread-gui-ui"
 version = "0.4.0-alpha.1"
 dependencies = [
  "slint",

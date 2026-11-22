@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use glam::Vec3;
 use sc_mesh_core::{IndexedMesh, Vertex};
-use sc_orient::{OrientAnalysis, OrientContext, Preset, SearchMode, SearchOutcome};
+use bread_orient::{OrientAnalysis, OrientContext, Preset, SearchMode, SearchOutcome};
 use sc_scene::{NodeId, PAINTED, PaintChanges, PaintKind, SurfaceTags, UNPAINTED, carry_tags};
 use sc_scene_edit::SceneEdit;
 

@@ -126,7 +126,7 @@ pub(crate) struct ViewportController {
     /// The pixels of the review finding last clicked (#409), highlighted on
     /// the cut and in the slice-view panel, and a count of its changes for
     /// the cap key.
-    review_highlight: RefCell<Option<Arc<sc_review::CavityFill>>>,
+    review_highlight: RefCell<Option<Arc<bread_review::CavityFill>>>,
     highlight_generation: Cell<u64>,
     /// The selection the Slice tab put aside (#140): nothing is selected
     /// there, and leaving it brings back what is still in the scene.
@@ -1860,7 +1860,7 @@ impl ViewportController {
     /// the slice-view panel, on whichever of its layers the slider shows,
     /// until replaced (`None` clears it). Only the selected layer's cap is
     /// made again; the scene is not uploaded again.
-    pub(crate) fn set_review_highlight(&self, footprint: Option<Arc<sc_review::CavityFill>>) {
+    pub(crate) fn set_review_highlight(&self, footprint: Option<Arc<bread_review::CavityFill>>) {
         let changed = match (&*self.review_highlight.borrow(), &footprint) {
             (Some(a), Some(b)) => !Arc::ptr_eq(a, b),
             (None, None) => false,
@@ -1876,7 +1876,7 @@ impl ViewportController {
 
     /// The pixels highlighted now (#409).
     #[cfg(test)]
-    pub(crate) fn review_highlight(&self) -> Option<Arc<sc_review::CavityFill>> {
+    pub(crate) fn review_highlight(&self) -> Option<Arc<bread_review::CavityFill>> {
         self.review_highlight.borrow().clone()
     }
 
@@ -3939,6 +3939,9 @@ impl ViewportController {
             } else {
                 ui.invoke_support_tool_clicked(p.x, p.y, p.z, forced);
             }
+            self.mark_dirty();
+        } else if tool == TabTool::SelectSupport {
+            ui.invoke_support_tool_missed(forced);
             self.mark_dirty();
         }
         true

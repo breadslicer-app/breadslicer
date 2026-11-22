@@ -42,7 +42,7 @@
 use std::sync::Arc;
 
 use sc_project_formats::ReviewDecision;
-use sc_review::{CavityFill, CheckKind, Finding};
+use bread_review::{CavityFill, CheckKind, Finding};
 
 use crate::scene_document::SceneRevision;
 
@@ -426,7 +426,7 @@ pub(crate) fn deleted_islands(decisions: &[ReviewDecision]) -> Vec<FindingKey> {
 
 #[cfg(test)]
 mod review_marks_tests {
-    use sc_review::{FillSlab, PlatePoint, PlateRect, RoleScope, Severity, SuggestedFix};
+    use bread_review::{FillSlab, PlatePoint, PlateRect, RoleScope, Severity, SuggestedFix};
 
     use super::*;
 

@@ -17,7 +17,7 @@
 //! height.
 //!
 //! ```ignore
-//! use sc_review::test_support::{FixtureBuilder, Shape};
+//! use bread_review::test_support::{FixtureBuilder, Shape};
 //!
 //! // 10 layers: a block on the plate, a ring that starts at layer 5 held by
 //! // a support tip under it.

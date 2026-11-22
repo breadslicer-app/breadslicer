@@ -12,7 +12,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use sc_lys::{LysContact, LysDrain, LysError, LysHollow, LysScene, LysSolidZone};
+use bread_lys::{LysContact, LysDrain, LysError, LysHollow, LysScene, LysSolidZone};
 use sc_mesh_core::IndexedMesh;
 use sc_scene::{LeafPayload, Scene, SceneMetadata};
 
@@ -84,7 +84,7 @@ pub(crate) fn open_lys<F: FnMut(LoadProgress)>(
         done_bytes: 0,
         total_bytes: total,
     });
-    let scene = sc_lys::read_lys(&bytes).map_err(LoadSceneError::Lys)?;
+    let scene = bread_lys::read_lys(&bytes).map_err(LoadSceneError::Lys)?;
     let loaded = loaded_scene(scene).map_err(LoadSceneError::Lys)?;
     on_progress(LoadProgress {
         done_bytes: total,

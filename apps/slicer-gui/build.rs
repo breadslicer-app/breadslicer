@@ -30,7 +30,7 @@ const COVERAGE_THRESHOLD_PERCENT: u32 = 50;
 /// System-auto-detects-it path.
 const SOURCE_LANGUAGE_CODE: &str = "en";
 
-// The interface itself is compiled by the `sc-slicer-gui-ui` crate
+// The interface itself is compiled by the `bread-gui-ui` crate
 // (`crates/ui`), so editing this crate's Rust code does not run the Slint
 // compiler again.
 fn main() {

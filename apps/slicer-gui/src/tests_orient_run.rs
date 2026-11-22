@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{IndexedMesh, Vertex};
-use sc_orient::SearchMode;
+use bread_orient::SearchMode;
 use sc_scene::node::LeafPayload;
 use sc_scene::{NodeId, PAINTED, PaintChanges, Scene, UNPAINTED};
 use sc_scene_edit::SceneEdit;

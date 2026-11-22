@@ -119,6 +119,10 @@ pub(crate) struct HandRouted {
 pub(crate) struct HandRoute {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) foot: Option<[f64; 2]>,
+    /// For a support hung from another: the height of the knot it hangs
+    /// from on its host's shaft.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) knot_z: Option<f64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) elbows: Vec<[f64; 3]>,
 }

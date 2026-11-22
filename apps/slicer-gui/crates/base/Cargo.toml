@@ -1,5 +1,5 @@
 [package]
-name = "sc-slicer-gui-base"
+name = "bread-gui-base"
 version = "0.4.0-alpha.1"
 edition.workspace = true
 license = "AGPL-3.0-or-later"

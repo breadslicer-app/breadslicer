@@ -41,7 +41,7 @@ use crate::config::profile_libraries::resolve_profile_libraries;
 fn main() -> Result<()> {
     // The formats ported from UVtools write through `sc-sla-formats` once
     // installed.
-    sc_sla_formats_uvtools::install();
+    bread_sla_formats_uvtools::install();
     let cmd_options = get_cmd_options().run();
     let libraries = resolve_profile_libraries();
 

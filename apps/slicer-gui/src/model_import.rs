@@ -8,7 +8,7 @@
 //!
 //! An import reads its files on a worker, as a load does, but leaves the
 //! scene in place: each file's models are dropped on the plate, and the
-//! arrangement ([`sc_arrange`]) finds them a free spot with everything
+//! arrangement ([`bread_arrange`]) finds them a free spot with everything
 //! already on the plate kept where it is, as obstacles. A file that does not
 //! fit goes beside the plate. A file's models stay together as one piece,
 //! as the file placed them; they keep their turn.
@@ -38,7 +38,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use sc_arrange::{Body, Part, Placement, Plate, Settings};
+use bread_arrange::{Body, Part, Placement, Plate, Settings};
 use sc_geom::supports::is_any_support_mesh;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
@@ -615,7 +615,7 @@ pub(crate) fn place_files(
             fixed: false,
         }
     }));
-    match sc_arrange::arrange_across(
+    match bread_arrange::arrange_across(
         &bodies,
         &stands_on,
         plates,

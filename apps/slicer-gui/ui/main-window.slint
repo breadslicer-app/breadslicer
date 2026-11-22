@@ -461,6 +461,9 @@ export component MainWindow inherits Window {
     // A click of the tool at a world point; with Shift, Add hangs the
     // support from the nearest one or places nothing.
     callback support-tool-clicked(float, float, float, bool);
+    // A click of the Select tool on no support: what was picked goes, unless
+    // Shift is held (#377).
+    callback support-tool-missed(bool);
     // The cursor over the model with a tab tool armed: the world point,
     // whether there is one (false clears the preview) and whether Shift is
     // held.

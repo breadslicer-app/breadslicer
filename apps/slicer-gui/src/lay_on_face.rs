@@ -190,9 +190,9 @@ pub(crate) fn laid_pose(
 ) -> Option<AffineTransform3D> {
     let kept = match rotation_to_floor(normal) {
         Some(rotation) => {
-            let turned = sc_orient::turned_about_footprint(mesh, world, &rotation);
+            let turned = bread_orient::turned_about_footprint(mesh, world, &rotation);
             match plate {
-                Some((lo, hi)) => sc_orient::kept_on_plate(mesh, world, &turned, lo, hi),
+                Some((lo, hi)) => bread_orient::kept_on_plate(mesh, world, &turned, lo, hi),
                 None => turned,
             }
         }
@@ -202,12 +202,12 @@ pub(crate) fn laid_pose(
     if !drop {
         return Some(kept);
     }
-    let lowest = f64::from(sc_orient::drawn_lowest(mesh, &kept));
+    let lowest = f64::from(bread_orient::drawn_lowest(mesh, &kept));
     if !lowest.is_finite() {
         return Some(kept);
     }
     let down = AffineTransform3D::from_translation([0.0, 0.0, -lowest]).compose(&kept);
-    Some(sc_orient::drawn_no_lower_than(mesh, &down, 0.0))
+    Some(bread_orient::drawn_no_lower_than(mesh, &down, 0.0))
 }
 
 #[cfg(test)]
@@ -271,7 +271,7 @@ mod tests {
         // A cube floating 3 mm up, its centre at (10, 10, 3.5).
         let world = AffineTransform3D::from_translation([10.0, 10.0, 3.5]);
         let laid = laid_pose(&cube, &world, [1.0, 0.0, 0.0], None, true).unwrap();
-        assert!(f64::from(sc_orient::drawn_lowest(&cube, &laid)).abs() < 1e-5);
+        assert!(f64::from(bread_orient::drawn_lowest(&cube, &laid)).abs() < 1e-5);
         // The +X face now faces down.
         let n = world_normal(&laid, [1.0, 0.0, 0.0]).unwrap();
         assert!(close(n.map(|v| (v * 1e6).round() / 1e6), [0.0, 0.0, -1.0]));
@@ -280,6 +280,6 @@ mod tests {
         assert!((t[0] - 10.0).abs() < 1e-6 && (t[1] - 10.0).abs() < 1e-6);
         // Without the drop it keeps the lift.
         let kept = laid_pose(&cube, &world, [1.0, 0.0, 0.0], None, false).unwrap();
-        assert!((f64::from(sc_orient::drawn_lowest(&cube, &kept)) - 3.0).abs() < 1e-4);
+        assert!((f64::from(bread_orient::drawn_lowest(&cube, &kept)) - 3.0).abs() < 1e-4);
     }
 }

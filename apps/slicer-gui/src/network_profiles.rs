@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use sc_print_primitives::{MaterialId, NetworkProtocol, PrinterId};
-use sc_printer_link::sdcp::Printer;
+use bread_printer_link::sdcp::Printer;
 use serde_json::{Value, json};
 
 use crate::i18n::ctr;

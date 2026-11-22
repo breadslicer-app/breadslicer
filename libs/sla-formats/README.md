@@ -22,10 +22,10 @@ their own. Mesh formats belong to
 | `3mf`           | printer | file      | A package using the [3MF Slice Extension](https://github.com/3MFConsortium/spec_slice), conventionally named `*.slices.3mf`. |
 | GOO v3.0        | printer | file      | Elegoo `.goo`, all 256 greys. Written here. |
 | CTB v5          | printer | file      | Chitubox `.ctb`, plain and encrypted, 7-bit greys. Written here. |
-| CTB v2–v4       | printer | file      | Older `.ctb` revisions. Written by `sc-sla-formats-uvtools`. |
-| CXDLP v2, v3    | printer | file      | Creality Halot `.cxdlp`, the panel turned as the printer reads it. Written by `sc-sla-formats-uvtools`. |
-| Anycubic ZIP    | printer | file      | `.pwsz`, `.pm7`, `.pm7m`, `.pm4u`, `.pp1`, `.pp1m`; PW0 layers, 16 greys. Written by `sc-sla-formats-uvtools`. |
-| Anycubic binary | printer | file      | The 21 extensions Photon Workshop wrote before the ZIP; PW0 or bit-plane layers. Written by `sc-sla-formats-uvtools`. |
+| CTB v2–v4       | printer | file      | Older `.ctb` revisions. Written by `bread-sla-formats-uvtools`. |
+| CXDLP v2, v3    | printer | file      | Creality Halot `.cxdlp`, the panel turned as the printer reads it. Written by `bread-sla-formats-uvtools`. |
+| Anycubic ZIP    | printer | file      | `.pwsz`, `.pm7`, `.pm7m`, `.pm4u`, `.pp1`, `.pp1m`; PW0 layers, 16 greys. Written by `bread-sla-formats-uvtools`. |
+| Anycubic binary | printer | file      | The 21 extensions Photon Workshop wrote before the ZIP; PW0 or bit-plane layers. Written by `bread-sla-formats-uvtools`. |
 | GOO v5.1, SL1   | printer | -         | Not written: asking for one is refused (`WriterError::PrinterFormatNotImplemented`). |
 
 Debug formats are for inspection, regression fixtures and visual checking,
