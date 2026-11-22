@@ -11,7 +11,9 @@
 //! shaft through the model, lean one past what prints, or put an elbow out
 //! of order is refused, and the session is as it was.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+
+use bread_support_bracing::auto_brace::LostBrace;
 
 use bread_support_geom::geom::Vec3;
 use bread_support_model::tips::get_final_socket_position;
@@ -1028,7 +1030,13 @@ impl SupportSession {
         if self.route_of(id).is_some() {
             self.shaft_clear(id)?;
         }
+        let routed = self.route_of(id).is_some();
+        let lost = self.lost_braces(id);
         let (hangers, others) = self.hung_on(id);
+        let hung: Vec<(String, Option<[f64; 3]>, Vec<LostBrace>)> = hangers
+            .iter()
+            .map(|h| (h.clone(), self.tip_point(h), self.lost_braces(h)))
+            .collect();
         if !others.is_empty() {
             let gone = self.removal_of(&others)?;
             self.log_removal(&others, &gone);
@@ -1041,11 +1049,106 @@ impl SupportSession {
             self.move_in_place_as(&hanger, At::Point(tip), &AddOptions::default(), false)
                 .map_err(|(err, _)| err)?;
         }
-        // The braces it lost go back where they still reach.
-        if self.route_of(id).is_some() {
-            self.rebrace(id);
+        // The braces it lost go back between the same shafts at the same
+        // heights, where they still reach: a hung support routed again is
+        // found by its tip. A shaft that had none is braced to its
+        // neighbours as one placed by hand.
+        let renamed: HashMap<String, String> = hung
+            .iter()
+            .filter_map(|(old, tip, _)| Some((old.clone(), self.tip_near((*tip)?, 1e-6)?)))
+            .collect();
+        let named = |lost: &[LostBrace], skip: &dyn Fn(&str) -> bool| -> Vec<LostBrace> {
+            lost.iter()
+                .filter(|b| !skip(&b.other))
+                .map(|b| LostBrace {
+                    other: renamed
+                        .get(&b.other)
+                        .cloned()
+                        .unwrap_or_else(|| b.other.clone()),
+                    ..b.clone()
+                })
+                .collect()
+        };
+        if routed {
+            if lost.is_empty() {
+                self.rebrace(id);
+            } else {
+                let again = named(&lost, &|_| false);
+                self.brace_again(id, &again);
+            }
+        }
+        for (k, (old, _, lost)) in hung.iter().enumerate() {
+            let Some(now) = renamed.get(old) else {
+                continue;
+            };
+            // A brace to the moved shaft, or to a hung support before it,
+            // is laid already.
+            let earlier: HashSet<&str> = hung[..k].iter().map(|(h, _, _)| h.as_str()).collect();
+            let again = named(lost, &|other| other == id || earlier.contains(other));
+            self.brace_again(now, &again);
         }
         Ok(self)
+    }
+
+    /// The supports hung from support `id`'s shaft, each with the knot it
+    /// hangs from (world mm), from the bottom up (#377).
+    pub fn hung_from(&self, id: &str) -> Vec<(String, [f64; 3])> {
+        let mut out: Vec<(String, [f64; 3])> = self
+            .hung_on(id)
+            .0
+            .into_iter()
+            .filter_map(|h| {
+                let (at, _) = self.knot_of(&h)?;
+                Some((h, at))
+            })
+            .collect();
+        out.sort_by(|a, b| a.1[2].total_cmp(&b.1[2]));
+        out
+    }
+
+    /// The braces on support `id`'s shaft, as [`LostBrace`]s: what it had
+    /// before a move takes them off.
+    fn lost_braces(&self, id: &str) -> Vec<LostBrace> {
+        let c = &self.state.collections;
+        let Some((_, segments)) = self.shaft_segments(id) else {
+            return Vec::new();
+        };
+        let on: HashSet<&str> = segments.iter().map(|s| s.id.as_str()).collect();
+        let owner = |segment: &str| -> Option<String> {
+            c.trunks
+                .iter()
+                .find(|(_, t)| t.segments.iter().any(|s| s.id == segment))
+                .map(|(e, _)| e.clone())
+                .or_else(|| {
+                    c.branches
+                        .iter()
+                        .find(|(_, b)| b.segments.iter().any(|s| s.id == segment))
+                        .map(|(e, _)| e.clone())
+                })
+        };
+        c.braces
+            .values()
+            .filter_map(|brace| {
+                let start = c.knots.get(&brace.start_knot_id)?;
+                let end = c.knots.get(&brace.end_knot_id)?;
+                let (own, far, own_start) = if on.contains(start.parent_shaft_id.as_str()) {
+                    (start, end, true)
+                } else if on.contains(end.parent_shaft_id.as_str()) {
+                    (end, start, false)
+                } else {
+                    return None;
+                };
+                Some(LostBrace {
+                    other: owner(&far.parent_shaft_id)?,
+                    own_z: own.pos.z,
+                    other_z: far.pos.z,
+                    own_start,
+                    section: brace
+                        .debug_section
+                        .unwrap_or(bread_support_model::types::BraceDebugSection::Initial),
+                })
+            })
+            .collect()
     }
 
     /// What hangs from support `id`'s shaft: the supports (to route again)
@@ -1273,6 +1376,54 @@ mod part_edit_tests {
         assert_eq!(moved.tip, trunk.tip);
         assert!((moved.foot.unwrap()[0] - (trunk.foot.unwrap()[0] - 1.0)).abs() < 1e-9);
         assert!((moved.foot.unwrap()[2] - trunk.foot.unwrap()[2]).abs() < 1e-9);
+    }
+
+    /// #377: a trunk of a run's set moved, or its elbow, gets back the
+    /// braces it had, between the same shafts; a support hung from another
+    /// is drawn alone with the knot it hangs from.
+    #[test]
+    fn a_run_s_trunk_moved_keeps_its_braces() {
+        let scene = crate::session::session_tests::slab_scene(35.0);
+        let run = crate::start_supports(&scene, crate::SupportRequest::default())
+            .unwrap()
+            .join()
+            .unwrap()
+            .sets
+            .remove(0)
+            .session;
+        let braces = run.state.collections.braces.len();
+        let braced: Vec<String> = run
+            .tips()
+            .into_iter()
+            .map(|(id, _)| id)
+            .filter(|id| run.is_trunk(id) && !run.lost_braces(id).is_empty())
+            .take(4)
+            .collect();
+        assert!(!braced.is_empty(), "a braced trunk");
+        let mut moved = 0;
+        for id in &braced {
+            let mut trunk = run.clone();
+            if trunk.move_trunk(id, [0.4, 0.0]).is_ok() {
+                assert_eq!(trunk.state.collections.braces.len(), braces, "trunk {id}");
+                moved += 1;
+            }
+            let (e, at) = run.parts_of(id).unwrap().elbows[0].clone();
+            let mut elbow = run.clone();
+            if elbow
+                .move_elbow(id, &e, [at[0] - 0.4, at[1], at[2]])
+                .is_ok()
+            {
+                assert_eq!(
+                    elbow.state.collections.braces.len(),
+                    braces,
+                    "elbow of {id}"
+                );
+                moved += 1;
+            }
+        }
+        assert!(moved > 0, "a move that is made");
+        let leaf = run.state.collections.leaves.keys().next().cloned().unwrap();
+        assert!(!run.own_drawing_of(&[leaf]).unwrap().faces().is_empty());
     }
 
     /// #377: a support is picked anywhere along its own shaft, its foot's

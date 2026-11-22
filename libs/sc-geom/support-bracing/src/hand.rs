@@ -116,6 +116,88 @@ pub fn brace_new_shaft(
     added
 }
 
+/// A brace a shaft had before it moved (#377): the shaft at its other end,
+/// the heights of its two ends, and which end was the moved shaft's.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LostBrace {
+    /// The shaft at its other end.
+    pub other: String,
+    /// The height of its end on the moved shaft, mm.
+    pub own_z: f64,
+    /// The height of its end on the other shaft, mm.
+    pub other_z: f64,
+    /// Its start (the end a run lays first, the lower) was on the moved
+    /// shaft.
+    pub own_start: bool,
+    pub section: BraceDebugSection,
+}
+
+/// Lays again on shaft `shaft_id` the braces it lost when it moved (#377):
+/// each between the same two shafts at the same heights, at the bracing
+/// settings' diameter, within their length and clear of the model as a
+/// run's. One whose end no longer lies on its shaft is left out. Returns how
+/// many were laid.
+pub fn brace_again(
+    state: &mut SupportState,
+    shaft_id: &str,
+    lost: &[LostBrace],
+    input_settings: &AutoBracingSettings,
+    live: &SupportSettings,
+    meshes: &BraceMeshes<'_>,
+) -> usize {
+    let settings = normalize_auto_bracing_settings(input_settings);
+    let grid = bracing_grid(live);
+    let c = &state.collections;
+    let shafts = braceable_shafts(c);
+    let find = |id: &str| shafts.iter().position(|s| s.id == id);
+    let Some(me) = find(shaft_id) else {
+        return 0;
+    };
+    let none = HashSet::new();
+    let mut writer = BraceWriter::new(
+        &shafts,
+        &settings,
+        grid,
+        meshes,
+        &none,
+        c.braces.keys().cloned().collect(),
+        c.knots.keys().cloned().collect(),
+    );
+    let diameter = settings.brace_diameter_mm;
+    for brace in lost {
+        let Some(other) = find(&brace.other) else {
+            continue;
+        };
+        let (Some(own), Some(far)) = (
+            anchor_at(&shafts[me], brace.own_z),
+            anchor_at(&shafts[other], brace.other_z),
+        ) else {
+            continue;
+        };
+        if plan_distance(own.pos, far.pos) > settings.max_brace_length_mm + EPS {
+            continue;
+        }
+        let clear = settings.braced_with(&own.model_id).iter().all(|model| {
+            let mesh = meshes.get(*model);
+            line_passes_mesh_clearance(own.pos, far.pos, mesh, diameter)
+                && line_stays_off_mesh(own.pos, far.pos, mesh, diameter)
+        });
+        if !clear {
+            continue;
+        }
+        if brace.own_start {
+            writer.commit(me, other, brace.section, own, far);
+        } else {
+            writer.commit(other, me, brace.section, far, own);
+        }
+    }
+    let (knots, braces) = (writer.knots, writer.braces);
+    let added = braces.len();
+    state.collections.knots.extend(knots);
+    state.collections.braces.extend(braces);
+    added
+}
+
 /// Why a brace drawn by hand between two shafts cannot go there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HandBraceRefusal {

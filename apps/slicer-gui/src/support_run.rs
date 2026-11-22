@@ -8881,6 +8881,9 @@ struct PartGizmo {
     arrows: [bool; 3],
     /// The cubes on its other elbows, by id: a press on one takes it.
     cubes: Vec<(String, [f64; 3])>,
+    /// The cubes on the knots supports hang from on its shaft, by the
+    /// support: a press on one picks that support.
+    hangs: Vec<(String, [f64; 3])>,
     /// It stands on a trunk of its own (its shaft moves across the plate).
     trunk: bool,
     /// The ways its arrows point (world): the world's axes, or for the knot
@@ -8889,6 +8892,10 @@ struct PartGizmo {
     /// It slides the knot the support hangs from along its host's shaft.
     knot: bool,
 }
+
+/// How far up a hung support from its knot the cube that picks it stands,
+/// mm (at most half way to its first bend).
+const HANG_CUBE_MM: f64 = 1.5;
 
 /// The world's axes, as the gizmo's arrows point.
 const WORLD_AXES: [[f64; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
@@ -8939,6 +8946,7 @@ fn part_pick(g: &PartGizmo, pointer: &crate::cut_gizmo::ScenePointer) -> Option<
     let cube = g
         .cubes
         .iter()
+        .chain(&g.hangs)
         .enumerate()
         .filter_map(|(k, (_, p))| {
             let s = (pointer.project)(*p)?;
@@ -9024,11 +9032,29 @@ impl SupportRun {
             },
             _ => rest,
         };
-        let cubes = parts
+        let cubes: Vec<(String, [f64; 3])> = parts
             .elbows
             .iter()
             .filter(|(e, _)| Some(e) != focus.as_ref())
             .cloned()
+            .collect();
+        let room = crate::mesh_render::MAX_TOOL_CORNERS.saturating_sub(cubes.len());
+        // Each a little way up its support from the knot, off the elbow
+        // the knot often sits on.
+        let hangs = drawn
+            .session
+            .hung_from(&id)
+            .into_iter()
+            .take(room)
+            .map(|(h, knot)| {
+                let up = drawn.session.parts_of(&h).map_or(knot, |p| {
+                    p.elbows.first().map_or(p.tip, |(_, e)| *e)
+                });
+                let d: [f64; 3] = std::array::from_fn(|k| up[k] - knot[k]);
+                let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+                let t = if len > 1e-9 { (HANG_CUBE_MM / len).min(0.5) } else { 0.0 };
+                (h, std::array::from_fn(|k| knot[k] + d[k] * t))
+            })
             .collect();
         let arrows = match (&focus, knot) {
             (Some(_), _) => [true, true, true],
@@ -9043,6 +9069,7 @@ impl SupportRun {
             center,
             rest,
             cubes,
+            hangs,
             trunk,
             axes,
             knot: knot.is_some(),
@@ -9115,7 +9142,7 @@ impl crate::cut_gizmo::CutHandles for PartHandles {
         let run = self.0.upgrade()?;
         let g = run.part_gizmo()?;
         let v3 = |p: [f64; 3]| glam::Vec3::new(p[0] as f32, p[1] as f32, p[2] as f32);
-        let cubes: Vec<glam::Vec3> = g.cubes.iter().map(|(_, p)| v3(*p)).collect();
+        let cubes: Vec<glam::Vec3> = g.cubes.iter().chain(&g.hangs).map(|(_, p)| v3(*p)).collect();
         let active = run
             .part_arrow
             .get()
@@ -9160,6 +9187,21 @@ impl crate::cut_gizmo::CutHandles for PartHandles {
                 }));
                 let (elbow, rest) = (g.elbow.clone(), g.rest);
                 run.start_part_drag(g, elbow, rest);
+                true
+            }
+            Some(PartHandle::Elbow(k)) if k >= g.cubes.len() => {
+                // A knot a support hangs from: that support is picked, its
+                // gizmo on the knot.
+                let hanger = &g.hangs[k - g.cubes.len()].0;
+                let Some(tip) = g.drawn.session.tip_point(hanger) else {
+                    return false;
+                };
+                *run.chosen.borrow_mut() = vec![(g.drawn.leaf, tip)];
+                run.part_focus.borrow_mut().take();
+                run.part_hover.set(None);
+                if let Some(ui) = run.ui.upgrade() {
+                    run.show_chosen(&ui);
+                }
                 true
             }
             Some(PartHandle::Elbow(k)) => {
@@ -14305,6 +14347,54 @@ mod hand_edit_tests {
             assert!(Arc::ptr_eq(&in_force_session(&run).unwrap(), &generated));
             // A press off its handles is not the gizmo's.
             assert!(!handles.press(&pointer_above([-500.0, -500.0])));
+        });
+    }
+
+    /// #377: a trunk others hang from shows a cube on each knot they hang
+    /// from; a press on one picks that support, its gizmo on the knot.
+    #[test]
+    fn a_knot_cube_picks_the_support_hung_there() {
+        on_fresh_slint_thread(|| {
+            use crate::cut_gizmo::CutHandles;
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (_document, run) = supported_slab(&window);
+            let generated = in_force_session(&run).expect("editable");
+            let (trunk, hung) = generated
+                .tips()
+                .into_iter()
+                .map(|(id, _)| id)
+                .filter(|id| generated.is_trunk(id))
+                .find_map(|id| {
+                    let hung = generated.hung_from(&id);
+                    (!hung.is_empty()).then_some((id, hung))
+                })
+                .expect("a trunk something hangs from");
+            window.set_support_page(1);
+            window.set_support_tool(5);
+            run.on_tool_changed();
+            run.on_tool_click_with(generated.tip_point(&trunk).unwrap().map(|c| c as f32), false);
+            let g = run.part_gizmo().expect("its gizmo");
+            assert_eq!(g.hangs.len(), hung.len(), "a cube on each knot");
+            let (hanger, knot) = hung[0].clone();
+            let cube = g.hangs[0].1;
+            assert!(cube[2] > knot[2] + 0.1, "the cube stands up its support, off the knot");
+            let handles = PartHandles(Rc::downgrade(&run));
+            // From the side: from above the knot stands right over the
+            // trunk's elbow.
+            let side = crate::cut_gizmo::ScenePointer {
+                origin: [cube[0], -100.0, cube[2]],
+                direction: [0.0, 1.0, 0.0],
+                cursor: [cube[0] * 10.0, -cube[2] * 10.0],
+                project: Box::new(|p| Some([p[0] * 10.0, -p[2] * 10.0])),
+                scale_at: Box::new(|_| Some(12.0)),
+                ring_radius: 0.85,
+                arrow_tip: 1.18,
+            };
+            assert!(handles.press(&side));
+            let now = run.chosen_now();
+            assert_eq!(now[0].1, vec![hanger.clone()], "the support hung there");
+            let g = run.part_gizmo().expect("its gizmo");
+            assert!(g.knot && (0..3).all(|k| (g.center[k] - knot[k]).abs() < 1e-9));
         });
     }
 

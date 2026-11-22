@@ -14,7 +14,9 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::{Arc, OnceLock};
 
-use bread_support_bracing::auto_brace::{HandBrace, HandBraceRefusal, brace_new_shaft, hand_brace};
+use bread_support_bracing::auto_brace::{
+    HandBrace, HandBraceRefusal, LostBrace, brace_again, brace_new_shaft, hand_brace,
+};
 use bread_support_geom::bvh::{MeshBvh, Side};
 use bread_support_geom::geom::ray::Ray;
 use bread_support_geom::geom::{Matrix4, Vec3};
@@ -2870,8 +2872,15 @@ impl SupportSession {
         let own: HashSet<String> = ids
             .iter()
             .flat_map(|id| {
+                // A trunk is drawn with its root; a support hung from
+                // another with the knot it hangs from.
                 let root = c.trunks.get(id).map(|t| t.root_id.clone());
-                std::iter::once(id.clone()).chain(root)
+                let knot = c
+                    .branches
+                    .get(id)
+                    .map(|b| b.parent_knot_id.clone())
+                    .or_else(|| c.leaves.get(id).map(|l| l.parent_knot_id.clone()));
+                std::iter::once(id.clone()).chain(root).chain(knot)
             })
             .collect();
         self.mesh_of(|id| own.contains(id))
@@ -2881,6 +2890,17 @@ impl SupportSession {
     /// trunks (#377): after it moved, the braces it lost come back where
     /// they still reach.
     pub(crate) fn rebrace(&mut self, id: &str) {
+        self.brace_shaft(id, None);
+    }
+
+    /// Lays again on shaft `id` the braces `lost` it had before it moved
+    /// (#377), between the same shafts at the same heights.
+    pub(crate) fn brace_again(&mut self, id: &str, lost: &[LostBrace]) {
+        self.brace_shaft(id, Some(lost));
+    }
+
+    /// Braces shaft `id`: again as it was (`lost`), or to its neighbours.
+    fn brace_shaft(&mut self, id: &str, lost: Option<&[LostBrace]>) {
         if self.settings.supports.auto_support.debug_skip_auto_bracing {
             return;
         }
@@ -2900,13 +2920,11 @@ impl SupportSession {
         )]
         .into();
         let settings = self.settings.clone();
-        let braced = brace_new_shaft(
-            &mut self.state,
-            id,
-            &settings.supports.auto_bracing,
-            &settings.supports,
-            &meshes,
-        );
+        let (bracing, live) = (&settings.supports.auto_bracing, &settings.supports);
+        let braced = match lost {
+            Some(lost) => brace_again(&mut self.state, id, lost, bracing, live, &meshes),
+            None => brace_new_shaft(&mut self.state, id, bracing, live, &meshes),
+        };
         if braced > 0 {
             self.removal_index = Arc::default();
         }
