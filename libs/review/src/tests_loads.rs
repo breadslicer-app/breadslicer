@@ -260,3 +260,44 @@ fn slab_at(dx: f64, dy: f64) -> FixtureBuilder {
         Shape::rect(40.0 + dx, 20.0 + dy, 120.0 + dx, 100.0 + dy),
     )
 }
+
+// Along the print (#245).
+
+#[test]
+fn each_layer_keeps_its_most_loaded_tip_and_each_tip_its_curve() {
+    let fixture = slab()
+        .tip(50.0, 60.0, 5, 2.0)
+        .tip(70.0, 60.0, 5, 2.0)
+        .build();
+    let loads = straight_loads_of(&fixture);
+    assert_eq!(loads.layer_utilization.len(), 10);
+    assert_eq!(loads.curve_layers, 1);
+    // Nothing peels before the slab starts.
+    assert!(loads.layer_utilization[..5].iter().all(|&u| u == 0.0));
+    let peak = &loads.bodies[0];
+    let top = loads.layer_utilization.iter().copied().fold(0.0, f64::max);
+    assert!((top - peak.utilization).abs() < 1e-9);
+    assert!((loads.layer_utilization[peak.layer] - peak.utilization).abs() < 1e-9);
+    for (index, tip) in loads.tips.iter().enumerate() {
+        let curve = &loads.tip_curves[index];
+        assert_eq!(curve.len(), 10);
+        let worst = curve.iter().copied().fold(0.0f32, f32::max);
+        assert!(
+            (f64::from(worst) - tip.worst_n).abs() < 1e-5,
+            "{worst} {tip:?}"
+        );
+        assert!((loads.tip_load_at(index, tip.worst_layer) - tip.worst_n).abs() < 1e-5);
+        assert_eq!(loads.tip_load_at(index, 2), 0.0);
+    }
+}
+
+#[test]
+fn a_tip_the_plate_relieves_has_no_curve() {
+    let fixture = FixtureBuilder::new(10)
+        .model(0..10, Shape::rect(40.0, 20.0, 120.0, 100.0))
+        .tip(80.0, 60.0, 5, 2.0)
+        .build();
+    let loads = loads_of(&fixture);
+    assert!(loads.tip_curves[0].is_empty());
+    assert!(loads.layer_utilization.iter().all(|&u| u == 0.0));
+}

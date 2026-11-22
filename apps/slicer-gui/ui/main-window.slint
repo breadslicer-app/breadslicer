@@ -32,6 +32,7 @@ import { SetupLayer, Picker, FormField, FormSection, PickPrinter, PickNav, PickR
 export { Picker, FormField, FormSection, PickPrinter, PickNav, PickResin, PickLayout }
 export { FrameState } from "kit/framed-window.slint";
 import { TimelineMark } from "workspace/layer-timeline.slint";
+import { StressCard } from "workspace/stress-card.slint";
 export { TimelineMark }
 export { CaliperLink }
 export { AboutWindow, AppMessage, AxisView, MessageAnswer, MessageKind, NetworkPrinterRow, PointerModifiers, Prefs, PrefsHit, PrefsProfile, RecentFileRow, StartOpen, Theme, ThemePreference }
@@ -610,6 +611,23 @@ export component MainWindow inherits Window {
     in-out property <int> slice-timeline-generation: 0;
     in-out property <int> slice-timeline-figure: 0;
     pure callback slice-timeline-readout(int, int) -> string;
+    // The FORCES card over the view (#245), driven by Rust (`stress_view`):
+    // the force drawn coloured by load, the picked support's load along the
+    // print and the line under it, and whether the scene is painted by load.
+    in property <image> slice-timeline-force-image;
+    in property <bool> slice-timeline-has-image: false;
+    in property <string> slice-timeline-support-path;
+    in property <float> slice-timeline-holds-at: -1;
+    in property <string> slice-timeline-support-note;
+    in-out property <bool> stress-paint: true;
+    in-out property <bool> stress-open: true;
+    callback stress-paint-toggled(bool);
+    // The card shows in the Slice tab with a slice held, and in the Supports
+    // tab while that slice still shows the scene.
+    property <bool> stress-card-shown: root.has-scene && root.slice-timeline-valid
+        && root.slice-layer-count > 0
+        && (root.workspace-section == WorkspaceSection.Slice
+            || (root.workspace-section == WorkspaceSection.Supports && root.slice-layers-current));
     // What the print costs in resin (#101), and the price of its resin.
     in property <string> slice-cost;
     in property <string> slice-cost-note;
@@ -2460,6 +2478,42 @@ export component MainWindow inherits Window {
                         }
                     }
 
+                    // FORCES (#245) over the view, low on its right beside the
+                    // layer slider.
+                    if root.stress-card-shown: StressCard {
+                        width: Math.max(260px, Math.min(480px,
+                            parent.width - 100px - 12px - (root.review-card-width > 0 ? root.review-card-width + 24px : 12px)));
+                        x: parent.width - 100px - self.width;
+                        y: parent.height - 46px - self.height;
+                        open <=> root.stress-open;
+                        paint <=> root.stress-paint;
+                        layer-count: root.slice-layer-count;
+                        selected-layer: root.selected-layer-index;
+                        force-path: root.slice-timeline-force;
+                        area-path: root.slice-timeline-area;
+                        perimeter-path: root.slice-timeline-perimeter;
+                        time-path: root.slice-timeline-time;
+                        spikes: root.slice-timeline-spikes;
+                        peak: root.slice-timeline-peak;
+                        generation: root.slice-timeline-generation;
+                        figure <=> root.slice-timeline-figure;
+                        force-image: root.slice-timeline-force-image;
+                        has-force-image: root.slice-timeline-has-image;
+                        support-path: root.slice-timeline-support-path;
+                        holds-at: root.slice-timeline-holds-at;
+                        support-note: root.slice-timeline-support-note;
+                        readout(layer, generation) => {
+                            return root.slice-timeline-readout(layer, generation);
+                        }
+                        layer-picked(layer) => {
+                            root.selected-layer-index = layer;
+                            root.selected-layer-changed();
+                        }
+                        paint-toggled(on) => {
+                            root.stress-paint-toggled(on);
+                        }
+                    }
+
                     // REVIEW (#90) over the view, low on its left above the
                     // view's chips: the column beside keeps the setup, the
                     // result and the cost whole on a 1080p screen.
@@ -2873,22 +2927,6 @@ export component MainWindow inherits Window {
                                 estimate-volume: root.slice-estimate-volume;
                                 estimate-mass: root.slice-estimate-mass;
                                 estimate-note: root.slice-estimate-note;
-                                timeline-valid: root.slice-timeline-valid;
-                                timeline-force: root.slice-timeline-force;
-                                timeline-area: root.slice-timeline-area;
-                                timeline-perimeter: root.slice-timeline-perimeter;
-                                timeline-time: root.slice-timeline-time;
-                                timeline-spikes: root.slice-timeline-spikes;
-                                timeline-peak: root.slice-timeline-peak;
-                                timeline-generation: root.slice-timeline-generation;
-                                timeline-figure <=> root.slice-timeline-figure;
-                                timeline-readout(layer, generation) => {
-                                    return root.slice-timeline-readout(layer, generation);
-                                }
-                                timeline-layer-picked(layer) => {
-                                    root.selected-layer-index = layer;
-                                    root.selected-layer-changed();
-                                }
                                 cost: root.slice-cost;
                                 cost-note: root.slice-cost-note;
                                 cost-rows: root.slice-cost-rows;

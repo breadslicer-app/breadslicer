@@ -1,0 +1,153 @@
+/*
+ * SPDX-FileCopyrightText: 2026 SynrgStudio
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+// The FORCES card over the view (#245): the layer timeline of the held slice,
+// its force coloured by how hard the tips holding each layer are pulled, and
+// a box that paints the models and the supports in the same colours. Low on
+// the right of the view, beside the layer slider, in the Supports and Slice
+// tabs. Rust (`layer_timeline`, `stress_view`) drives it.
+
+import { Theme } from "../kit/theme.slint";
+import { DisclosureChevron, Note, ScCheckBox } from "../kit/controls.slint";
+import { LayerTimeline, TimelineMark } from "layer-timeline.slint";
+
+// The colours of the load, as the 3D view paints them: green for little,
+// yellow at half, red at all a tip is estimated to hold.
+component LoadLegend inherits HorizontalLayout {
+    spacing: 8px;
+
+    Rectangle {
+        width: 96px;
+        height: 8px;
+        y: (parent.height - self.height) / 2;
+        border-radius: 2px;
+        background: @linear-gradient(90deg, #4cc775 0%, #f5d64d 50%, #ed3d38 100%);
+    }
+    Text {
+        text: @tr("StressCard" => "little · half · all a tip holds");
+        font-size: Theme.font-xs;
+        color: Theme.text-muted;
+        vertical-alignment: center;
+    }
+}
+
+export component StressCard inherits Rectangle {
+    in property <int> layer-count;
+    in property <float> selected-layer;
+    in property <string> force-path;
+    in property <string> area-path;
+    in property <string> perimeter-path;
+    in property <string> time-path;
+    in property <[TimelineMark]> spikes;
+    in property <string> peak;
+    in property <int> generation;
+    in-out property <int> figure: 0;
+    in property <image> force-image;
+    in property <bool> has-force-image;
+    in property <string> support-path;
+    in property <float> holds-at: -1;
+    in property <string> support-note;
+    // The 3D view painted by load.
+    in-out property <bool> paint: true;
+    // Unfolded or folded to its heading.
+    in-out property <bool> open: true;
+    pure callback readout(int, int) -> string;
+    callback layer-picked(int);
+    callback paint-toggled(bool);
+
+    height: root.open ? card-layout.preferred-height : 36px;
+    clip: true;
+    background: Theme.card;
+    border-width: 1px;
+    border-color: Theme.border;
+    border-radius: Theme.radius-lg;
+
+    card-layout := VerticalLayout {
+        y: 0;
+        Rectangle {
+            height: 36px;
+            accessible-role: button;
+            accessible-label: @tr("StressCard" => "FORCES");
+            accessible-expanded: root.open;
+            accessible-action-default => {
+                root.open = !root.open;
+            }
+
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.open = !root.open;
+                }
+            }
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 8px;
+
+                DisclosureChevron {
+                    open: root.open;
+                    y: (parent.height - self.height) / 2;
+                }
+                Text {
+                    text: @tr("StressCard" => "FORCES");
+                    font-size: Theme.font-sm;
+                    font-weight: 600;
+                    letter-spacing: 0.5px;
+                    color: Theme.text-muted;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: @tr("StressCard" => "estimated");
+                    font-size: Theme.font-xs;
+                    color: Theme.text-faint;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                ScCheckBox {
+                    text: @tr("StressCard" => "Paint the scene");
+                    checked <=> root.paint;
+                    y: (parent.height - self.height) / 2;
+                    toggled => {
+                        root.paint-toggled(self.checked);
+                    }
+                }
+            }
+        }
+        Rectangle {
+            height: 1px;
+            background: Theme.border-soft;
+        }
+        VerticalLayout {
+            padding: 12px;
+            spacing: 8px;
+
+            LayerTimeline {
+                layer-count: root.layer-count;
+                selected-layer: root.selected-layer;
+                force-path: root.force-path;
+                area-path: root.area-path;
+                perimeter-path: root.perimeter-path;
+                time-path: root.time-path;
+                spikes: root.spikes;
+                peak: root.peak;
+                generation: root.generation;
+                figure <=> root.figure;
+                force-image: root.force-image;
+                has-force-image: root.has-force-image;
+                support-path: root.support-path;
+                holds-at: root.holds-at;
+                support-note: root.support-note;
+                chart-height: 96px;
+                readout(layer, generation) => {
+                    return root.readout(layer, generation);
+                }
+                layer-picked(layer) => {
+                    root.layer-picked(layer);
+                }
+            }
+            if root.has-force-image: LoadLegend { }
+        }
+    }
+}

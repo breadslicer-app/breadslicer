@@ -2022,15 +2022,16 @@ impl ReviewPanel {
     }
 
     /// The peel loads of the review held, while it is of the slice held
-    /// (#94).
-    pub(crate) fn held_loads(&self) -> Option<Arc<bread_review::PlateLoads>> {
+    /// (#94), with how the slice read the scene's points: a tip's load is
+    /// found again on its support through it (#245).
+    pub(crate) fn held_loads_framed(&self) -> Option<(Arc<bread_review::PlateLoads>, PlateFrame)> {
         let held = self.held.borrow();
         let held = held.as_ref()?;
         if held.generation != self.document.slice_generation() {
             return None;
         }
         match &held.outcome {
-            ReviewOutcome::Reviewed { loads, .. } => Some(loads.clone()),
+            ReviewOutcome::Reviewed { loads, frame, .. } => Some((loads.clone(), frame.clone())),
             ReviewOutcome::Cancelled | ReviewOutcome::Failed(_) => None,
         }
     }

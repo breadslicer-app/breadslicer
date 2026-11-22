@@ -152,6 +152,8 @@ pub(crate) struct ViewportController {
     /// The marks of where supports are recommended (#524), drawn in the
     /// Supports tab.
     hint_marks: RefCell<Option<crate::mesh_render::Overlay>>,
+    /// The stress view (#245), painted in the Supports and Slice tabs.
+    stress: RefCell<Option<crate::mesh_render::StressPaint>>,
     /// What a Repair run left broken, marked over the scene (#253).
     repair_marks: crate::repair_marks::MarksLayer,
     /// The Measure tool (#652).
@@ -374,6 +376,7 @@ impl ViewportController {
             readout_base: Cell::new(None),
             overlay: RefCell::new(None),
             hint_marks: RefCell::new(None),
+            stress: RefCell::new(None),
             repair_marks: Default::default(),
             measure: Default::default(),
             tool_models: RefCell::new(Vec::new()),
@@ -460,6 +463,7 @@ impl ViewportController {
             readout_base: Cell::new(None),
             overlay: RefCell::new(None),
             hint_marks: RefCell::new(None),
+            stress: RefCell::new(None),
             repair_marks: Default::default(),
             measure: Default::default(),
             tool_models: RefCell::new(Vec::new()),
@@ -1670,6 +1674,19 @@ impl ViewportController {
     pub(crate) fn set_hint_marks(&self, marks: Option<crate::mesh_render::Overlay>) {
         *self.hint_marks.borrow_mut() = marks;
         self.mark_dirty();
+    }
+
+    /// Paints the scene by load (#245) in the Supports and Slice tabs until
+    /// replaced (`None` takes the paint off).
+    pub(crate) fn set_stress(&self, stress: Option<crate::mesh_render::StressPaint>) {
+        *self.stress.borrow_mut() = stress;
+        self.mark_dirty();
+    }
+
+    /// The stress paint handed to the view now.
+    #[cfg(test)]
+    pub(crate) fn stress_for_test(&self) -> Option<crate::mesh_render::StressPaint> {
+        self.stress.borrow().clone()
     }
 
     /// Shows `pieces` over the scene until replaced (`None` clears them).
@@ -6347,6 +6364,13 @@ impl ViewportController {
             .then(|| self.hint_marks.borrow().clone())
             .flatten();
         renderer.set_hint_marks(hints.as_ref());
+        let stress = matches!(
+            self.session.section(),
+            WorkspaceSection::Supports | WorkspaceSection::Slice
+        )
+        .then(|| self.stress.borrow().clone())
+        .flatten();
+        renderer.set_stress(stress.as_ref());
         let overhang_map = self.overhang_map();
         renderer.set_overhang_map(overhang_map);
         if overhang_map.is_some() {

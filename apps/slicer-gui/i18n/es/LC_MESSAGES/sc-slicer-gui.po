@@ -10927,3 +10927,43 @@ msgstr "Escenas de Lychee"
 msgctxt "FileDialog"
 msgid "Projects and Lychee scenes"
 msgstr "Proyectos y escenas de Lychee"
+
+#: ui/workspace/stress-card.slint
+msgctxt "StressCard"
+msgid "FORCES"
+msgstr "FUERZAS"
+
+#: ui/workspace/stress-card.slint
+msgctxt "StressCard"
+msgid "estimated"
+msgstr "estimado"
+
+#: ui/workspace/stress-card.slint
+msgctxt "StressCard"
+msgid "Paint the scene"
+msgstr "Pintar la escena"
+
+#: ui/workspace/stress-card.slint
+msgctxt "StressCard"
+msgid "little · half · all a tip holds"
+msgstr "poco · la mitad · todo lo que aguanta una punta"
+
+#: src/stress_view.rs
+msgctxt "StressCard"
+msgid "Picked support: no peel pulls on its tip in this slice."
+msgstr "Soporte elegido: ningún despegue tira de su punta en este laminado."
+
+#: src/stress_view.rs
+msgctxt "StressCard"
+msgid "Picked support: hardest pull {} N on layer {}, {} of what its tip holds."
+msgstr "Soporte elegido: el tirón más fuerte es de {} N en la capa {}, {} de lo que aguanta su punta."
+
+#: src/stress_view.rs
+msgctxt "StressCard"
+msgid "Most loaded tip: {} of what it holds"
+msgstr "Punta más exigida: {} de lo que aguanta"
+
+#: src/stress_view.rs
+msgctxt "StressCard"
+msgid "No tip pulled: the plate holds this layer"
+msgstr "Ninguna punta tira: la cama sostiene esta capa"

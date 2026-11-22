@@ -49,6 +49,11 @@ pub(super) struct Uniforms {
     /// The plates (#545): how far apart they stand along X and Y, how many
     /// and the active one ([`crate::plates`]).
     pub(super) plates: [f32; 4],
+    /// The stress view (#245): the bottom and the top of its bands, mm, and
+    /// 1 while it paints ([`super::StressBands::range`]).
+    pub(super) stress_range: [f32; 4],
+    /// Its bands, four to a lane ([`super::StressBands::packed`]).
+    pub(super) stress: [[f32; 4]; super::stress_paint::STRESS_BANDS / 4],
 }
 
 /// World-space directional light. The fourth component carries the

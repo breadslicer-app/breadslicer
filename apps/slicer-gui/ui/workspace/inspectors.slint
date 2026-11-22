@@ -12,7 +12,6 @@ import { ScCheckBox as CheckBox, ScComboBox as ComboBox, ScLineEdit as LineEdit,
 import { Theme } from "../kit/theme.slint";
 import { Icons } from "../kit/icons.slint";
 import { HandToolButton, OwnPresets, PageTabs, PartHead, PresetCard, PresetCards, ScopeBox, ShapeCallout, ShapeField, ShapeSize, ShapeViewer, SizeChips, ZoneRow, ZoneRowView } from "support-shape.slint";
-import { LayerTimeline, TimelineMark } from "layer-timeline.slint";
 import { ButtonKind, Card, DisclosureChevron, Dot, Icon, InfoRow, LabeledRow, Note, NumberField, ScButton, Segmented, StatTile, WarningNote } from "../kit/controls.slint";
 
 // One finding of the slice review (#90), as Rust lays it out.
@@ -3597,19 +3596,6 @@ export component SliceInspector inherits VerticalLayout {
     in property <string> estimate-volume;
     in property <string> estimate-mass;
     in property <string> estimate-note;
-    // The layer timeline (#94): see `LayerTimeline`.
-    in property <bool> timeline-valid;
-    in property <string> timeline-force;
-    in property <string> timeline-area;
-    in property <string> timeline-perimeter;
-    in property <string> timeline-time;
-    in property <[TimelineMark]> timeline-spikes;
-    in property <string> timeline-peak;
-    in property <int> timeline-generation;
-    in-out property <int> timeline-figure;
-    in-out property <bool> timeline-open: true;
-    pure callback timeline-readout(int, int) -> string;
-    callback timeline-layer-picked(int);
     // What the print costs in resin (#101): the cost, why there is none,
     // each model's share with several, and the price of the slice's resin
     // as typed (0 price, 1 currency, 2 bottle content, 3 losses %, 4 grams
@@ -4160,33 +4146,6 @@ export component SliceInspector inherits VerticalLayout {
                 height: parent.height - 8px;
                 source: root.layer-image;
                 image-fit: contain;
-            }
-        }
-    }
-
-    // LAYERS (#94): each layer's force, area, perimeter and time.
-    if root.layer-count > 0 && root.timeline-valid: Card {
-        title: @tr("Inspector" => "LAYERS");
-        vertical-stretch: 0;
-        collapsible: true;
-        expanded <=> root.timeline-open;
-
-        if root.timeline-open: LayerTimeline {
-            layer-count: root.layer-count;
-            selected-layer: root.selected-layer;
-            force-path: root.timeline-force;
-            area-path: root.timeline-area;
-            perimeter-path: root.timeline-perimeter;
-            time-path: root.timeline-time;
-            spikes: root.timeline-spikes;
-            peak: root.timeline-peak;
-            generation: root.timeline-generation;
-            figure <=> root.timeline-figure;
-            readout(layer, generation) => {
-                return root.timeline-readout(layer, generation);
-            }
-            layer-picked(layer) => {
-                root.timeline-layer-picked(layer);
             }
         }
     }

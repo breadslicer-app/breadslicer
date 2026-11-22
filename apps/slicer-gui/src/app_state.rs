@@ -880,6 +880,14 @@ impl AppState {
         );
         let layer_timeline =
             crate::layer_timeline::LayerTimeline::install(ui, ctrl.clone(), review_panel.clone());
+        {
+            let stress = Rc::downgrade(layer_timeline.stress());
+            support_run.on_chosen(move |picked| {
+                if let Some(stress) = stress.upgrade() {
+                    stress.set_picked(picked);
+                }
+            });
+        }
         WindowDrivers {
             _send_to_printer: send_to_printer,
             _layer_pixels: layer_pixels,

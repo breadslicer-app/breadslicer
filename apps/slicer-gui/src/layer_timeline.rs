@@ -27,6 +27,7 @@ use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 use crate::export_print_file::{HeldLayers, held_slice_layers};
 use crate::i18n::ctr;
 use crate::review_panel::ReviewPanel;
+use crate::stress_view::StressView;
 use crate::viewport::ViewportController;
 use crate::{MainWindow, TimelineMark};
 
@@ -182,6 +183,8 @@ pub(crate) struct LayerTimeline {
     ctrl: Rc<ViewportController>,
     review: Rc<ReviewPanel>,
     shown: RefCell<Timeline>,
+    /// The loads of the same review, coloured and painted (#245).
+    stress: Rc<StressView>,
 }
 
 impl std::fmt::Debug for LayerTimeline {
@@ -203,6 +206,7 @@ impl LayerTimeline {
             ctrl: ctrl.clone(),
             review: review.clone(),
             shown: RefCell::new(Timeline::default()),
+            stress: StressView::new(ui, ctrl.clone()),
         });
         let weak = Rc::downgrade(&timeline);
         ctrl.on_estimate(move || {
@@ -220,9 +224,18 @@ impl LayerTimeline {
         ui.on_slice_timeline_readout(move |layer, _generation| {
             weak.upgrade()
                 .and_then(|timeline| {
-                    usize::try_from(layer)
-                        .ok()
-                        .map(|layer| timeline.shown.borrow().readout(layer))
+                    usize::try_from(layer).ok().map(|layer| {
+                        let line = timeline.shown.borrow().readout(layer);
+                        let load = timeline.stress.layer_note(layer);
+                        if load.is_empty() || line.is_empty() {
+                            line
+                        } else {
+                            format!(
+                                "{line}
+{load}"
+                            )
+                        }
+                    })
                 })
                 .unwrap_or_default()
                 .into()
@@ -241,15 +254,22 @@ impl LayerTimeline {
                 .map(|(scene, _)| scene);
             held_slice_layers(&document, scene).ok()
         });
+        let loads = held.as_ref().and_then(|_| self.review.held_loads_framed());
         let timeline = match held {
             Some(held) => {
-                let loads = self.review.held_loads();
-                let cups = loads.as_deref().map(|loads| loads.cup_mm2.as_slice());
+                let cups = loads.as_ref().map(|(loads, _)| loads.cup_mm2.as_slice());
                 Timeline::of(&held, cups, &PeelModel::default())
             }
             None => Timeline::default(),
         };
+        let forces: Vec<f64> = timeline.layers.iter().map(|layer| layer.force_n).collect();
         self.show(timeline);
+        self.stress.show(loads, &forces);
+    }
+
+    /// The stress view of the card (#245).
+    pub(crate) fn stress(&self) -> &Rc<StressView> {
+        &self.stress
     }
 
     fn show(&self, timeline: Timeline) {

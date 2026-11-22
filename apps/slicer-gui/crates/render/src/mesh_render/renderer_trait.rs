@@ -113,6 +113,10 @@ pub trait MeshRenderer {
     /// turns the map off).
     fn set_overhang_map(&mut self, _map: Option<super::OverhangMap>) {}
 
+    /// Paints the models and the supports of the workspace frames to come by
+    /// load (#245); `None` turns it off.
+    fn set_stress(&mut self, _stress: Option<&super::StressPaint>) {}
+
     /// The support tips the overhang map counts as holding the faces around
     /// them (#484): what they reach, it leaves plain.
     fn set_support_tips(&mut self, _tips: &[super::SupportTip]) {}
@@ -277,6 +281,10 @@ impl MeshRenderer for Renderer {
 
     fn set_overhang_map(&mut self, map: Option<super::OverhangMap>) {
         Renderer::set_overhang_map(self, map);
+    }
+
+    fn set_stress(&mut self, stress: Option<&super::StressPaint>) {
+        Renderer::set_stress(self, stress);
     }
 
     fn set_support_tips(&mut self, tips: &[super::SupportTip]) {

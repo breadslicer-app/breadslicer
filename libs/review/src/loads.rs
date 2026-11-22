@@ -92,7 +92,21 @@ pub struct PlateLoads {
     /// Every body and layer with a suction cup: whether tips hold it and how
     /// hard its worst tip is pulled then.
     pub cups: Vec<CupLoad>,
+    /// The utilisation of the most loaded tip on each layer: 0 where the
+    /// plate holds all that peels (#245).
+    pub layer_utilization: Vec<f64>,
+    /// Each tip's load along the print (#245), by index in [`Self::tips`]:
+    /// the hardest pull of each run of [`Self::curve_layers`] layers, N.
+    /// Empty for a tip no peel reaches.
+    pub tip_curves: Vec<Vec<f32>>,
+    /// How many layers each point of a tip's curve stands for: one up to
+    /// [`TIP_CURVE_POINTS`] layers.
+    pub curve_layers: usize,
 }
+
+/// The most points a tip's curve has (#245): a chart of the print is drawn
+/// from as many.
+pub const TIP_CURVE_POINTS: usize = 480;
 
 /// A support tip and the hardest pull on it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -162,6 +176,20 @@ pub struct CupLoad {
 }
 
 impl PlateLoads {
+    /// The point of a tip's curve that layer `layer` falls in.
+    pub fn curve_point(&self, layer: usize) -> usize {
+        layer / self.curve_layers.max(1)
+    }
+
+    /// The load on tip `tip` when layer `layer` peels, N: the hardest of the
+    /// run of layers it falls in, 0 when none reaches it.
+    pub fn tip_load_at(&self, tip: usize, layer: usize) -> f64 {
+        self.tip_curves
+            .get(tip)
+            .and_then(|curve| curve.get(self.curve_point(layer)))
+            .map_or(0.0, |&n| f64::from(n))
+    }
+
     /// The suction cup closed by solid region `region` of layer `layer`,
     /// mm².
     pub fn cup_of(&self, layer: usize, region: u32) -> f64 {
@@ -198,6 +226,8 @@ pub fn plate_loads(ctx: &ReviewContext<'_>, options: &LoadOptions) -> PlateLoads
         cup_mm2: vec![0.0; count],
         model_force_n: vec![0.0; count],
         region_cup_mm2: vec![Vec::new(); count],
+        layer_utilization: vec![0.0; count],
+        curve_layers: count.div_ceil(TIP_CURVE_POINTS).max(1),
         ..PlateLoads::default()
     };
     // The centre of each region's cups, in pixels, weighted by area.
@@ -385,6 +415,7 @@ fn share(
             continue;
         };
         tips_at[offsets[region.layer] + region.index as usize].push(loads.tips.len());
+        loads.tip_curves.push(Vec::new());
         loads.tips.push(TipLoad {
             at_mm: contact.at,
             radius_mm: contact.radius,
@@ -478,9 +509,16 @@ fn share(
                     z_mm: input.layers()[layer].top_mm,
                     lateral_share: model.lateral_share,
                 };
+                let points = layers.len().div_ceil(loads.curve_layers);
+                let point = layer / loads.curve_layers;
                 for &tip in &body.tips {
                     let load = &mut loads.tips[tip];
                     let n = group.load_n([load.at_mm[0], load.at_mm[1]], &case);
+                    let curve = &mut loads.tip_curves[tip];
+                    if curve.is_empty() {
+                        curve.resize(points, 0.0);
+                    }
+                    curve[point] = curve[point].max(n.max(0.0) as f32);
                     if n > load.worst_n {
                         load.worst_n = n;
                         load.worst_layer = layer;
@@ -508,6 +546,8 @@ fn share(
             let Some((tip, utilization)) = worst else {
                 continue;
             };
+            let layer_worst = &mut loads.layer_utilization[layer];
+            *layer_worst = layer_worst.max(utilization);
             let end = ends.group_of(RegionRef {
                 layer,
                 index: pull.region,
