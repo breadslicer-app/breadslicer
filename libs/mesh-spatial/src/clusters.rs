@@ -5,9 +5,13 @@
 
 //! Object-space cluster AABBs over an [`IndexedMesh`]'s face array.
 //!
-//! Faces are grouped by their position in [`IndexedMesh::faces`] into
-//! fixed-size runs of [`TriangleClusters::CLUSTER_SIZE`]; each run
-//! gets one [`Aabb`] covering the union of its triangle vertices.
+//! Faces are grouped by where they lie into clusters of
+//! [`TriangleClusters::CLUSTER_SIZE`] (their centres split at the median
+//! along the widest axis, again and again); each cluster gets one [`Aabb`]
+//! covering the union of its triangle vertices. Grouping by the order of
+//! [`IndexedMesh::faces`] instead gave a file whose faces come scattered
+//! boxes as big as a sixth of the model, and every ray tested hundreds of
+//! them.
 //! Spatial-query consumers (the picker today, slicing later)
 //! slab-test the cluster AABBs first and only iterate triangles
 //! inside surviving clusters.
@@ -16,8 +20,8 @@
 //! clusters it reaches, nearest first, instead of testing every box: a
 //! ray through a model of two million triangles tested 30 000 boxes.
 //!
-//! The clustering is a pure function of the mesh's `faces` order
-//! plus the referenced vertex positions. Cache lifetime is managed
+//! The clustering is a pure function of the mesh's faces and vertex
+//! positions. Cache lifetime is managed
 //! by the surrounding [`crate::MeshSpatial`] / [`crate::SceneSpatial`]
 //! layer; the type itself has no notion of staleness.
 
@@ -28,6 +32,9 @@ use sc_mesh_core::{Aabb, IndexedMesh, IndexedTriangle, Vertex};
 #[derive(Clone, Debug, PartialEq)]
 pub struct TriangleClusters {
     face_count: u32,
+    /// Face indices, cluster by cluster: cluster `i` holds
+    /// `faces[i * CLUSTER_SIZE ..]`, up to `CLUSTER_SIZE` of them.
+    faces: Vec<u32>,
     aabbs: Vec<Aabb>,
     /// The tree over `aabbs`, root first.
     nodes: Vec<TreeNode>,
@@ -61,31 +68,43 @@ impl TriangleClusters {
     /// when any face references an out-of-range vertex index;
     /// corrupt-mesh callers (e.g. the picker) treat this the same as
     /// "miss" rather than surfacing the error. For an in-range mesh,
-    /// the result has length `ceil(faces.len() / CLUSTER_SIZE)` and
-    /// the i-th cluster covers faces
-    /// `[i * CLUSTER_SIZE, min((i + 1) * CLUSTER_SIZE, faces.len()))`.
+    /// the result has `ceil(faces.len() / CLUSTER_SIZE)` clusters, every
+    /// one full but the last, and holds every face once.
     pub fn build(vertices: &[Vertex], faces: &[IndexedTriangle]) -> Option<Self> {
         if faces.is_empty() {
             return None;
         }
+        let mut centres = Vec::with_capacity(faces.len());
+        for face in faces {
+            let mut c = [0.0f32; 3];
+            for vidx in face.vertices {
+                let v = vertices.get(usize::from(vidx))?.coords();
+                for k in 0..3 {
+                    c[k] += v[k];
+                }
+            }
+            centres.push(c);
+        }
         let cluster_size = Self::CLUSTER_SIZE as usize;
-        let num_clusters = faces.len().div_ceil(cluster_size);
-        let mut aabbs = Vec::with_capacity(num_clusters);
-        for chunk in faces.chunks(cluster_size) {
+        let mut order: Vec<u32> = (0..faces.len() as u32).collect();
+        split_into_clusters(&centres, &mut order, cluster_size);
+        let mut aabbs = Vec::with_capacity(faces.len().div_ceil(cluster_size));
+        for chunk in order.chunks(cluster_size) {
             let mut aabb = Aabb::empty();
-            for face in chunk {
-                for vidx in face.vertices {
-                    let v = vertices.get(usize::from(vidx))?;
-                    aabb.extend(*v);
+            for &f in chunk {
+                for vidx in faces[f as usize].vertices {
+                    aabb.extend(vertices[usize::from(vidx)]);
                 }
             }
             aabbs.push(aabb);
         }
+        let face_order = order;
         let mut order: Vec<u32> = (0..aabbs.len() as u32).collect();
         let mut nodes = Vec::with_capacity(2 * aabbs.len().div_ceil(LEAF_CLUSTERS));
         build_tree(&aabbs, &mut order, 0, &mut nodes);
         Some(Self {
             face_count: faces.len() as u32,
+            faces: face_order,
             aabbs,
             nodes,
             order,
@@ -94,13 +113,13 @@ impl TriangleClusters {
 
     /// Walks the clusters a query reaches, nearest first. `enter` says how
     /// far along the query a box starts (`None`: not reached at all);
-    /// `visit` gets a cluster's faces and the nearest hit so far, and
-    /// returns a nearer one when it finds it. Boxes that start beyond the
-    /// nearest hit are left out.
+    /// `visit` gets a cluster's face indices and the nearest hit so far,
+    /// and returns a nearer one when it finds it. Boxes that start beyond
+    /// the nearest hit are left out.
     pub fn walk_nearest(
         &self,
         enter: impl Fn(&Aabb) -> Option<f32>,
-        mut visit: impl FnMut(std::ops::Range<u32>, f32) -> Option<f32>,
+        mut visit: impl FnMut(&[u32], f32) -> Option<f32>,
     ) {
         let mut best = f32::INFINITY;
         let Some(root) = self.nodes.first() else {
@@ -121,9 +140,7 @@ impl TriangleClusters {
                     if enter(&self.aabbs[cluster as usize]).is_none_or(|t| t > best) {
                         continue;
                     }
-                    let start = cluster * Self::CLUSTER_SIZE;
-                    let end = ((cluster + 1) * Self::CLUSTER_SIZE).min(self.face_count);
-                    if let Some(hit) = visit(start..end, best)
+                    if let Some(hit) = visit(self.cluster_faces(cluster as usize), best)
                         && hit < best
                     {
                         best = hit;
@@ -175,17 +192,48 @@ impl TriangleClusters {
         self.aabbs[i]
     }
 
-    /// Iterate `(face_range, aabb)` pairs in cluster order. The range
-    /// `start .. end` is half-open and indexes into the original
-    /// `faces` slice the clustering was built from.
-    pub fn iter(&self) -> impl Iterator<Item = (std::ops::Range<u32>, Aabb)> + '_ {
-        let face_count = self.face_count;
-        self.aabbs.iter().enumerate().map(move |(i, aabb)| {
-            let start = (i as u32) * Self::CLUSTER_SIZE;
-            let end = ((i as u32 + 1) * Self::CLUSTER_SIZE).min(face_count);
-            (start..end, *aabb)
-        })
+    /// The face indices of cluster `i` (into the `faces` it was built
+    /// from). Panics if `i >= self.len()`.
+    pub fn cluster_faces(&self, i: usize) -> &[u32] {
+        let size = Self::CLUSTER_SIZE as usize;
+        &self.faces[i * size..((i + 1) * size).min(self.faces.len())]
     }
+
+    /// Iterate `(face indices, aabb)` pairs in cluster order.
+    pub fn iter(&self) -> impl Iterator<Item = (&[u32], Aabb)> + '_ {
+        self.aabbs
+            .iter()
+            .enumerate()
+            .map(move |(i, aabb)| (self.cluster_faces(i), *aabb))
+    }
+}
+
+/// Orders `order` so each run of `size` faces lies together: the faces'
+/// `centres` are split at the median along their widest axis, at a multiple
+/// of `size` so every cluster but the last is full, until a run fits.
+fn split_into_clusters(centres: &[[f32; 3]], order: &mut [u32], size: usize) {
+    if order.len() <= size {
+        return;
+    }
+    let mut lo = [f32::INFINITY; 3];
+    let mut hi = [f32::NEG_INFINITY; 3];
+    for &f in order.iter() {
+        let c = centres[f as usize];
+        for k in 0..3 {
+            lo[k] = lo[k].min(c[k]);
+            hi[k] = hi[k].max(c[k]);
+        }
+    }
+    let axis = (0..3)
+        .max_by(|&a, &b| (hi[a] - lo[a]).total_cmp(&(hi[b] - lo[b])))
+        .unwrap_or(0);
+    let mid = order.len().div_ceil(size) / 2 * size;
+    order.select_nth_unstable_by(mid, |&a, &b| {
+        centres[a as usize][axis].total_cmp(&centres[b as usize][axis])
+    });
+    let (left, right) = order.split_at_mut(mid);
+    split_into_clusters(centres, left, size);
+    split_into_clusters(centres, right, size);
 }
 
 /// Builds the tree over `aabbs[order[..]]` into `nodes`, splitting each

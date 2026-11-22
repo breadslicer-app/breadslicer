@@ -374,13 +374,14 @@ fn ray_hit_face(ray: &Ray, query: &ObjectQuery<'_>) -> Option<(f32, usize)> {
                 Vec3::from(aabb.max().coords()),
             )
         },
-        |range, _| {
+        |cluster, _| {
             let mut nearest: Option<f32> = None;
-            for (offset, face) in faces[range.start as usize..range.end as usize]
-                .iter()
-                .enumerate()
-            {
-                let index = range.start as usize + offset;
+            for &index in cluster {
+                let index = index as usize;
+                let Some(face) = faces.get(index) else {
+                    corrupt = true;
+                    continue;
+                };
                 let corner = |k: usize| {
                     vertices
                         .get(usize::from(face.vertices[k]))
