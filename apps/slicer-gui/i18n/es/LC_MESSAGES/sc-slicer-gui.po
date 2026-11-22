@@ -5861,8 +5861,8 @@ msgstr "Abrir proyecto…"
 
 #: ui/start-dialog.slint
 msgctxt "StartDialog"
-msgid "A Breadslicer project (.bread)"
-msgstr "Un proyecto de Breadslicer (.bread)"
+msgid ".bread .lys"
+msgstr ".bread .lys"
 
 #: ui/start-dialog.slint
 msgctxt "StartDialog"
