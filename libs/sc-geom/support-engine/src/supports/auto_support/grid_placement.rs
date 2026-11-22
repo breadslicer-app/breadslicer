@@ -1,10 +1,6 @@
-//! DragonFruit `src/supports/autoSupport/gridPlacement.ts`.
-//!
-//! Unified distribution: a fixed-density boundary ring plus grid infill for
-//! every overhang region the density grid serves. A big sole earns a carpet
-//! because it is big; a sliver earns a thin line because its 2D-projected
-//! boundary is short; a tiny patch stays on the single-pillar path. Every
-//! point's Z is the exact surface height (triangle sampler, voxel fallback).
+//! Reading a region's surface: its height under a point (every height where
+//! the region folds over itself), the points round its edge, and a face's
+//! normal.
 
 use std::collections::{HashMap, HashSet};
 
@@ -15,9 +11,10 @@ use crate::geom::{Matrix3, Ray, Vec3};
 use crate::volume_analysis::islands::types::DetectedIsland;
 use crate::volume_analysis::islands::voxel_footprint::{FootprintPoint, cell_key_bits};
 
-const FOOTPRINT_TOLERANCE_MM: f64 = 0.25;
+/// A footprint cell within this of a point stands for it, mm.
+const CELL_REACH_MM: f64 = 0.25;
 
-/// A surface point the samplers and ring builders produce.
+/// A point on a region's surface.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SurfacePoint {
     pub x: f64,
@@ -26,76 +23,65 @@ pub struct SurfacePoint {
     pub face_index: Option<usize>,
 }
 
-/// One surface sample: Z and, from the triangle path, the contact face.
+/// A height read off a region, and the face it is on when known.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SurfaceHit {
     pub z: f64,
     pub face_index: Option<usize>,
 }
 
-/// Boundary voxels of a region's footprint (a voxel with a missing
-/// 8-neighbor), sorted by angle around the footprint centroid and sub-sampled
-/// at `spacing` intervals.
+/// The cells on the edge of a footprint (missing one of their eight
+/// neighbours), in turn round its middle, one every `spacing` (in 0.25 mm
+/// cells); each at its own height, or `fallback_z`.
 pub fn build_boundary_points(
-    voxels: &[FootprintPoint],
+    cells: &[FootprintPoint],
     spacing: f64,
     fallback_z: f64,
 ) -> Vec<SurfacePoint> {
-    if voxels.is_empty() {
+    if cells.is_empty() {
         return Vec::new();
     }
-    let mut set: HashSet<u64> = HashSet::new();
-    let mut sum_x = 0.0;
-    let mut sum_y = 0.0;
-    for v in voxels {
-        set.insert(cell_key_bits(js_round(v.x * 4.0), js_round(v.y * 4.0)));
-        sum_x += v.x;
-        sum_y += v.y;
-    }
-    let cx = sum_x / voxels.len() as f64;
-    let cy = sum_y / voxels.len() as f64;
-
-    let mut boundary: Vec<FootprintPoint> = voxels
+    let at = |c: &FootprintPoint| (js_round(c.x * 4.0), js_round(c.y * 4.0));
+    let present: HashSet<u64> = cells
+        .iter()
+        .map(|c| {
+            let (kx, ky) = at(c);
+            cell_key_bits(kx, ky)
+        })
+        .collect();
+    let n = cells.len() as f64;
+    let (cx, cy) = (
+        cells.iter().fold(0.0, |s, c| s + c.x) / n,
+        cells.iter().fold(0.0, |s, c| s + c.y) / n,
+    );
+    let mut edge: Vec<FootprintPoint> = cells
         .iter()
         .copied()
-        .filter(|v| {
-            let kx = js_round(v.x * 4.0);
-            let ky = js_round(v.y * 4.0);
+        .filter(|c| {
+            let (kx, ky) = at(c);
             (-1..=1).any(|dx| {
                 (-1..=1).any(|dy| {
-                    !(dx == 0 && dy == 0)
-                        && !set.contains(&cell_key_bits(kx + f64::from(dx), ky + f64::from(dy)))
+                    (dx, dy) != (0, 0)
+                        && !present.contains(&cell_key_bits(kx + f64::from(dx), ky + f64::from(dy)))
                 })
             })
         })
         .collect();
-    if boundary.is_empty() {
-        return Vec::new();
-    }
-
-    boundary
-        .sort_by(|a, b| js_compare(js_atan2(a.y - cy, a.x - cx) - js_atan2(b.y - cy, b.x - cx)));
-    let step = js_max(1.0, js_round(spacing / 0.25)) as usize;
-    boundary
-        .iter()
-        .step_by(step)
-        .map(|b| SurfacePoint {
-            x: b.x,
-            y: b.y,
-            z: b.z.unwrap_or(fallback_z),
+    edge.sort_by(|a, b| js_compare(js_atan2(a.y - cy, a.x - cx) - js_atan2(b.y - cy, b.x - cx)));
+    edge.iter()
+        .step_by(js_max(1.0, js_round(spacing / 0.25)) as usize)
+        .map(|c| SurfacePoint {
+            x: c.x,
+            y: c.y,
+            z: c.z.unwrap_or(fallback_z),
             face_index: None,
         })
         .collect()
 }
 
-/// A region's surface sampler: the triangle-accurate one when the mesh and the
-/// region's triangles are known, the voxel nearest-neighbor fallback otherwise.
-///
-/// The region's triangles are faces of the mesh's tree, in the order its
-/// build left them in: what a ray's hit names. DragonFruit scans a soup read
-/// through the index its tree already reordered, so its scan numbers them
-/// that way; a scan of the soup the tree was built from does not, and its
-/// regions are renumbered first (`pipeline`, #500).
+/// How a region's surface is read: by ray against its own faces when the
+/// model and those faces are known (faces numbered as the model's tree
+/// names them, #500), else from its footprint cells.
 #[derive(Debug)]
 pub enum SurfaceSampler<'a> {
     Triangle {
@@ -112,9 +98,7 @@ pub enum SurfaceSampler<'a> {
 }
 
 impl<'a> SurfaceSampler<'a> {
-    /// `createTriangleSurfaceAt`: an upward raycast from just below the
-    /// region's base, accepted only when the hit face belongs to the region,
-    /// against the double-sided material DragonFruit swaps in.
+    /// The sampler by ray, when the region's faces and the model are known.
     pub fn triangle(island: &DetectedIsland, mesh: Option<BvhMesh<'a>>) -> Option<Self> {
         let ids = island.triangle_ids.as_ref().filter(|ids| !ids.is_empty())?;
         Some(SurfaceSampler::Triangle {
@@ -124,8 +108,7 @@ impl<'a> SurfaceSampler<'a> {
         })
     }
 
-    /// `createVoxelSurfaceAt`: the nearest footprint voxel within 0.25 mm
-    /// supplies containment and Z. The hash is built lazily.
+    /// The sampler by footprint cells (`cell_size` buckets them).
     pub fn voxel(voxels: &'a [FootprintPoint], cell_size: f64, min_z: f64) -> Self {
         SurfaceSampler::Voxel {
             voxels,
@@ -135,50 +118,47 @@ impl<'a> SurfaceSampler<'a> {
         }
     }
 
-    /// SoulCrafted (#500): every surface the region has over (x, y), lowest
-    /// first. A region is a connected patch of the model's underside, and it
-    /// folds over itself in plan wherever one part of the model hangs over
-    /// another: the underside of a raised hand over that of its arm.
-    /// [`Self::at`] gives the lowest alone.
+    /// The region's faces a ray up through (x, y) from 2 mm under the region
+    /// meets, lowest first (a ray through an edge meets one of its faces).
+    fn ray_hits(
+        mesh: &BvhMesh<'_>,
+        tris: &HashSet<usize>,
+        base_z: f64,
+        x: f64,
+        y: f64,
+    ) -> Vec<SurfaceHit> {
+        let up = Ray {
+            origin: Vec3::new(x, y, base_z - 2.0),
+            direction: Vec3::new(0.0, 0.0, 1.0),
+        };
+        mesh.intersect_object(&up, Side::Double, 0.0, f64::INFINITY, false)
+            .into_iter()
+            .filter(|hit| tris.contains(&hit.face_index))
+            .map(|hit| SurfaceHit {
+                z: hit.point.z,
+                face_index: Some(hit.face_index),
+            })
+            .collect()
+    }
+
+    /// Every height of the region over (x, y), lowest first: a region folds
+    /// over itself where one part of the model hangs over another (#500).
     pub fn all_at(&mut self, x: f64, y: f64) -> Vec<SurfaceHit> {
         match self {
             SurfaceSampler::Triangle { mesh, tris, base_z } => {
-                let ray = Ray {
-                    origin: Vec3::new(x, y, *base_z - 2.0),
-                    direction: Vec3::new(0.0, 0.0, 1.0),
-                };
-                let mut folds: Vec<SurfaceHit> = mesh
-                    .intersect_object(&ray, Side::Double, 0.0, f64::INFINITY, false)
-                    .into_iter()
-                    .filter(|hit| tris.contains(&hit.face_index))
-                    .map(|hit| SurfaceHit {
-                        z: hit.point.z,
-                        face_index: Some(hit.face_index),
-                    })
-                    .collect();
-                // A ray through an edge meets both of its faces.
-                folds.dedup_by(|next, kept| (next.z - kept.z).abs() < 1e-6);
-                folds
+                let mut hits = Self::ray_hits(mesh, tris, *base_z, x, y);
+                hits.dedup_by(|next, kept| (next.z - kept.z).abs() < 1e-6);
+                hits
             }
             SurfaceSampler::Voxel { .. } => self.at(x, y).into_iter().collect(),
         }
     }
 
-    /// The surface at (x, y), or None outside the region.
+    /// The region's lowest height over (x, y); none outside it.
     pub fn at(&mut self, x: f64, y: f64) -> Option<SurfaceHit> {
         match self {
             SurfaceSampler::Triangle { mesh, tris, base_z } => {
-                let ray = Ray {
-                    origin: Vec3::new(x, y, *base_z - 2.0),
-                    direction: Vec3::new(0.0, 0.0, 1.0),
-                };
-                mesh.intersect_object(&ray, Side::Double, 0.0, f64::INFINITY, false)
-                    .into_iter()
-                    .find(|hit| tris.contains(&hit.face_index))
-                    .map(|hit| SurfaceHit {
-                        z: hit.point.z,
-                        face_index: Some(hit.face_index),
-                    })
+                Self::ray_hits(mesh, tris, *base_z, x, y).into_iter().next()
             }
             SurfaceSampler::Voxel {
                 voxels,
@@ -186,40 +166,36 @@ impl<'a> SurfaceSampler<'a> {
                 min_z,
                 hash,
             } => {
-                let cell = *cell_size;
-                let key =
-                    |px: f64, py: f64| ((px / cell).floor() as i64, (py / cell).floor() as i64);
-                let hash = hash.get_or_insert_with(|| {
-                    let mut h: HashMap<(i64, i64), Vec<FootprintPoint>> = HashMap::new();
-                    for p in voxels.iter() {
-                        h.entry(key(p.x, p.y)).or_default().push(*p);
+                let side = *cell_size;
+                let bucket_of =
+                    |px: f64, py: f64| ((px / side).floor() as i64, (py / side).floor() as i64);
+                let buckets = hash.get_or_insert_with(|| {
+                    let mut b: HashMap<(i64, i64), Vec<FootprintPoint>> = HashMap::new();
+                    for c in voxels.iter() {
+                        b.entry(bucket_of(c.x, c.y)).or_default().push(*c);
                     }
-                    h
+                    b
                 });
-                let tol_sq = FOOTPRINT_TOLERANCE_MM * FOOTPRINT_TOLERANCE_MM;
-                let (gx, gy) = key(x, y);
-                let mut best_d2 = f64::INFINITY;
-                let mut best_z = *min_z;
+                // The nearest cell within reach gives the height.
+                let reach2 = CELL_REACH_MM * CELL_REACH_MM;
+                let (bx, by) = bucket_of(x, y);
+                let (mut nearest, mut z) = (f64::INFINITY, *min_z);
                 for dx in -1..=1 {
                     for dy in -1..=1 {
-                        let Some(bucket) = hash.get(&(gx + dx, gy + dy)) else {
-                            continue;
-                        };
-                        for p in bucket {
-                            let ddx = x - p.x;
-                            let ddy = y - p.y;
-                            let d2 = ddx * ddx + ddy * ddy;
-                            if d2 <= tol_sq && d2 < best_d2 {
-                                best_d2 = d2;
-                                if let Some(z) = p.z {
-                                    best_z = z;
+                        for c in buckets.get(&(bx + dx, by + dy)).into_iter().flatten() {
+                            let (ex, ey) = (x - c.x, y - c.y);
+                            let d2 = ex * ex + ey * ey;
+                            if d2 <= reach2 && d2 < nearest {
+                                nearest = d2;
+                                if let Some(cz) = c.z {
+                                    z = cz;
                                 }
                             }
                         }
                     }
                 }
-                (best_d2 <= tol_sq).then_some(SurfaceHit {
-                    z: best_z,
+                (nearest <= reach2).then_some(SurfaceHit {
+                    z,
                     face_index: None,
                 })
             }
@@ -227,22 +203,24 @@ impl<'a> SurfaceSampler<'a> {
     }
 }
 
-/// Perimeter contact inset (mm): the ring and grid outer ring are generated on
-/// the footprint ERODED by this amount (1 mask pixel = 0.25 mm).
+/// The ring and the outer grid of a region stand this far inside its edge,
+/// mm (a cell of the mask).
 pub const PERIMETER_CONTACT_INSET_MM: f64 = 0.25;
 
-/// World-space normal of one mesh face (BVH-reordered index), or None for a
-/// degenerate face.
+/// The world normal of face `face_index` of the model's tree, unit; none for
+/// a face with no area.
 pub fn face_normal_at(mesh: BvhMesh<'_>, face_index: usize) -> Option<Vec3> {
     let [i0, i1, i2] = mesh.bvh.face(face_index);
-    let a = mesh.bvh.vertex(i0);
-    let b = mesh.bvh.vertex(i1);
-    let c = mesh.bvh.vertex(i2);
+    let (a, b, c) = (
+        mesh.bvh.vertex(i0),
+        mesh.bvh.vertex(i1),
+        mesh.bvh.vertex(i2),
+    );
     let normal = b.sub(a).cross(c.sub(a));
     if normal.length_sq() < 1e-12 {
         return None;
     }
-    // `applyNormalMatrix` normalizes, and DragonFruit normalizes once more.
+    // Made unit by the normal matrix, and again.
     Some(
         normal
             .apply_normal_matrix(&Matrix3::normal_matrix(mesh.matrix_world))

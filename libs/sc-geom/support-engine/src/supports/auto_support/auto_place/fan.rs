@@ -12,6 +12,7 @@ use super::helpers::{
     host_entity_of, host_shaft, is_host_at_attachment_capacity, leaf_path_crosses_supports,
     member_max_angle_from_vertical_deg,
 };
+use crate::geom::math_utils::{js_atan2, js_hypot, js_min, js_sin};
 use crate::supports::auto_support::constants::{
     FAN_LINK_TIP_INSET_MM, MAX_LEAF_SPAN_BEFORE_BRANCH_MM,
 };
@@ -22,7 +23,6 @@ use crate::supports::support_kinds::{
 };
 use crate::supports::support_types::leaf::leaf_builder::{LeafBuildInput, build_leaf_data};
 use crate::supports::types::{Knot, SupportState, Vec3};
-use crate::geom::math_utils::{js_atan2, js_hypot, js_min, js_sin};
 
 /// Why a fan-leaf attempt was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

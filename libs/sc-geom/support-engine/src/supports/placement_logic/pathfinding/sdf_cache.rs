@@ -269,19 +269,6 @@ impl SdfCache {
         true
     }
 
-    /// Builds and keeps the column map of `clearance_mm` for later, leaving
-    /// the one in use.
-    pub fn prewarm_column_map(&mut self, clearance_mm: f64, cell_mm: f64) {
-        if self.kept_column_map(clearance_mm).is_some() {
-            return;
-        }
-        if let Some(map) =
-            ColumnClearanceMap::build(self.bvh.positions(), &self.matrix, clearance_mm, cell_mm)
-        {
-            self.keep_column_map(clearance_mm, map);
-        }
-    }
-
     /// The kept map of `clearance_mm`, moved to the front.
     fn kept_column_map(&mut self, clearance_mm: f64) -> Option<ColumnClearanceMap> {
         let i = self

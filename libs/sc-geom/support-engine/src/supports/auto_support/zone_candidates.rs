@@ -16,10 +16,10 @@ use super::resting::{RESTING_LAYERS, rests_on_model};
 use super::support_blockers::is_support_blocked_contact;
 use super::types::{AutoSupportMesh, CandidatePoint, CandidateSource, js_compare};
 use super::zone_rules::ZoneRules;
-use crate::native::islands::body::BODY_CELL_MM;
+use crate::bvh::Side;
 use crate::geom::math_utils::js_to_fixed;
 use crate::geom::{Ray, Vec3};
-use crate::bvh::Side;
+use crate::native::islands::body::BODY_CELL_MM;
 use crate::volume_analysis::islands::types::{DetectedIsland, IslandClass, IslandSource, Vec3Loop};
 use crate::volume_analysis::islands::voxel_footprint::FootprintPoint;
 

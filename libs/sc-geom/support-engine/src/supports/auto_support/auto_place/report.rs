@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::fan::FanLeafRefusal;
 use super::helpers::{OrphanInfo, collect_host_entities};
+use crate::geom::math_utils::{js_atan2, js_hypot, js_max, js_min, js_to_fixed};
 use crate::supports::auto_support::load_budget::LoadBudgetReport;
 use crate::supports::auto_support::settings::SizingPreset;
 use crate::supports::support_kinds::{
@@ -15,7 +16,6 @@ use crate::supports::support_kinds::{
 };
 use crate::supports::support_types::trunk::trunk_replacement::max_connected_diameter::member_diameter_of;
 use crate::supports::types::{SupportState, Vec3};
-use crate::geom::math_utils::{js_atan2, js_hypot, js_max, js_min, js_to_fixed};
 
 /// Per-placed-entity entry in the Forest Report ledger.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

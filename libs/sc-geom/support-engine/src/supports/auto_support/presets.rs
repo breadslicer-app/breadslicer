@@ -359,7 +359,6 @@ pub fn figures_70() -> ZonePreset {
     preset
 }
 
-
 /// The self-support angle a zone preset's rules classify by, degrees from
 /// horizontal, inside the bounds the scans accept.
 pub fn zone_self_support_angle_deg(rules: &ZoneRules) -> f64 {
