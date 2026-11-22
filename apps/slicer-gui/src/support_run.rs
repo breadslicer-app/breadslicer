@@ -3582,20 +3582,8 @@ impl SupportRun {
             .map_or(-1, |i| i as i32);
         ui.set_support_preset_names(slint::ModelRc::new(slint::VecModel::from(names)));
         ui.set_support_preset_index(current);
-        ui.set_support_sizing_index(match o.sizing.as_str() {
-            "detail" => 0,
-            "anchor" => 2,
-            _ => 1,
-        });
-        ui.set_support_density(o.area_per_support_mm2 as f32);
-        ui.set_support_angle(o.overhang_angle_deg as f32);
         self.push_overhang_limit(ui);
-        ui.set_support_size_scale(o.size_scale as f32);
-        ui.set_support_min_island(o.min_island_area_mm2 as f32);
-        ui.set_support_coverage(o.coverage_percent as f32);
-        ui.set_support_stabilization(o.stabilization);
         ui.set_support_bracing(o.bracing);
-        ui.set_support_smooth(o.smooth_shafts);
         self.push_raft(ui);
         ui.set_arrange_one_raft(full.one_raft);
         ui.set_support_zone_summary(zone_summary(&o));
@@ -4908,20 +4896,7 @@ impl SupportRun {
         let v = f64::from(value);
         let on = value != 0.0;
         match code {
-            0 => {
-                o.sizing = ["detail", "structure", "anchor"]
-                    .get(value as usize)
-                    .unwrap_or(&"structure")
-                    .to_string();
-            }
-            1 => o.area_per_support_mm2 = v,
-            2 => o.overhang_angle_deg = v,
-            3 => o.size_scale = v,
-            4 => o.min_island_area_mm2 = v,
-            5 => o.coverage_percent = v,
-            6 => o.stabilization = on,
             7 => o.bracing = on,
-            8 => o.smooth_shafts = on,
             9 => {
                 o.raft = match value as i32 {
                     1 => RaftMode::Lines,
@@ -10153,6 +10128,15 @@ mod hand_edit_tests {
         window: &MainWindow,
         cubes: &[[f64; 3]],
     ) -> (Rc<ViewportController>, Rc<SupportRun>, Vec<NodeId>) {
+        supported_by(window, cubes, SupportRequest::default())
+    }
+
+    /// [`supported_in`], the supports made by `request`.
+    fn supported_by(
+        window: &MainWindow,
+        cubes: &[[f64; 3]],
+        request: SupportRequest,
+    ) -> (Rc<ViewportController>, Rc<SupportRun>, Vec<NodeId>) {
         let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
         let ctrl = Rc::new(ViewportController::new_for_test());
         let document = ctrl.document();
@@ -10172,7 +10156,7 @@ mod hand_edit_tests {
         document.install_graph(graph.clone(), PathBuf::from("cubes.stl"));
         let run =
             SupportRun::install(window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
-        let outcome = start_supports(&graph, SupportRequest::default())
+        let outcome = start_supports(&graph, request)
             .unwrap()
             .join();
         *run.started_on.borrow_mut() = Some(document.scene_revision());
@@ -11322,7 +11306,14 @@ mod hand_edit_tests {
         use crate::selection::{LeafId, Selection};
         on_fresh_slint_thread(|| {
             let window = MainWindow::new().expect("the headless platform creates a main window");
-            let (document, run, leaves) = supported(&window, &[[20.0, 20.0, 8.0]]);
+            // Without the pillars' grid, whose pillars stand off the model
+            // where the plate's grid has its nodes.
+            let request = SupportRequest {
+                options: without_grid(SupportOptions::default()),
+                ..SupportRequest::default()
+            };
+            let (ctrl, run, leaves) = supported_by(&window, &[[20.0, 20.0, 8.0]], request);
+            let document = ctrl.document();
             let model = leaves[0];
             let (set_leaf, set_mesh) = set_of(&document, &run, model);
             let start = leaf_transform(&document, model);
@@ -11665,6 +11656,12 @@ mod hand_edit_tests {
                 run.finish(handle.join());
             };
 
+            // Another preset, so that a set made again is another set (the
+            // same result changes nothing, #287).
+            run.set_options(SupportOptions {
+                zones: Some(figures_70()),
+                ..Default::default()
+            });
             document.set_selection(crate::selection::Selection::One(crate::selection::LeafId(
                 leaves[1],
             )));
@@ -11727,26 +11724,34 @@ mod hand_edit_tests {
                 window.set_support_gen_in_progress(false);
                 run.finish(handle.join());
             };
-            // Made without a grid, as the tab's options stand.
+            // Made on Miniatures' 7 mm grid, as the tab's options stand.
             run.set_options(SupportOptions::default());
-            assert_eq!(count(&run), 0);
-
-            // Miniatures: a 7 mm grid the sets were not made on.
-            run.set_options(SupportOptions {
-                zones: Some(minis_30()),
-                ..SupportOptions::default()
-            });
             assert_eq!(
                 run.options.borrow().zones.as_ref().unwrap().grid_mm,
                 Some(7.0)
             );
+            assert_eq!(count(&run), 0);
+
+            // Without the grid: the sets were made on one.
+            let mut no_grid = SupportOptions::default();
+            let mut zones = no_grid.zone_preset();
+            zones.grid_mm = None;
+            no_grid.zones = Some(zones);
+            run.set_options(no_grid);
             assert_eq!(count(&run), 2);
             assert!(
                 run.handle.borrow().is_none(),
                 "nothing is made again on its own"
             );
+            run.set_options(SupportOptions::default());
+            assert_eq!(count(&run), 0);
 
-            // Regenerate makes both again, on the grid.
+            // Another spacing: told again, not made again.
+            run.on_option(13, 5.0);
+            assert_eq!(count(&run), 2);
+            assert!(run.handle.borrow().is_none());
+
+            // Regenerate makes both again, on the tab's grid.
             document.set_selection(crate::selection::Selection::One(crate::selection::LeafId(
                 leaves[0],
             )));
@@ -11757,14 +11762,9 @@ mod hand_edit_tests {
             assert!(
                 run.sets_in_force()
                     .iter()
-                    .all(|s| s.session.grid_mm() == Some(7.0))
+                    .all(|s| s.session.grid_mm() == Some(5.0))
             );
-
-            // Another spacing: told again, not made again.
             run.on_option(13, 5.0);
-            assert_eq!(count(&run), 2);
-            assert!(run.handle.borrow().is_none());
-            run.on_option(13, 7.0);
             assert_eq!(count(&run), 0);
 
             // One raft for all takes the grid off: the sets drawn again on its
@@ -11927,11 +11927,8 @@ mod hand_edit_tests {
             window.invoke_overhang_map_toggled(true);
             assert!(bus.snapshot().overhang_map);
             assert!(window.get_overhang_map_on());
-            assert_eq!(shown(), Some(45.0));
-            assert_eq!(window.get_overhang_map_limit(), "45°");
-
-            run.on_option(2, 30.0);
-            assert_eq!(shown(), Some(30.0));
+            assert_eq!(shown(), Some(52.0));
+            assert_eq!(window.get_overhang_map_limit(), "52°");
 
             run.set_options(SupportOptions {
                 zones: Some(minis_30()),
@@ -12447,7 +12444,6 @@ mod hand_edit_tests {
             assert_eq!(back.clamped(), preset.options, "inside every bound");
             assert!(!on_fresh_slint_thread(move || zone_summary(&back)).is_empty());
         }
-        assert!(zone_summary(&SupportOptions::default()).is_empty());
     }
 
     fn save_and_reopen(request: SupportRequest) {
@@ -13407,9 +13403,25 @@ mod hand_edit_tests {
         });
     }
 
+    /// `options` with the pillars' grid off.
+    fn without_grid(mut options: SupportOptions) -> SupportOptions {
+        let mut zones = options.zone_preset();
+        zones.grid_mm = None;
+        options.zones = Some(zones);
+        options
+    }
+
     /// A slab 20 × 10 × 2 mm, its underside 9 mm up, with the supports a
     /// run gives it, those selected.
     fn supported_slab(window: &MainWindow) -> (Rc<SceneDocument>, Rc<SupportRun>) {
+        supported_slab_with(window, |_| {})
+    }
+
+    /// [`supported_slab`], its options changed by `change` first.
+    fn supported_slab_with(
+        window: &MainWindow,
+        change: impl FnOnce(&mut SupportOptions),
+    ) -> (Rc<SceneDocument>, Rc<SupportRun>) {
         let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
         let ctrl = Rc::new(ViewportController::new_for_test());
         let document = ctrl.document();
@@ -13450,8 +13462,13 @@ mod hand_edit_tests {
             SupportRun::install(window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
         // On a solid raft, as these tests were written before the default
         // became a raft of lines (#435).
-        let mut request = SupportRequest::default();
+        // And without the pillars' grid: trunks stand close enough for
+        // braces laid by hand.
+        // The printer's layer and pixel, as a press of Generate has them.
+        let mut request = run.request_for_printer();
         request.options.raft = RaftMode::Solid;
+        request.options = without_grid(request.options);
+        change(&mut request.options);
         let outcome = start_supports(&graph, request).unwrap().join();
         *run.started_on.borrow_mut() = Some(document.scene_revision());
         run.finish(outcome);
@@ -13820,9 +13837,11 @@ mod hand_edit_tests {
         document.install_graph(graph.clone(), PathBuf::from("slab.stl"));
         let run =
             SupportRun::install(window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
-        let outcome = start_supports(&graph, SupportRequest::default())
-            .unwrap()
-            .join();
+        let request = SupportRequest {
+            options: without_grid(SupportOptions::default()),
+            ..SupportRequest::default()
+        };
+        let outcome = start_supports(&graph, request).unwrap().join();
         *run.started_on.borrow_mut() = Some(document.scene_revision());
         run.finish(outcome);
         let (supports, _) = run.support_leaf().expect("the supports");

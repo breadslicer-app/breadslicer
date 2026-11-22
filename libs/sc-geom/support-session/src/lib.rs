@@ -36,7 +36,10 @@ mod hand_log;
 mod options;
 mod session;
 mod shift;
-pub mod zone_presets;
+/// The zone presets that ship, and how one is applied.
+pub mod zone_presets {
+    pub use support_engine::supports::auto_support::presets::*;
+}
 
 pub use document::{
     Drawings, RestoreError, RestoredSet, SUPPORT_DOCUMENT_VERSION, SUPPORT_GENERATOR,
@@ -831,8 +834,9 @@ fn merged(runs: Vec<SupportOutcome>) -> SupportOutcome {
 /// The run of `request` over `models`, made once for each group of copies
 /// standing alike ([`copies_of`]) and handed to the rest of the group: the
 /// supports made for the model [`standing_alone`] turned and moved onto
-/// each, drawn as its mesh. A model whose hand edits are kept is run as it
-/// stands. The supports of a copy are not placed knowing its neighbours:
+/// each, drawn as its mesh. A model whose hand edits are kept is run alone
+/// too, and its edits go back on where it stands, so Recalculate gives
+/// what Generate gives with them (#408). The supports of a copy are not placed knowing its neighbours:
 /// the sets that run into another model are named in
 /// [`SupportOutcome::crowded`].
 fn run_with_copies(
@@ -843,7 +847,6 @@ fn run_with_copies(
     id_prefix: String,
 ) -> Result<SupportOutcome, JobError> {
     let of = copies_of(models, request);
-    let keeps = |leaf: &NodeId| request.keep_edits.iter().any(|(m, _)| m == leaf);
     // The groups of two or more models of the run (#475), as model indices.
     let groups: Vec<Vec<usize>> = request
         .together
@@ -862,8 +865,8 @@ fn run_with_copies(
     struct Unit {
         members: Vec<usize>,
         copies: Vec<u64>,
-        /// What a single first one is run as: alone, unless its hand edits
-        /// are kept. A group runs as it stands.
+        /// What a single first one is run as: alone. A group runs as it
+        /// stands.
         alone: Option<ModelInput>,
     }
     let mut units: Vec<Unit> = firsts
@@ -872,7 +875,7 @@ fn run_with_copies(
         .map(|&f| Unit {
             members: vec![f],
             copies: vec![1 + of.iter().filter(|o| **o == Some(f)).count() as u64],
-            alone: (!keeps(&models[f].0)).then(|| standing_alone(&models[f].1)),
+            alone: Some(standing_alone(&models[f].1)),
         })
         .collect();
     for g in &groups {
@@ -889,6 +892,12 @@ fn run_with_copies(
         done: AtomicU32::new(0),
         total: (5 * units.len()) as u32,
         models: units.len(),
+    };
+    // A model run alone gets its hand edits back once carried to where it
+    // stands, not where it was run.
+    let alone_request = SupportRequest {
+        keep_edits: Vec::new(),
+        ..request.clone()
     };
     let runs = units
         .par_iter()
@@ -907,7 +916,11 @@ fn run_with_copies(
                 .then(|| leaves.iter().map(|(_, m)| m.id.clone()).collect::<Vec<_>>());
             run_supports(
                 &leaves,
-                request,
+                if unit.alone.is_some() {
+                    &alone_request
+                } else {
+                    request
+                },
                 worker,
                 prefix,
                 &unit.copies,
@@ -944,6 +957,11 @@ fn run_with_copies(
                         let mut carried = carried_set(&set, 0, input, &models[i]);
                         carried.same_as = None;
                         carried.kept = set.kept;
+                        if let Some((_, old)) =
+                            request.keep_edits.iter().find(|(m, _)| *m == models[i].0)
+                        {
+                            put_back_hand_edits(&mut carried, old, request, worker, &mut outcome)?;
+                        }
                         Some(carried)
                     }
                     (_, set) => set,
@@ -978,6 +996,40 @@ fn run_with_copies(
     outcome.crowded = crowded_sets(&sets, &everyone, &together);
     outcome.sets = sets;
     Ok(outcome)
+}
+
+/// The hand edits of `old` put back on `set`, carried to where its model
+/// stands (#408), and the set drawn again: its own raft too, as a run
+/// draws one.
+fn put_back_hand_edits(
+    set: &mut ModelSupportSet,
+    old: &SupportSession,
+    request: &SupportRequest,
+    worker: &JobWorker<SupportOutcome>,
+    outcome: &mut SupportOutcome,
+) -> Result<(), JobError> {
+    let (session, kept) = set
+        .session
+        .with_hand_edits_of(old, &|| worker.is_cancelled())
+        .ok_or(JobError::Cancelled)?;
+    let session = match request.own_rafts.iter().find(|(m, _)| *m == set.model) {
+        Some((_, own)) => session.with_raft_of(own).unwrap_or(session),
+        None => session,
+    };
+    set.mesh = if session.is_empty() {
+        None
+    } else {
+        let (mesh, uncleared) = session
+            .drawn()
+            .map_err(|e| JobError::Failed(e.to_string()))?;
+        if uncleared && !outcome.rafts_uncleared.contains(&set.model) {
+            outcome.rafts_uncleared.push(set.model);
+        }
+        mesh
+    };
+    set.session = session;
+    set.kept = Some(kept);
+    Ok(())
 }
 
 /// The set `source` (set `index` of the run, on `first`) turned and moved

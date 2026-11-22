@@ -38,7 +38,7 @@ use support_engine::supports::auto_support::auto_place::place::{
 };
 use support_engine::supports::auto_support::parameter_sizing::SizingBands;
 use support_engine::supports::auto_support::types::{CandidatePoint, CandidateSource};
-use support_engine::supports::auto_support::zone_rules::{SupportSize, ZoneRules};
+use support_engine::supports::auto_support::zone_rules::SupportSize;
 use support_engine::supports::placement_logic::cone_axis_policy::is_side_wall_contact;
 use support_engine::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
 use support_engine::supports::rafts::crenelated::raft_types::RaftBottomMode;
@@ -147,7 +147,7 @@ fn with_round_tips(mut settings: PipelineSettings) -> PipelineSettings {
 pub(crate) fn tip_contact_diameter(settings: &PipelineSettings) -> f64 {
     let supports = &settings.supports;
     SizingBands::factory()
-        .with_zone_sizes(supports.auto_support.zone_rules.as_ref())
+        .with_zone_sizes(&supports.auto_support.zone_rules)
         .active(supports)
         .tip_contact_diameter_mm
 }
@@ -620,7 +620,7 @@ fn hand_settings(settings: &mut PipelineSettings, how: &AddOptions) -> Option<us
     if let Some(HandShape(shape)) = &how.shape {
         // The person's own numbers: a size of the rules that has them, else
         // one more size, under an id none of the run's has.
-        let rules = auto.zone_rules.get_or_insert_with(ZoneRules::default);
+        let rules = &mut auto.zone_rules;
         let same = |s: &SupportSize| {
             let mut s = s.clone();
             s.id.clone_from(&shape.id);
@@ -637,14 +637,14 @@ fn hand_settings(settings: &mut PipelineSettings, how: &AddOptions) -> Option<us
         return Some(rules.sizes.len() - 1);
     }
     let id = how.size.as_deref()?;
-    if let Some(i) = auto.zone_rules.as_ref().and_then(|r| r.size_index(id)) {
+    if let Some(i) = auto.zone_rules.size_index(id) {
         return Some(i);
     }
     let size = crate::zone_presets::support_sizes()
         .into_iter()
         .find(|s| s.id == id)?;
     // Rules holding only this size draw it exactly, as a zone preset does.
-    let rules = auto.zone_rules.get_or_insert_with(ZoneRules::default);
+    let rules = &mut auto.zone_rules;
     rules.sizes.push(size);
     Some(rules.sizes.len() - 1)
 }
@@ -1103,7 +1103,7 @@ impl SupportSession {
     /// asked for: the one the run's preset gives it. `None` for a run whose
     /// preset has no sizes of its own.
     pub fn preset_hand_size(&self) -> Option<&str> {
-        let rules = self.settings.supports.auto_support.zone_rules.as_ref()?;
+        let rules = &self.settings.supports.auto_support.zone_rules;
         rules
             .default_size_index()
             .map(|i| rules.sizes[i].id.as_str())
@@ -1592,8 +1592,8 @@ impl SupportSession {
         let sdf = RefCell::new(pooled.unwrap_or_else(|| {
             SdfCache::new(bvh.bvh.clone(), bvh.to_world, Some(settings.sdf_cell_mm))
         }));
-        let bands = SizingBands::factory()
-            .with_zone_sizes(settings.supports.auto_support.zone_rules.as_ref());
+        let bands =
+            SizingBands::factory().with_zone_sizes(&settings.supports.auto_support.zone_rules);
         let mut state = std::mem::take(&mut self.state);
         let outcome = {
             let mut new_id = self.id_source();
@@ -2013,18 +2013,12 @@ impl SupportSession {
         // Of the size asked for (#564: a red one showed the run's size, not
         // the one a click would place).
         let mut settings = (*self.settings).clone();
-        if let Some(zone) = hand_settings(&mut settings, how)
-            && let Some(rules) = settings.supports.auto_support.zone_rules.clone()
-        {
+        if let Some(zone) = hand_settings(&mut settings, how) {
+            let rules = settings.supports.auto_support.zone_rules.clone();
             apply_zone_size(&mut settings.supports, &rules, zone);
         }
         let supports = &settings.supports;
-        let sized = settings
-            .supports
-            .auto_support
-            .zone_rules
-            .is_some()
-            .then_some((supports.shaft.diameter_mm, supports.tip.contact_diameter_mm));
+        let sized = Some((supports.shaft.diameter_mm, supports.tip.contact_diameter_mm));
         let normal = match self.tip_contact(point) {
             Some((_, _, Ok(n))) => n,
             _ => face,
@@ -2249,21 +2243,20 @@ impl SupportSession {
     /// it touches (#524): the places a run picked, for showing them.
     pub fn tip_contacts(&self) -> Vec<([f64; 3], [f64; 3])> {
         let c = &self.state.collections;
-        let of =
-            |k: &support_engine::supports::tips::ContactCone| {
-                // The cone's axis points into the model: the surface normal is
-                // turned to face the other way, out of it.
-                let out = [-k.normal.x, -k.normal.y, -k.normal.z];
-                let n = k.surface_normal.map_or(out, |n| {
-                    let n = [n.x, n.y, n.z];
-                    if n[0] * out[0] + n[1] * out[1] + n[2] * out[2] < 0.0 {
-                        n.map(|c| -c)
-                    } else {
-                        n
-                    }
-                });
-                ([k.pos.x, k.pos.y, k.pos.z], n)
-            };
+        let of = |k: &support_engine::supports::tips::ContactCone| {
+            // The cone's axis points into the model: the surface normal is
+            // turned to face the other way, out of it.
+            let out = [-k.normal.x, -k.normal.y, -k.normal.z];
+            let n = k.surface_normal.map_or(out, |n| {
+                let n = [n.x, n.y, n.z];
+                if n[0] * out[0] + n[1] * out[1] + n[2] * out[2] < 0.0 {
+                    n.map(|c| -c)
+                } else {
+                    n
+                }
+            });
+            ([k.pos.x, k.pos.y, k.pos.z], n)
+        };
         c.trunks
             .values()
             .filter_map(|t| t.contact_cone.as_ref().map(of))
@@ -2679,8 +2672,10 @@ impl SupportSession {
             .supports
             .auto_support
             .zone_rules
-            .as_ref()
-            .and_then(|r| r.sizes.iter().find(same).map(|s| s.id.clone()))
+            .sizes
+            .iter()
+            .find(same)
+            .map(|s| s.id.clone())
             .or_else(|| {
                 crate::zone_presets::support_sizes()
                     .iter()
@@ -2707,8 +2702,10 @@ impl SupportSession {
                 .supports
                 .auto_support
                 .zone_rules
-                .as_ref()
-                .and_then(|r| r.sizes.iter().find(|s| s.id == size).cloned())
+                .sizes
+                .iter()
+                .find(|s| s.id == size)
+                .cloned()
                 .or_else(|| {
                     crate::zone_presets::support_sizes()
                         .into_iter()
@@ -3669,10 +3666,11 @@ pub(crate) mod session_tests {
         minis.options.zones = Some(crate::zone_presets::minis_30());
         let zoned = braces(minis);
         assert!(!zoned.is_empty());
-        let default = braces(crate::SupportRequest::default());
-        assert_ne!(
-            zoned.iter().map(|b| b.profile).collect::<Vec<_>>(),
-            default.iter().map(|b| b.profile).collect::<Vec<_>>(),
+        let width = crate::zone_presets::minis_30().bracing.diameter_mm;
+        assert!(
+            zoned
+                .iter()
+                .all(|b| (b.profile.diameter - width).abs() < 1e-9),
             "the preset's own brace"
         );
     }
@@ -3822,8 +3820,11 @@ pub(crate) mod session_tests {
             .values()
             .next()
             .expect("its root");
-        let cone_top =
-            root.transform.pos.z + root.disk_height.max(0.01) + root.cone_height.max(0.01);
+        let disk_top = root.transform.pos.z + root.disk_height.max(0.01);
+        let cone_top = match root.join_cone_mm.filter(|j| *j > 0.0) {
+            Some(join) => disk_top + join,
+            None => disk_top + root.cone_height.max(0.01),
+        };
         let top = plain.raft_top_mm();
         assert!((top - cone_top).abs() < 1e-9, "{top} {cone_top}");
     }
@@ -4129,10 +4130,6 @@ pub(crate) mod session_tests {
         ] {
             assert!((sized(size) - tip).abs() < 1e-9, "{size}: {}", sized(size));
         }
-        assert_eq!(
-            bare_slab(12.0, crate::SupportRequest::default()).preset_hand_size(),
-            None
-        );
         // A zone preset gives its overhang size when none is asked for.
         let mut request = crate::SupportRequest::default();
         request.options.zones = Some(crate::zone_presets::minis_30());
@@ -4271,8 +4268,14 @@ pub(crate) mod session_tests {
     }
 
     /// A slab with its run's supports, as a box or a brush finds them.
+    /// The slab under Miniatures with its pillars' grid off, so that trunks
+    /// stand close enough for braces laid by hand.
     fn supported_slab() -> SupportSession {
-        crate::start_supports(&slab_scene(12.0), crate::SupportRequest::default())
+        let mut request = crate::SupportRequest::default();
+        if let Some(zones) = request.options.zones.as_mut() {
+            zones.grid_mm = None;
+        }
+        crate::start_supports(&slab_scene(12.0), request)
             .unwrap()
             .join()
             .unwrap()
@@ -4403,21 +4406,21 @@ pub(crate) mod session_tests {
             attach: true,
             ..AddOptions::default()
         };
-        session.add_at([7.0, 5.0, 12.0], &hung).unwrap();
+        session.add_at([11.0, 5.0, 12.0], &hung).unwrap();
         let knots = |s: &SupportSession| s.state.collections.knots.len();
         let trunks = |s: &SupportSession| s.state.collections.trunks.len();
         assert_eq!(trunks(&session), 1);
         assert!(knots(&session) > 0, "the second hangs from the first");
-        let id = session.tip_near([7.0, 5.0, 12.0], 1.0).unwrap();
+        let id = session.tip_near([11.0, 5.0, 12.0], 1.0).unwrap();
         session.reroute(&id, true).unwrap();
         assert_eq!(trunks(&session), 2, "on a trunk of its own");
         let id = session
-            .tip_near([7.0, 5.0, 12.0], 0.5)
+            .tip_near([11.0, 5.0, 12.0], 0.5)
             .expect("its tip stays");
         assert!(session.state.collections.trunks.contains_key(&id));
         session.reroute(&id, false).unwrap();
         assert_eq!(trunks(&session), 1, "hung again");
-        assert!(session.tip_near([7.0, 5.0, 12.0], 0.5).is_some());
+        assert!(session.tip_near([11.0, 5.0, 12.0], 0.5).is_some());
         // The first carries the second: it stays as it is.
         let first = session.tip_near([5.0, 5.0, 12.0], 0.5).unwrap();
         let before = session.state.clone();
@@ -5250,7 +5253,7 @@ pub(crate) mod session_tests {
             assert_eq!(copy.state.collections, session.state.collections);
             preview.brace.unwrap()
         };
-        let (a, b) = trunk_pair(&session, 3.0, 8.0);
+        let (a, b) = trunk_pair(&session, 3.0, 6.0);
         let from = session.brace_end_near(axis_at(&session, &a, 4.0)).unwrap();
         let same = axis_at(&session, &a, 8.0);
         assert_eq!(refused(&from, same), HandBraceRefusal::SameSupport);

@@ -19,9 +19,8 @@ use serde::{Deserialize, Serialize};
 use super::settings::{SizingBand, SizingPreset};
 use super::types::CandidatePoint;
 use super::zone_rules::ZoneRules;
+use crate::geom::math_utils::{js_min, js_pow};
 use crate::supports::settings::types::SupportSettings;
-use crate::geom::math_utils::{js_log, js_max, js_min, js_pow};
-use crate::utils::math::{clamp, round};
 
 /// Per-support sizing overrides; `None` keeps the settings value.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
@@ -71,11 +70,9 @@ impl SizingBands {
 
     /// The table with every size of `rules` added under its zone id
     /// (SoulCrafted, #360).
-    pub fn with_zone_sizes(mut self, rules: Option<&ZoneRules>) -> Self {
-        if let Some(rules) = rules {
-            for (i, size) in rules.sizes.iter().enumerate() {
-                self.0.insert(rules.band_id(i), size.band());
-            }
+    pub fn with_zone_sizes(mut self, rules: &ZoneRules) -> Self {
+        for (i, size) in rules.sizes.iter().enumerate() {
+            self.0.insert(rules.band_id(i), size.band());
         }
         self
     }
@@ -93,19 +90,7 @@ impl SizingBands {
     pub fn active(&self, settings: &SupportSettings) -> SizingBand {
         self.resolve(Some(&settings.auto_support.sizing_preset))
     }
-
-    /// Tip contact for small-island candidates: the `detail` tier tip, so fine
-    /// detail gets a shrunk tip without dragging the shaft down.
-    pub fn small_island_tip_diameter_mm(&self) -> f64 {
-        self.resolve(Some("detail")).tip_contact_diameter_mm
-    }
 }
-
-/// Area a merged cluster must exceed before the shaft tail engages (mm²).
-const CELL_REFERENCE_AREA_MM2: f64 = 8.0;
-
-/// Maximum shaft diameter (mm) for very large single supports.
-const MAX_SHAFT_DIAMETER_MM: f64 = 2.0;
 
 // Model-scale sizing: three bounded power laws on top of the band, each
 // floored at ×1 and monotone in its own input.
@@ -117,10 +102,6 @@ pub const SIZE_EXPONENT: f64 = 0.3;
 /// Resin grams per support at or below which supports are at band.
 pub const SHARE_REFERENCE_G: f64 = 0.6;
 pub const SHARE_EXPONENT: f64 = 0.25;
-
-/// Support height (mm) at or below which supports are at band.
-pub const HEIGHT_REFERENCE_MM: f64 = 20.0;
-pub const HEIGHT_EXPONENT: f64 = 0.35;
 
 /// Resin density (g/mm³) — 1.1 g/cm³.
 pub const RESIN_DENSITY_G_PER_MM3: f64 = 0.0011;
@@ -219,99 +200,28 @@ pub fn preset_for_area(area_mm2: f64) -> SizingPreset {
     }
 }
 
-/// Shaft diameter: the band, then a gentle log tail beyond the cell reference
-/// for merged clusters. A grid cell is FLAT at the band.
-fn shaft_diameter_for_area(base_diameter_mm: f64, area_mm2: f64) -> f64 {
-    let a = js_max(area_mm2, 0.01);
-    let tail = if a > CELL_REFERENCE_AREA_MM2 {
-        0.06 * js_log(a / CELL_REFERENCE_AREA_MM2)
-    } else {
-        0.0
-    };
-    js_min(MAX_SHAFT_DIAMETER_MM, base_diameter_mm + tail)
-}
-
-/// Empirical sizing for an auto-support candidate (DragonFruit's default
-/// `size_scale` is 1).
-///
-/// - Shaft: band × height factor × model factor, plus the island-area log tail,
-///   capped at 2 mm; `size_scale` rides on top and may pass the cap.
-/// - Tip contact: band × angle factor (flat ceiling full, steep slope down to
-///   60%), floored at 30% of the shaft, unless the candidate carries its own.
-/// - Roots: the band, scaled with the trunk. Tip length and penetration: band.
+/// The sizes a candidate is drawn with: its zone size exactly as written
+/// (#360), the root widened by the adaptive base when the rules have one
+/// (#471).
 pub fn size_parameters(
     candidate: &CandidatePoint,
-    size_scale: f64,
-    ctx: Option<&ModelSizingContext>,
     settings: &SupportSettings,
     bands: &SizingBands,
 ) -> SizeOverrides {
     let band = bands.active(settings);
-
-    // SoulCrafted (#360): a zone size is drawn exactly as written.
-    if let Some(rules) = settings.auto_support.zone_rules.as_ref() {
-        // A tall support on a wider base, with an adaptive base (#471).
-        let base = if rules.adaptive_base {
-            super::zone_rules::adaptive_base_factor(candidate.tip_pos.z)
-        } else {
-            1.0
-        };
-        return SizeOverrides {
-            shaft_diameter_mm: Some(band.shaft_diameter_mm),
-            tip_contact_diameter_mm: Some(band.tip_contact_diameter_mm),
-            tip_body_diameter_mm: Some(band.shaft_diameter_mm),
-            tip_length_mm: Some(band.tip_length_mm),
-            tip_penetration_mm: Some(band.tip_penetration_mm),
-            roots_diameter_mm: Some(band.root_diameter_mm * base),
-            roots_disk_height_mm: Some(band.root_disk_height_mm),
-            roots_cone_height_mm: Some(band.root_cone_height_mm),
-        };
-    }
-
-    let area_input = js_max(candidate.island_area_mm2, 0.01);
-    let z_height = js_max(candidate.z_height, 1.0);
-    let auto = &settings.auto_support;
-    let height_factor = if auto.model_scale_enabled {
-        power_factor(
-            z_height / HEIGHT_REFERENCE_MM,
-            HEIGHT_EXPONENT,
-            auto.height_factor_cap,
-        )
+    let rules = &settings.auto_support.zone_rules;
+    let base = if rules.adaptive_base {
+        super::zone_rules::adaptive_base_factor(candidate.tip_pos.z)
     } else {
         1.0
     };
-    let trunk_scale = model_sizing_factors(ctx, settings).trunk_scale;
-    let shaft_diameter_mm = round(
-        clamp(
-            shaft_diameter_for_area(band.shaft_diameter_mm, area_input)
-                * height_factor
-                * trunk_scale,
-            0.001,
-            MAX_SHAFT_DIAMETER_MM,
-        ) * size_scale,
-        3,
-    );
-    // Underside normal z = cos(angle from straight-down). Flat ceilings peel
-    // hardest → full band contact; steep slopes → smaller contact.
-    let nz = candidate.tip_normal.z.abs();
-    let angle_factor = clamp(0.6 + 0.4 * nz, 0.6, 1.0);
-    let tip_contact_diameter_mm = round(
-        candidate.tip_diameter_mm.unwrap_or_else(|| {
-            js_max(
-                band.tip_contact_diameter_mm * angle_factor,
-                shaft_diameter_mm * 0.3,
-            )
-        }),
-        3,
-    );
-
     SizeOverrides {
-        shaft_diameter_mm: Some(shaft_diameter_mm),
-        tip_contact_diameter_mm: Some(tip_contact_diameter_mm),
-        tip_body_diameter_mm: Some(shaft_diameter_mm),
-        tip_length_mm: Some(round(band.tip_length_mm, 3)),
-        tip_penetration_mm: Some(round(band.tip_penetration_mm, 3)),
-        roots_diameter_mm: Some(round(band.root_diameter_mm * trunk_scale * size_scale, 3)),
+        shaft_diameter_mm: Some(band.shaft_diameter_mm),
+        tip_contact_diameter_mm: Some(band.tip_contact_diameter_mm),
+        tip_body_diameter_mm: Some(band.shaft_diameter_mm),
+        tip_length_mm: Some(band.tip_length_mm),
+        tip_penetration_mm: Some(band.tip_penetration_mm),
+        roots_diameter_mm: Some(band.root_diameter_mm * base),
         roots_disk_height_mm: Some(band.root_disk_height_mm),
         roots_cone_height_mm: Some(band.root_cone_height_mm),
     }

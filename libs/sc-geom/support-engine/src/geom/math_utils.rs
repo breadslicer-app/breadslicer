@@ -82,11 +82,6 @@ pub fn js_tan(x: f64) -> f64 {
 }
 
 #[inline]
-pub fn js_log(x: f64) -> f64 {
-    x.ln()
-}
-
-#[inline]
 pub fn js_pow(x: f64, y: f64) -> f64 {
     x.powf(y)
 }

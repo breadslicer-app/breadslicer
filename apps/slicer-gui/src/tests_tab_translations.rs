@@ -648,14 +648,12 @@ fn the_transform_supports_and_slice_tabs_show_in_spanish() {
             &[
                 "SOPORTES AUTOMÁTICOS",
                 "Generar soportes",
-                "UBICACIÓN",
                 "BALSA",
                 "ELEVACIÓN",
             ][..],
             &[
                 "AUTO SUPPORTS",
                 "Generate supports",
-                "PLACEMENT",
                 "RAFT",
                 "LIFT",
                 "Lift 5 mm when the model rests on the plate",

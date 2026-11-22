@@ -84,44 +84,4 @@ impl Ray {
         let t = e2.dot(q) * inv;
         (t >= 0.0).then(|| self.at(t))
     }
-
-    /// The closest points between the ray (from its origin on) and the
-    /// segment `v0`-`v1`, and their squared distance (Ericson, Real-Time
-    /// Collision Detection, 5.1.9, with the ray unbounded ahead).
-    pub fn distance_sq_to_segment(self, v0: Vec3, v1: Vec3) -> RaySegmentDistance {
-        let d1 = self.direction;
-        let d2 = v1.sub(v0);
-        let r = self.origin.sub(v0);
-        let a = d1.dot(d1);
-        let e = d2.dot(d2);
-        let f = d2.dot(r);
-        let c = d1.dot(r);
-        let along_ray = |s: f64| if a > 0.0 { s.max(0.0) } else { 0.0 };
-        let (s, t) = if e <= f64::EPSILON {
-            (along_ray(-c / a), 0.0)
-        } else {
-            let b = d1.dot(d2);
-            let denom = a * e - b * b;
-            let s = if denom > 0.0 {
-                ((b * f - c * e) / denom).max(0.0)
-            } else {
-                0.0
-            };
-            let t = (b * s + f) / e;
-            if t < 0.0 {
-                (along_ray(-c / a), 0.0)
-            } else if t > 1.0 {
-                (along_ray((b - c) / a), 1.0)
-            } else {
-                (s, t)
-            }
-        };
-        let point_on_ray = self.origin.add_scaled_vector(d1, s);
-        let point_on_segment = v0.add_scaled_vector(d2, t);
-        RaySegmentDistance {
-            sqr_dist: point_on_ray.distance_to_squared(point_on_segment),
-            point_on_ray,
-            point_on_segment,
-        }
-    }
 }

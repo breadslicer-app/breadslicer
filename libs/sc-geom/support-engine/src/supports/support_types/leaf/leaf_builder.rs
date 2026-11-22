@@ -6,11 +6,9 @@
 use crate::supports::placement_logic::collision_avoidance::CollisionField;
 use crate::supports::rendering::support_builder::SupportData;
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::tips::{
-    ContactCone, SupportTipProfile, TipPrimitive,
-};
-use crate::supports::tips::recompute_contact_cone_for_moved_disk;
 use crate::supports::support_kinds::SupportTypeId;
+use crate::supports::tips::recompute_contact_cone_for_moved_disk;
+use crate::supports::tips::{ContactCone, SupportTipProfile, TipPrimitive};
 use crate::supports::types::{Knot, Leaf, SupportEntity, Vec3};
 
 #[derive(Clone, Copy, Debug)]
@@ -81,11 +79,7 @@ pub fn build_leaf_data(
     } = *input;
     // SoulCrafted (#360): a zone size's leaf is narrower than its host where
     // it meets it, or its tilted base would stick out of the host.
-    let host_diameter_mm = if settings.auto_support.zone_rules.is_some() {
-        host_diameter_mm * settings.auto_support.member_host_shaft_ratio
-    } else {
-        host_diameter_mm
-    };
+    let host_diameter_mm = host_diameter_mm * settings.auto_support.member_host_shaft_ratio;
     // Auto-support tier override — absent for manual placement (global band).
     let tip_contact_diameter_mm = input
         .tip_contact_diameter_mm

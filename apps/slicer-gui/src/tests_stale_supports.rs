@@ -656,7 +656,16 @@ fn brace_places(session: &SupportSession) -> Vec<[[i64; 3]; 2]> {
 fn braces_by_hand_follow_a_move_a_save_and_a_recalculation() {
     on_fresh_slint_thread(|| {
         let window = MainWindow::new().expect("the headless platform creates a main window");
-        let (document, run) = supported_slab(&window);
+        // Braces from 1 mm up, so that the run braces the slab's trunks.
+        let (document, run) = supported_slab_with(&window, |options| {
+            if let Some(zones) = options.zones.as_mut() {
+                zones.bracing = sc_geom::supports::zone_presets::bracing_presets()
+                    .into_iter()
+                    .find(|(name, _)| *name == "default")
+                    .expect("the default bracing")
+                    .1;
+            }
+        });
         run.dialogs.attach(&window);
         close_messages(&window);
         let generated = in_force_session(&run).expect("editable");

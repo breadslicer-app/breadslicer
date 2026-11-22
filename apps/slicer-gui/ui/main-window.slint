@@ -280,15 +280,7 @@ export component MainWindow inherits Window {
     // `SupportRun`.
     in property <[string]> support-preset-names: [];
     in property <int> support-preset-index: -1;
-    in property <int> support-sizing-index: 1;
-    in property <float> support-density;
-    in property <float> support-angle;
-    in property <float> support-size-scale;
-    in property <float> support-min-island;
-    in property <float> support-coverage;
-    in property <bool> support-stabilization: true;
     in property <bool> support-bracing: true;
-    in property <bool> support-smooth: true;
     in property <int> support-raft-index: 0;
     in property <float> support-raft-thickness;
     in property <bool> support-raft-wall: true;
@@ -3328,15 +3320,7 @@ export component MainWindow inherits Window {
                                     zone-angle-edited(v) => {
                                         root.support-zone-angle-edited(v);
                                     }
-                                    sizing-index: root.support-sizing-index;
-                                    density: root.support-density;
-                                    angle: root.support-angle;
-                                    size-scale: root.support-size-scale;
-                                    min-island: root.support-min-island;
-                                    coverage: root.support-coverage;
-                                    stabilization: root.support-stabilization;
                                     bracing: root.support-bracing;
-                                    smooth: root.support-smooth;
                                     raft-index: root.support-raft-index;
                                     raft-thickness: root.support-raft-thickness;
                                     raft-wall: root.support-raft-wall;

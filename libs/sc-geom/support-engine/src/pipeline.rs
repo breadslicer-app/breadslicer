@@ -32,12 +32,12 @@ use crate::features::slicing::support_world_triangles::{
 use crate::geom::buffer_geometry::BufferGeometry;
 use crate::geom::{Matrix4, Vec3};
 use crate::native::islands::body::IslandBodyScan;
-use crate::native::welded::WeldedMesh;
 use crate::native::mesh_minima::{CombinedIslandScanResult, scan_islands_with_bodies};
 use crate::native::overhang::{
     OVERHANG_WELD_EPSILON, OverhangScan, classify_overhangs, overhang_and_stability,
     overhang_and_stability_from_soup,
 };
+use crate::native::welded::WeldedMesh;
 use crate::perf::{self, PerfFrame};
 use crate::supports::auto_bracing::mesh_clearance::{BraceMesh, BraceMeshes};
 use crate::supports::auto_support::auto_place::helpers::{PlanCtx, PlanMesh};
@@ -144,7 +144,7 @@ pub struct PipelineSettings {
 impl PipelineSettings {
     /// DragonFruit's defaults at `layer_height_mm`.
     pub fn defaults(layer_height_mm: f64) -> Self {
-        PipelineSettings {
+        let mut settings = PipelineSettings {
             layer_height_mm,
             scan: IslandScanSettings::default(),
             panel: IslandPanelSettings::defaults(layer_height_mm),
@@ -158,7 +158,14 @@ impl PipelineSettings {
             raft_apart: false,
             keep_out: Vec::new(),
             detail_faces: Vec::new(),
-        }
+        };
+        // Every set is placed by zones; Miniatures unless told otherwise.
+        crate::supports::auto_support::presets::apply_zone_preset(
+            &crate::supports::auto_support::presets::minis_30(),
+            &mut settings,
+            false,
+        );
+        settings
     }
 }
 
@@ -692,8 +699,7 @@ fn run_pipeline(
             )
         })
         .collect();
-    let bands =
-        SizingBands::factory().with_zone_sizes(settings.supports.auto_support.zone_rules.as_ref());
+    let bands = SizingBands::factory().with_zone_sizes(&settings.supports.auto_support.zone_rules);
     let angle = scan_angle(settings);
 
     let mut current = state.clone();
@@ -712,10 +718,7 @@ fn run_pipeline(
             }
             None => scan_model(soup, settings, angle, has_raft),
         };
-        let mut overhang = regions_on_tree_faces(overhang, &bvhs[i]);
-        if settings.supports.auto_support.zone_rules.is_some() {
-            overhang = without_steep_flats(overhang);
-        }
+        let overhang = without_steep_flats(regions_on_tree_faces(overhang, &bvhs[i]));
 
         check()?;
         step(progress, Stage::DeriveIslands, i);
@@ -727,7 +730,7 @@ fn run_pipeline(
         // another part of its model (a figure sunk into its base) is held
         // by it: it is no island. Overhang regions are judged point by
         // point, where their candidates are made.
-        if settings.supports.auto_support.zone_rules.is_some() {
+        {
             let rays = BvhMesh {
                 bvh: &bvhs[i],
                 matrix_world: &identity,

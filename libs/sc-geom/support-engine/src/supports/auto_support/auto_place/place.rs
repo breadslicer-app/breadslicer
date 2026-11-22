@@ -17,6 +17,7 @@ use super::helpers::{
     free_knot_id, host_entity_of, host_segment_span, is_host_at_attachment_capacity,
     member_max_angle_from_vertical_deg, origin_by_source,
 };
+use crate::geom::math_utils::{js_atan2, js_hypot, js_max, js_min, js_to_fixed};
 use crate::supports::auto_support::constants::{
     CAVITY_FAN_RADIUS_MM, CAVITY_STICK_FAN_RADIUS_MM, CAVITY_STICK_MAX_MEMBERS,
     GRID_HOST_FAN_RADIUS_MM, MAX_CAVITY_BRIDGE_MM, MAX_LEAF_SPAN_BEFORE_BRANCH_MM,
@@ -54,7 +55,6 @@ use crate::supports::support_types::trunk::trunk_builder::{
 };
 use crate::supports::support_types::trunk::trunk_route_resolution::get_resolved_snapped_root_pos;
 use crate::supports::types::{Knot, LimitationCode, SupportState, Vec3};
-use crate::geom::math_utils::{js_atan2, js_hypot, js_max, js_min, js_to_fixed};
 
 /// Why a candidate was rejected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -212,7 +212,7 @@ const GRID_PARENT_REACH_NODES: f64 = 1.5;
 /// (#464).
 pub(super) fn grid_join_height(
     candidate: &CandidatePoint,
-    sizing_ctx: Option<&ModelSizingContext>,
+    _sizing_ctx: Option<&ModelSizingContext>,
     ctx: &PlanCtx<'_>,
 ) -> Option<f64> {
     let live = ctx.live();
@@ -222,13 +222,7 @@ pub(super) fn grid_join_height(
         } else {
             ctx.contact_at(candidate.tip_pos)
         };
-    let overrides = size_parameters(
-        candidate,
-        live.auto_support.size_scale,
-        sizing_ctx,
-        live,
-        ctx.bands,
-    );
+    let overrides = size_parameters(candidate, live, ctx.bands);
     let built = build_sized_trunk(
         &TrunkBuildInput {
             tip_pos,
@@ -400,7 +394,7 @@ pub fn place_one_candidate(
     }
 
     // Empirical sizing from the candidate's own island area.
-    let overrides = size_parameters(candidate, auto.size_scale, args.sizing_ctx, live, ctx.bands);
+    let overrides = size_parameters(candidate, live, ctx.bands);
     let is_small_island = (candidate.source != CandidateSource::Overhang
         && candidate.island_area_mm2 < 5.0)
         || candidate.z_height < 15.0;
@@ -492,12 +486,7 @@ pub fn place_one_candidate(
             };
             // SoulCrafted (#471): supports only from the plate stand on
             // nothing but the plate: no bridge from the model below.
-            if live
-                .auto_support
-                .zone_rules
-                .as_ref()
-                .is_some_and(|r| r.plate_only)
-            {
+            if live.auto_support.zone_rules.plate_only {
                 let mut out = PlaceOutcome::rejected(RejectReason::Trunk(error), preset);
                 out.cavity_fan_refusal = cavity_fan_refusal;
                 return out;
@@ -536,12 +525,11 @@ pub fn place_one_candidate(
                 }
             }
             let thinnest = || {
-                live.auto_support.zone_rules.as_ref().and_then(|r| {
-                    r.sizes
-                        .iter()
-                        .min_by(|a, b| a.trunk_diameter_mm.total_cmp(&b.trunk_diameter_mm))
-                        .map(|s| s.band())
-                })
+                let r = &live.auto_support.zone_rules;
+                r.sizes
+                    .iter()
+                    .min_by(|a, b| a.trunk_diameter_mm.total_cmp(&b.trunk_diameter_mm))
+                    .map(|s| s.band())
             };
             let band = ctx
                 .hand_zone_size()
