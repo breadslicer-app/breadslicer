@@ -1,6 +1,4 @@
-//! DragonFruit `src/supports/rendering/SupportBuilder.tsx`, the data half.
-//!
-//! The React renderer is the GUI's; `SupportData` is what builders hand it.
+//! `SupportData`: what a builder hands the drawing, and its errors.
 
 use serde::{Deserialize, Serialize};
 

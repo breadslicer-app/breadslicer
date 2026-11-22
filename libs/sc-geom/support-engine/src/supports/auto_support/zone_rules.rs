@@ -1,4 +1,4 @@
-//! Zone rules (SoulCrafted, not a DragonFruit file, #360): a support preset
+//! Zone rules (#360): a support preset
 //! that picks the size of every support by the zone it lands in, with sizes
 //! drawn exactly as they are written.
 //!

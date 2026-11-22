@@ -1,4 +1,4 @@
-//! DragonFruit `src/supports/autoSupport/`.
+//! Automatic supports: where the zone rules put them, and how each is placed.
 
 pub mod auto_place;
 pub mod constants;

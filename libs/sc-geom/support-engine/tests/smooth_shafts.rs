@@ -1,6 +1,6 @@
-//! SoulCrafted's smooth shaft mesher: tubes are closed and outward-wound,
-//! bulge into a bicone at joints and nowhere else, and on DragonFruit's own
-//! support states they replace the joint spheres without opening the soup
+//! The smooth shaft mesher: tubes are closed and outward-wound, bulge into
+//! a bicone at joints and nowhere else, and on recorded support states they
+//! replace the joint spheres without opening the soup
 //! any further.
 
 use std::collections::{HashMap, HashSet};
@@ -171,19 +171,19 @@ fn on_dragonfruit_states_smooth_shafts_stay_closed_and_drop_the_spheres() {
             })
             .unwrap()
         };
-        let df = soup_of(ShaftStyle::DragonFruit);
+        let segmented = soup_of(ShaftStyle::Segmented);
         let smooth = soup_of(ShaftStyle::Smooth(SmoothShaftParams::default()));
         assert!(!smooth.is_empty());
         assert!(
-            smooth.len() < df.len(),
-            "no joint spheres: fewer triangles than DragonFruit's"
+            smooth.len() < segmented.len(),
+            "no joint spheres: fewer triangles than with segments"
         );
         let open = |soup: &[f32]| topology(soup).0.values().filter(|&&c| c % 2 != 0).count();
-        // Coincident DragonFruit primitives (contacts, roots) can leave odd
+        // Coincident primitives (contacts, roots) can leave odd
         // edges in the welded soup; the tubes never add any.
         assert!(
-            open(&smooth) <= open(&df),
-            "no more open edges than DragonFruit's soup"
+            open(&smooth) <= open(&segmented),
+            "no more open edges than the segmented soup"
         );
         assert!(smooth.iter().all(|v| v.is_finite()));
         checked += 1;
@@ -311,9 +311,9 @@ fn hairpins_and_sharp_bends_stay_on_their_path() {
 }
 
 #[test]
-fn on_dragonfruit_states_no_vertex_flies_off() {
+fn on_recorded_states_no_vertex_flies_off() {
     // Every vertex of the smooth soup lies within the bounds of the
-    // DragonFruit soup grown by a few millimetres.
+    // segmented soup grown by a few millimetres.
     let fixture = load("islands_c.json");
     let native = load("native_islands.json");
     let autobrace = load("autobrace.json");
@@ -384,14 +384,14 @@ fn on_dragonfruit_states_no_vertex_flies_off() {
             })
             .unwrap()
         };
-        let (df, smooth) = (
-            soup_of(ShaftStyle::DragonFruit),
+        let (segmented, smooth) = (
+            soup_of(ShaftStyle::Segmented),
             soup_of(ShaftStyle::Smooth(SmoothShaftParams::default())),
         );
-        if df.is_empty() {
+        if segmented.is_empty() {
             continue;
         }
-        let (d, s) = (bounds(&df), bounds(&smooth));
+        let (d, s) = (bounds(&segmented), bounds(&smooth));
         let margin = 3.0;
         for k in 0..3 {
             assert!(

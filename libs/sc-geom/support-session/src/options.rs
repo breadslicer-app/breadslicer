@@ -1,10 +1,8 @@
-//! The support settings a person edits (BS-70): the knobs DragonFruit's own
-//! auto-support panel exposes, plus the raft and the tube style, as one
-//! serializable value — what a preset saves.
+//! The support settings a person edits (BS-70): the preset, bracing, the
+//! raft and the tube style, as one serializable value (what a preset saves).
 //!
-//! Every value is clamped to the bounds DragonFruit declares for it
-//! (`auto_support_constraints`), so a hand-edited preset cannot push the
-//! planner outside what it was built for.
+//! Every value is clamped to its bounds (`auto_support_constraints`), so a
+//! hand-edited preset cannot push the planner outside what it was built for.
 
 use serde::{Deserialize, Serialize};
 use support_engine::features::slicing::smooth_shafts::{ShaftStyle, SmoothShaftParams};
@@ -47,8 +45,7 @@ pub enum RaftMode {
 pub struct SupportOptions {
     /// Cross-bracing between supports.
     pub bracing: bool,
-    /// Continuous tubes (SoulCrafted) rather than DragonFruit's segments and
-    /// spheres.
+    /// Continuous tubes rather than segments and spheres.
     pub smooth_shafts: bool,
     pub raft: RaftMode,
     /// Raft plate thickness, mm.
@@ -173,7 +170,7 @@ impl SupportOptions {
         settings.shaft_style = if o.smooth_shafts {
             ShaftStyle::Smooth(SmoothShaftParams::default())
         } else {
-            ShaftStyle::DragonFruit
+            ShaftStyle::Segmented
         };
         apply_zone_preset(&o.zone_preset(), settings, o.one_raft);
         o.apply_raft(settings);
@@ -266,7 +263,7 @@ mod options_tests {
         SupportOptions::default().apply(&mut applied);
         assert_eq!(
             applied.supports.auto_support, base.supports.auto_support,
-            "the defaults are DragonFruit's"
+            "the defaults change nothing"
         );
         // But the raft: a raft of lines (#435).
         assert_eq!(applied.raft.bottom_mode, RaftBottomMode::Line);

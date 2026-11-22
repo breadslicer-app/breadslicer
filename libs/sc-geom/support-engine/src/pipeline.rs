@@ -1,17 +1,13 @@
-//! SoulCrafted's entry point over the port (not a DragonFruit file):
-//! one call from the scene's models to their supports and rafts, chaining the
-//! stages DragonFruit spreads over its panels and exporter.
+//! One call from the scene's models to their supports and rafts.
 //!
 //! Per model, in scene order:
-//! 1. **World geometry**, as `useIslands.prepareWorldGeom` builds it: the
-//!    model's geometry re-centred on its bounding box, through its transform,
-//!    as a triangle soup.
-//! 2. **Island scan**, the native combined scan (`scan_islands`) with the
-//!    Islands panel's defaults, and the overhang classification on the soup
-//!    (`scan_overhangs`).
-//! 3. **Island derivation** (`useIslands`), with the panel's defaults.
-//! 4. **Support plan** (`computeAutoSupportPlan`, auto-bracing included), on
-//!    the state the previous models left.
+//! 1. **World geometry**: the model's geometry re-centred on its bounding
+//!    box, through its transform, as a triangle soup.
+//! 2. **Island scan**: layers, low points and the overhang regions of the
+//!    soup.
+//! 3. **Islands**: what the scans found, as contacts.
+//! 4. **Support plan** (braces included), on the state the previous models
+//!    left.
 //!
 //! Then the **support mesh**: every support and its raft, as the slicer reads
 //! it, the rafts cut clear of the visible models standing on the plate.
@@ -121,13 +117,13 @@ pub struct PipelineSettings {
     pub sdf_cell_mm: f64,
     /// `supportTipShrinkPercent` of the slice tessellation.
     pub support_tip_shrink_percent: f64,
-    /// The contact tips' penetration into the model (DragonFruit's
-    /// `calculateTipOffset` for the active material and printer).
+    /// How far contact tips sink into the model (for the anti-aliasing
+    /// blur, see `tip_offset`).
     pub tip_penetration_mm: f64,
-    /// How contact tips are drawn (SoulCrafted; the default is DragonFruit's).
+    /// How contact tips are drawn.
     pub tip_drawing: TipDrawing,
-    /// How the tessellation draws shafts (DragonFruit's spheres, or smooth
-    /// tubes with bicones).
+    /// How shafts are drawn: segments and spheres, or smooth tubes with
+    /// bicones.
     pub shaft_style: ShaftStyle,
     /// The raft is drawn apart, for many sets at once (SoulCrafted, #556):
     /// a set's own drawing leaves it out and keeps the feet its roots stand
@@ -142,7 +138,7 @@ pub struct PipelineSettings {
 }
 
 impl PipelineSettings {
-    /// DragonFruit's defaults at `layer_height_mm`.
+    /// The defaults at `layer_height_mm`.
     pub fn defaults(layer_height_mm: f64) -> Self {
         let mut settings = PipelineSettings {
             layer_height_mm,
@@ -154,7 +150,7 @@ impl PipelineSettings {
             support_tip_shrink_percent: 0.0,
             tip_penetration_mm: 0.0,
             tip_drawing: TipDrawing::default(),
-            shaft_style: ShaftStyle::DragonFruit,
+            shaft_style: ShaftStyle::Segmented,
             raft_apart: false,
             keep_out: Vec::new(),
             detail_faces: Vec::new(),
@@ -194,7 +190,7 @@ pub use engine_base::CancelToken;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PipelineError {
     Cancelled,
-    /// The raft's Clipper threw (in DragonFruit the export aborts).
+    /// The raft's polygon clipping failed.
     Clipper(PolygonError),
 }
 
@@ -492,9 +488,7 @@ fn scan_model(
 /// reorders them, and the region sampler tells a region's surface by the
 /// face a ray's hit names
 /// ([`SurfaceSampler`](crate::supports::auto_support::grid_placement::SurfaceSampler)).
-/// DragonFruit scans a soup read through the index its tree already
-/// reordered, so the two orders are one there. Here they are not, and without
-/// this the sampler took for a region's surface whatever face shared a number
+/// Without this the sampler took for a region's surface whatever face shared a number
 /// with one of its triangles: tops and walls of the model, and little of an
 /// underside. Overhang candidates landed on surfaces that face up (and went
 /// on to whatever hung over them), and undersides went without any.
@@ -512,9 +506,8 @@ pub fn regions_on_tree_faces(mut scan: OverhangScan, bvh: &MeshBvh) -> OverhangS
 
 /// SoulCrafted (#500): `scan` without the steep flats, for the zone rules.
 ///
-/// A steep flat is DragonFruit's answer for a large planar face too steep to
-/// be an overhang (up to 85 degrees from horizontal): it supports the face as
-/// an overhang, lest it topple the part. The zone rules give their own answer
+/// A steep flat is a large planar face too steep to be an overhang (up to 85 degrees from horizontal), supported as one lest it
+/// topple the part. The zone rules give their own answer
 /// by angle: an overhang up to their overhang angle, stabilization up to
 /// [`STABILIZATION_MAX_ANGLE_DEG`](crate::supports::auto_support::zone_rules::STABILIZATION_MAX_ANGLE_DEG),
 /// nothing past it. With steep flats the underside of a mini's base, stood

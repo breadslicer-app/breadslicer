@@ -1,4 +1,4 @@
-//! The DragonFruit support run on a SoulCrafted scene: a lifted cube gets
+//! The support run on a SoulCrafted scene: a lifted cube gets
 //! supports and a raft as one named, welded mesh; a scene that already holds
 //! that mesh is not supported again; cancelling stops the job.
 

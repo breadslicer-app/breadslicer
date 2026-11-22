@@ -1,12 +1,10 @@
-//! Run timings (SoulCrafted; DragonFruit keeps the same kind of breakdown in
-//! `PlacementLogic/Pathfinding/pathfindingPerf.ts` and logs it with
-//! `logAutoPlaceTimings`, which the port left out).
+//! Run timings.
 //!
 //! A *frame* collects, per label, the total time and how many times it was
 //! measured, on the current thread. Code marks a label's start and measures
-//! up to it (`mark` / `measure`, DragonFruit's shape), or holds a [`scope`]
-//! guard. Outside a frame every call is a no-op, so the measured code costs
-//! nothing when nobody is listening.
+//! up to it (`mark` / `measure`), or holds a [`scope`] guard. Outside a frame
+//! every call is a no-op, so the measured code costs nothing when nobody is
+//! listening.
 
 use std::cell::RefCell;
 use std::collections::HashMap;

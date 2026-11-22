@@ -1,22 +1,15 @@
-//! SoulCrafted's closed raft geometry (not a DragonFruit file).
+//! Closed raft geometry: a contour slicer needs the raft's meshes closed and
+//! manifold.
 //!
-//! DragonFruit's own rasteriser fills whatever the raft meshes enclose; a
-//! contour slicer needs them closed and manifold, which two of them are not:
-//!
-//! - The wall. DragonFruit builds each wall ring by moving the outline
-//!   inward with `insetConvexPolygon`, which assumes a convex outline. Once a
-//!   model on the plate trims the footprint the outline is concave: the inset
-//!   ring self-intersects, and both the crenelated wall and its
-//!   perimeter-wall fallback come out tangled. Here the wall is the outline
-//!   minus the outline offset inward by the wall thickness (Clipper, which
-//!   takes any simple polygon), with DragonFruit's crenel gaps cut out of
-//!   that band as rectangles, then extruded. It is vertical (DragonFruit's
-//!   chamfer flare at the top is not reproduced).
-//! - The trimmed base. Its side walls run through every ring point, but
-//!   earcut drops exactly collinear points from the caps, among them points
-//!   a hole's bridge leaves collinear, and the caps then span the side walls'
-//!   edges there (T-junctions). Here the rings lose their collinear points
-//!   first, and a cap triangle spanning a vertex is split at it.
+//! - The wall: the outline minus the outline offset inward by the wall
+//!   thickness (Clipper takes any simple polygon, so an outline a model on
+//!   the plate trims concave is fine), with the crenel gaps cut out of that
+//!   band as rectangles, then extruded straight up.
+//! - The trimmed base: earcut drops exactly collinear points from the caps
+//!   (among them points a hole's bridge leaves collinear), and the caps would
+//!   span the side walls' edges there (T-junctions). Here the rings lose
+//!   their collinear points first, and a cap triangle spanning a vertex is
+//!   split at it.
 
 use super::raft_meshes::generate_chamfered_base_from_polygons;
 use super::polygon_set_2d::{
@@ -75,7 +68,7 @@ fn crenel_notches(outer: &[Vector2], gap_width: f64, wall_thickness: f64) -> Vec
 }
 
 /// A wall around every outer ring of `polys` (holes skipped, as
-/// DragonFruit's `generateWallFromPolygons` does), standing on `base_z`.
+/// a wall from polygons does), standing on `base_z`.
 /// `None` when the wall is off or nothing is left of it.
 pub fn robust_wall_from_polygons(
     polys: &[PolygonWithHoles],
@@ -148,7 +141,7 @@ fn without_collinear_points(ring: &[Vector2]) -> Vec<Vector2> {
     }
 }
 
-/// DragonFruit's trimmed-footprint base (`generateChamferedBaseFromPolygons`)
+/// The trimmed-footprint base
 /// on rings that earcut keeps whole, so caps and side walls share every edge.
 pub fn robust_chamfered_base(polys: &[PolygonWithHoles], raft: &RaftSettings) -> BufferGeometry {
     let mut clean: Vec<PolygonWithHoles> = polys

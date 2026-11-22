@@ -1,8 +1,8 @@
 //! Moving a model's supports with it in the plate plane: in X/Y (#119), and
 //! turned about the vertical axis (#153). Every point of the supports that
 //! stand on one model goes where the motion takes it; directions (normals,
-//! tangents, cone axes) only turn with it, and Z stays. DragonFruit keeps
-//! each model's supports to themselves (a fan, a merge or a brace only joins
+//! tangents, cone axes) only turn with it, and Z stays. Each model's supports
+//! keep to themselves (a fan, a merge or a brace only joins
 //! supports of the same model), so they move apart from the others whole.
 
 use std::collections::HashSet;

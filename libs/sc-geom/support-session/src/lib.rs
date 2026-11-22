@@ -1,13 +1,13 @@
-//! Runs the DragonFruit support port (`support_engine::pipeline`) on a
-//! SoulCrafted scene as a cancellable background job.
+//! Supports for a SoulCrafted scene (`support_engine::pipeline`), as a
+//! cancellable background job.
 //!
 //! Every mesh leaf of the scene (CSG refused, as the slicer refuses it) is one
 //! model, baked to world space. A mesh this crate produced earlier carries
 //! [`SUPPORT_MESH_NAME`] and is skipped, so a second run does not support
 //! the previous supports. The result is one support set per model (#197):
 //! the slicer's tessellation of that model's supports and of a raft drawn
-//! from its own roots (`buildSupportAndRaftWorldTriangles`), welded by exact
-//! position into one [`IndexedMesh`], and the session that edits them.
+//! from its own roots, welded by exact position into one [`IndexedMesh`],
+//! and the session that edits them.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -150,7 +150,7 @@ pub struct SupportRequest {
     /// The settings a person picked (a preset); ignored when `settings` is
     /// given.
     pub options: SupportOptions,
-    /// Everything else DragonFruit reads from its panels and stores.
+    /// Every other setting of the run.
     pub settings: Option<PipelineSettings>,
     /// The models to support, by leaf, in any order; `None` for every model
     /// of the scene. Leaves that are not models are skipped.
@@ -288,8 +288,8 @@ fn is_model_mesh(mesh: &IndexedMesh) -> bool {
     !is_any_support_mesh(mesh) && !mesh.faces().is_empty()
 }
 
-/// One model per mesh leaf, baked to world space; previous DragonFruit
-/// support meshes are left out.
+/// One model per mesh leaf, baked to world space; support meshes are left
+/// out.
 pub fn scene_models(scene: &Scene) -> Result<Vec<ModelInput>, SceneError> {
     Ok(scene_model_leaves(scene, None)?
         .into_iter()
@@ -514,13 +514,13 @@ pub fn model_from_world_mesh(id: String, mesh: &IndexedMesh) -> ModelInput {
 /// The tessellation rotates each frustum into place, and a base that should
 /// sit at `Z = 0` comes out a few 1e-16 mm below it; SoulCrafted's viewport
 /// (and the build-volume check) reads any vertex under `Z = 0` as the object
-/// breaching the plate. DragonFruit's own slicer clips there, so it never
-/// cared. The port's output stays exact; only this scene mesh is snapped.
+/// breaching the plate. The engine's output stays exact; only this scene
+/// mesh is snapped.
 pub const PLATE_SNAP_MM: f32 = 1e-4;
 
 /// Vertices of one piece closer than this are the same vertex. The
-/// tessellation interpolates some corners (DragonFruit's crenelated wall
-/// lerps along each edge), and `t = 1` does not always land on the next
+/// tessellation interpolates some corners (the crenelated wall lerps along
+/// each edge), and `t = 1` does not always land on the next
 /// corner to the last bit: a 1e-15 mm crack the rasteriser never saw, but an
 /// open edge to the slicer's manifold check. Far below any print resolution.
 pub const WELD_TOLERANCE_MM: f32 = 1e-5;

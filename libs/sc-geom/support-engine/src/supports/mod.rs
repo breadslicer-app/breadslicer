@@ -1,4 +1,4 @@
-//! DragonFruit `src/supports/`.
+//! Supports: their kinds, where they go, their braces, rafts and mesh.
 
 pub mod auto_bracing;
 pub mod auto_support;

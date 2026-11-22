@@ -1,8 +1,8 @@
-//! Tips that stay where they belong (SoulCrafted, #500).
+//! Tips that stay where they belong (#500).
 //!
 //! A candidate on a surface that faces up, under one that hangs 18 mm above
-//! it: the case of a mini's curled fingers over its body. DragonFruit's
-//! search takes the hanging surface; with the tip kept on its own surface,
+//! it: the case of a mini's curled fingers over its body. A search upward
+//! with no ceiling takes the hanging surface; with the tip kept on its own surface,
 //! the search finds the candidate's.
 //!
 //! A tip cone that goes through another part of the model on its way to its

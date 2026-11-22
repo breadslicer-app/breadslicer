@@ -1,4 +1,4 @@
-//! DragonFruit `src/supports/autoSupport/autoPlace.ts`.
+//! A model's run: its contacts placed, hung, checked and braced.
 
 pub mod fan;
 pub mod helpers;

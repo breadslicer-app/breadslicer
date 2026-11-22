@@ -1,4 +1,4 @@
-//! The zone rules' candidates (SoulCrafted, not a DragonFruit file, #360):
+//! The zone rules' candidates (#360):
 //! every support a zone preset asks for, with the size and spacing of its
 //! zone. See [`super::zone_rules`] for the zones.
 //!
