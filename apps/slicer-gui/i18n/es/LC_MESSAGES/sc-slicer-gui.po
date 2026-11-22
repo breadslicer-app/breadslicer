@@ -10903,3 +10903,8 @@ msgstr "Ninguna de nuestras impresoras y resinas se llama {}; quedan las actuale
 msgctxt "FileDialog"
 msgid "Lychee scenes"
 msgstr "Escenas de Lychee"
+
+#: src/wiring.rs
+msgctxt "FileDialog"
+msgid "Projects and Lychee scenes"
+msgstr "Proyectos y escenas de Lychee"

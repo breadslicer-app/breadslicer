@@ -709,8 +709,14 @@ fn open_dialog(
         ctr!("FileDialog", "Lychee scenes").to_string(),
         &["lys"][..],
     );
+    // A project and a Lychee scene both open as the whole scene: one filter
+    // shows them together, so neither needs the filter changed (#698).
+    let scenes = (
+        ctr!("FileDialog", "Projects and Lychee scenes").to_string(),
+        &["bread", "lys"][..],
+    );
     let lead = match kind {
-        OpenKind::Project => vec![projects, lychee, all_supported],
+        OpenKind::Project => vec![scenes, projects, lychee, all_supported],
         OpenKind::Model => vec![
             (
                 ctr!("FileDialog", "3D models").to_string(),
