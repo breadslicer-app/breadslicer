@@ -1,222 +1,174 @@
-//! DragonFruit `src/supports/PlacementLogic/ConeAxisPolicy.ts`.
+//! Which way a tip cone points, from the normal of the surface it touches,
+//! and whether that cone can hold the model at all.
 
 use serde::{Deserialize, Serialize};
 
-use crate::supports::types::Vec3;
 use crate::geom::math_utils::{
     clamp, deg_to_rad, js_atan2, js_cos, js_hypot, js_max, js_min, js_sin,
 };
+use crate::supports::types::Vec3;
 
+/// The most a cone's axis may swing away from its surface normal, degrees.
 pub const MAX_CONE_AXIS_DEVIATION_FROM_SURFACE_NORMAL_DEG: f64 = 30.0;
 
-/// How a contact cone's axis is chosen from the surface normal (`tip.coneAngleMode`).
+/// How a tip cone's axis follows its surface normal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ConeAngleMode {
+    /// Along the normal; a surface just past vertical tips the cone 10°
+    /// downward.
     #[default]
     Normal,
-    Locked,
+    /// Swung further out the more upright the surface, by up to an offset.
     Adaptive,
 }
 
+const UP: Vec3 = Vec3::new(0.0, 0.0, 1.0);
+
+/// `vector` made unit, or `fallback` made unit when `vector` is almost
+/// nothing.
 pub fn normalize_vector_or_fallback(vector: Vec3, fallback: Vec3) -> Vec3 {
     if vector.length_sq() < 0.000001 {
-        return fallback.normalize();
+        fallback.normalize()
+    } else {
+        vector.normalize()
     }
-    vector.normalize()
 }
 
-fn normalize_or_fallback(vector: Vec3, fallback: Vec3) -> Vec3 {
+/// As [`normalize_vector_or_fallback`], with a finer cut.
+fn unit_or(vector: Vec3, fallback: Vec3) -> Vec3 {
     if vector.length_sq() < 1e-10 {
-        return fallback.normalize();
+        fallback.normalize()
+    } else {
+        vector.normalize()
     }
-    vector.normalize()
 }
 
-/// DragonFruit's default `max_deviation_deg` is
-/// [`MAX_CONE_AXIS_DEVIATION_FROM_SURFACE_NORMAL_DEG`].
+/// `desired_cone_axis`, swung back toward `surface_normal` until it is no
+/// further than `max_deviation_deg` from it.
 pub fn clamp_cone_axis_deviation_from_surface_normal(
     surface_normal: Vec3,
     desired_cone_axis: Vec3,
     max_deviation_deg: f64,
 ) -> Vec3 {
-    let normal = normalize_or_fallback(surface_normal, Vec3::new(0.0, 0.0, 1.0));
-    let mut cone_axis_vec = normalize_or_fallback(desired_cone_axis, surface_normal);
-
-    let max_deviation_rad = deg_to_rad(max_deviation_deg);
-    let deviation_rad = cone_axis_vec.angle_to(normal);
-    if deviation_rad <= max_deviation_rad + 1e-6 {
-        return cone_axis_vec;
+    let normal = unit_or(surface_normal, UP);
+    let axis = unit_or(desired_cone_axis, surface_normal);
+    let limit = deg_to_rad(max_deviation_deg);
+    if axis.angle_to(normal) <= limit + 1e-6 {
+        return axis;
     }
-
-    let mut rotation_axis = Vec3::cross_vectors(normal, cone_axis_vec);
-    if rotation_axis.length_sq() < 1e-10 {
-        rotation_axis = Vec3::new(0.0, 0.0, 1.0).cross(normal);
-        if rotation_axis.length_sq() < 1e-10 {
-            rotation_axis = Vec3::new(1.0, 0.0, 0.0).cross(normal);
+    let mut pivot = Vec3::cross_vectors(normal, axis);
+    if pivot.length_sq() < 1e-10 {
+        pivot = UP.cross(normal);
+        if pivot.length_sq() < 1e-10 {
+            pivot = Vec3::new(1.0, 0.0, 0.0).cross(normal);
         }
     }
-    rotation_axis = rotation_axis.normalize();
-    cone_axis_vec = normal
-        .apply_axis_angle(rotation_axis, max_deviation_rad)
-        .normalize();
-    cone_axis_vec
+    normal
+        .apply_axis_angle(pivot.normalize(), limit)
+        .normalize()
 }
 
+/// What decides a cone's axis.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ConeAxisPolicyInput {
     pub surface_normal: Vec3,
     pub cone_angle_mode: ConeAngleMode,
+    /// How far out [`ConeAngleMode::Adaptive`] swings an upright surface's
+    /// cone, degrees (30 when unset).
     pub adaptive_cone_angle_offset_deg: Option<f64>,
 }
 
+/// A cone's axis, and the angles it came from.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ConeAxisPolicyResult {
+    /// The surface normal's angle from straight up, degrees.
     pub surface_angle_from_up_deg: f64,
+    /// The least such angle a surface may have to be touched from below.
     pub min_allowed_surface_angle_from_up_deg: f64,
     pub cone_axis: Vec3,
 }
 
+/// The unit direction at `angle_from_up_deg` from straight up, leaning
+/// toward `side` (horizontal, unit).
+fn leaning(side: Vec3, angle_from_up_deg: f64) -> Vec3 {
+    let a = deg_to_rad(angle_from_up_deg);
+    side.multiply_scalar(js_sin(a))
+        .add(UP.multiply_scalar(js_cos(a)))
+        .normalize()
+}
+
+/// The axis a cone touching a surface of `surface_normal` takes: by its
+/// mode, then no further than [`MAX_CONE_AXIS_DEVIATION_FROM_SURFACE_NORMAL_DEG`]
+/// from the normal, and never pointing up.
 pub fn resolve_cone_axis_policy(input: ConeAxisPolicyInput) -> ConeAxisPolicyResult {
-    let ConeAxisPolicyInput {
-        surface_normal,
-        cone_angle_mode,
-        adaptive_cone_angle_offset_deg,
-    } = input;
-
-    let normal = normalize_or_fallback(surface_normal, Vec3::new(0.0, 0.0, 1.0));
-    let up = Vec3::new(0.0, 0.0, 1.0);
-
-    let surface_angle_from_up_deg = normal.angle_to(up) * (180.0 / std::f64::consts::PI);
-
-    let min_allowed_surface_angle_from_up_deg = if cone_angle_mode == ConeAngleMode::Normal {
-        90.0
-    } else {
-        85.0
+    let normal = unit_or(input.surface_normal, UP);
+    let from_up = normal.angle_to(UP) * (180.0 / std::f64::consts::PI);
+    let side = Vec3::new(normal.x, normal.y, 0.0);
+    let has_side = side.length_sq() > 1e-10;
+    let wanted = match input.cone_angle_mode {
+        ConeAngleMode::Adaptive if has_side => {
+            // Upright surfaces (90° from up) swing out by the whole offset,
+            // ceilings (150° and over) not at all.
+            let offset = clamp(
+                input.adaptive_cone_angle_offset_deg.unwrap_or(30.0),
+                0.0,
+                90.0,
+            );
+            let t = clamp((from_up - 90.0) / (150.0 - 90.0), 0.0, 1.0);
+            leaning(
+                side.normalize(),
+                js_min(180.0, from_up + offset * (1.0 - t)),
+            )
+        }
+        ConeAngleMode::Normal if has_side && (90.0..=95.0).contains(&from_up) => {
+            let tilt = deg_to_rad(10.0);
+            side.normalize()
+                .multiply_scalar(js_cos(tilt))
+                .add(Vec3::new(0.0, 0.0, -1.0).multiply_scalar(js_sin(tilt)))
+                .normalize()
+        }
+        _ => normal,
     };
-
-    let mut cone_axis_vec = normal;
-
-    match cone_angle_mode {
-        ConeAngleMode::Locked => {
-            let mut forced_angle_from_up_deg: Option<f64> = None;
-
-            if (110.0..=140.0).contains(&surface_angle_from_up_deg) {
-                forced_angle_from_up_deg = Some(140.0);
-            } else if (85.0..110.0).contains(&surface_angle_from_up_deg) {
-                forced_angle_from_up_deg = Some(110.0);
-            }
-
-            if let Some(forced) = forced_angle_from_up_deg {
-                let horizontal_dir = Vec3::new(normal.x, normal.y, 0.0);
-                if horizontal_dir.length_sq() > 1e-10 {
-                    let horizontal_dir = horizontal_dir.normalize();
-
-                    let forced_rad = deg_to_rad(forced);
-                    let horizontal_mag = js_sin(forced_rad);
-                    let vertical = js_cos(forced_rad);
-
-                    cone_axis_vec = horizontal_dir
-                        .multiply_scalar(horizontal_mag)
-                        .add(up.multiply_scalar(vertical))
-                        .normalize();
-                }
-            }
-        }
-        ConeAngleMode::Adaptive => {
-            let horizontal_dir = Vec3::new(normal.x, normal.y, 0.0);
-            if horizontal_dir.length_sq() > 1e-10 {
-                let horizontal_dir = horizontal_dir.normalize();
-
-                let ramp_start_deg = 90.0;
-                let ramp_end_deg = 150.0;
-                let raw_offset = adaptive_cone_angle_offset_deg.unwrap_or(30.0);
-                let max_offset_deg = clamp(raw_offset, 0.0, 90.0);
-
-                let t = clamp(
-                    (surface_angle_from_up_deg - ramp_start_deg) / (ramp_end_deg - ramp_start_deg),
-                    0.0,
-                    1.0,
-                );
-                let offset_deg = max_offset_deg * (1.0 - t);
-                let forced_angle_from_up_deg =
-                    js_min(180.0, surface_angle_from_up_deg + offset_deg);
-
-                let forced_rad = deg_to_rad(forced_angle_from_up_deg);
-                let horizontal_mag = js_sin(forced_rad);
-                let vertical = js_cos(forced_rad);
-
-                cone_axis_vec = horizontal_dir
-                    .multiply_scalar(horizontal_mag)
-                    .add(up.multiply_scalar(vertical))
-                    .normalize();
-            }
-        }
-        ConeAngleMode::Normal => {
-            if (90.0..=95.0).contains(&surface_angle_from_up_deg) {
-                let horizontal = Vec3::new(normal.x, normal.y, 0.0);
-                if horizontal.length_sq() > 1e-10 {
-                    let horizontal = horizontal.normalize();
-                    let tilt_rad = deg_to_rad(10.0);
-                    let down = Vec3::new(0.0, 0.0, -1.0);
-                    cone_axis_vec = horizontal
-                        .multiply_scalar(js_cos(tilt_rad))
-                        .add(down.multiply_scalar(js_sin(tilt_rad)))
-                        .normalize();
-                }
-            }
-        }
-    }
-
-    let cone_axis = clamp_cone_axis_deviation_from_surface_normal(
+    let axis = clamp_cone_axis_deviation_from_surface_normal(
         normal,
-        cone_axis_vec,
+        wanted,
         MAX_CONE_AXIS_DEVIATION_FROM_SURFACE_NORMAL_DEG,
     );
-
-    // Never let the cone axis point upward — in resin printing the cone must
-    // point toward the build plate (negative Z).  If the computed axis has a
-    // positive Z component, project it to horizontal with a slight downward tilt.
-    let clamped_axis = clamp_axis_downward(cone_axis);
-
     ConeAxisPolicyResult {
-        surface_angle_from_up_deg,
-        min_allowed_surface_angle_from_up_deg,
-        cone_axis: clamped_axis,
+        surface_angle_from_up_deg: from_up,
+        min_allowed_surface_angle_from_up_deg: match input.cone_angle_mode {
+            ConeAngleMode::Normal => 90.0,
+            ConeAngleMode::Adaptive => 85.0,
+        },
+        cone_axis: pointing_down(axis),
     }
 }
 
-/// How far the cone a contact will actually render leans from vertical, in
-/// degrees: 0 is a cone pointing straight at the plate, 90 one lying flat
-/// sideways.
-///
-/// Measured on the resolved axis, not on the surface normal, because the policy
-/// can rotate the axis away from the normal — `adaptive` ramps it further out
-/// past 90° and `locked` forces 110/140 — so a guard reading the normal accepts
-/// contacts whose cone renders sideways, and refuses contacts whose cone does not.
-pub fn cone_axis_lean_from_vertical_deg(
+/// How far the cone a contact gets leans from vertical, degrees: 0 points
+/// straight at the plate, 90 lies flat. Measured on the axis the cone gets,
+/// which its mode may swing off the normal.
+fn cone_axis_lean_from_vertical_deg(
     surface_normal: Vec3,
     cone_angle_mode: ConeAngleMode,
     adaptive_cone_angle_offset_deg: Option<f64>,
 ) -> f64 {
-    let ConeAxisPolicyResult { cone_axis, .. } = resolve_cone_axis_policy(ConeAxisPolicyInput {
+    let axis = resolve_cone_axis_policy(ConeAxisPolicyInput {
         surface_normal,
         cone_angle_mode,
         adaptive_cone_angle_offset_deg,
-    });
-    let horizontal = (cone_axis.x * cone_axis.x + cone_axis.y * cone_axis.y).sqrt();
-    (js_atan2(horizontal, js_max(0.001, cone_axis.z.abs())) * 180.0) / std::f64::consts::PI
+    })
+    .cone_axis;
+    let across = (axis.x * axis.x + axis.y * axis.y).sqrt();
+    (js_atan2(across, js_max(0.001, axis.z.abs())) * 180.0) / std::f64::consts::PI
 }
 
-/// Steepest lean from vertical a contact's rendered cone may take. Past this the
-/// cone lies within 15° of flat: it pushes the model sideways rather than holding
-/// it up, and it reads as a near-horizontal whisker off the model.
-pub const MAX_SIDE_WALL_CONTACT_LEAN_DEG: f64 = 75.0;
+/// Past this lean from vertical a contact's cone lies within 15° of flat: it
+/// pushes the model sideways instead of holding it up.
+const MAX_SIDE_WALL_CONTACT_LEAN_DEG: f64 = 75.0;
 
-/// Whether a contact's cone renders too close to flat to place on. The contact
-/// disk stays on the surface, so a near-vertical face forces a near-horizontal
-/// cone whichever way the shaft leaves — the member cannot hold the part up, and
-/// the shaft reads as a whisker off the model.
+/// Whether a contact on a surface of `surface_normal` gets a cone too close
+/// to flat to hold anything (a wall).
 pub fn is_side_wall_contact(
     surface_normal: Vec3,
     cone_angle_mode: ConeAngleMode,
@@ -229,41 +181,35 @@ pub fn is_side_wall_contact(
     ) > MAX_SIDE_WALL_CONTACT_LEAN_DEG
 }
 
-/// Whether a cone keeps its contact the highest point of the support.
-///
-/// A support hangs from the point it touches the model at: nothing it is made of
-/// sits above that point. The contact cone is the piece that can break it — the
-/// cone ends at its socket, a body of radius `bodyDiameterMm / 2` standing on the
-/// axis — so an axis swung far enough off vertical lifts the socket's own rim
-/// over the tip, and the member reads as a cone pointing down with the support
-/// growing out of the top of it.
+/// Whether the contact stays the highest point of its support: a cone swung
+/// far off vertical lifts the rim of its socket above the tip.
 pub fn cone_keeps_contact_highest(
     cone_axis: Vec3,
     socket_pos: Vec3,
     tip_pos: Vec3,
     body_diameter_mm: f64,
 ) -> bool {
-    let axis = normalize_or_fallback(cone_axis, Vec3::new(0.0, 0.0, -1.0));
-    let socket_rim_rise_mm = (body_diameter_mm / 2.0) * js_hypot(&[axis.x, axis.y]);
-    socket_pos.z + socket_rim_rise_mm <= tip_pos.z + 1e-6
+    let axis = unit_or(cone_axis, Vec3::new(0.0, 0.0, -1.0));
+    let rim_rise = (body_diameter_mm / 2.0) * js_hypot(&[axis.x, axis.y]);
+    socket_pos.z + rim_rise <= tip_pos.z + 1e-6
 }
 
-/// Ensures a cone axis never points upward (positive Z).
-/// Projects upward-pointing axes to horizontal with a 5° downward tilt.
-fn clamp_axis_downward(axis: Vec3) -> Vec3 {
+/// `axis`, or, when it points up, laid out flat with a 5° droop (straight
+/// down when it has no horizontal part): a cone always points toward the
+/// plate.
+fn pointing_down(axis: Vec3) -> Vec3 {
     if axis.z <= 0.0 {
         return axis;
     }
-
-    let h_len = (axis.x * axis.x + axis.y * axis.y).sqrt();
-    if h_len < 0.001 {
+    let across = (axis.x * axis.x + axis.y * axis.y).sqrt();
+    if across < 0.001 {
         return Vec3::new(0.0, 0.0, -1.0);
     }
-    let tilt_rad = std::f64::consts::PI / 36.0; // 5°
-    let scale = 1.0 / h_len;
+    let droop = std::f64::consts::PI / 36.0;
+    let scale = 1.0 / across;
     Vec3::new(
-        axis.x * scale * js_cos(tilt_rad),
-        axis.y * scale * js_cos(tilt_rad),
-        -js_sin(tilt_rad),
+        axis.x * scale * js_cos(droop),
+        axis.y * scale * js_cos(droop),
+        -js_sin(droop),
     )
 }

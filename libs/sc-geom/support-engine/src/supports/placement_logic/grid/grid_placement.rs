@@ -11,7 +11,8 @@
 use indexmap::IndexMap;
 use serde::Serialize;
 
-use super::grid_math::{grid_node_key_from_xy, grid_snapped_xy_from_key, js_number_to_string};
+use super::grid_math::{grid_node_key_from_xy, grid_snapped_xy_from_key, node_key as key_of};
+use crate::geom::math_utils::{js_acos, js_hypot, js_max, js_min, rad_to_deg};
 use crate::supports::auto_support::constants::MAX_AUTO_LEAF_SPAN_MM;
 use crate::supports::constants::member_shaft_diameter_mm;
 use crate::supports::placement_logic::collision_avoidance::{CollisionField, is_shaft_blocked};
@@ -22,7 +23,6 @@ use crate::supports::placement_logic::smart_placement_search_utils::{
 };
 use crate::supports::rendering::support_builder::SupportData;
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::tips::get_final_socket_position;
 use crate::supports::shafts::calculate_knot_position_on_segment_from_t;
 use crate::supports::support_kinds::{
     CONTACT_OVERRIDE_REGISTRATIONS, HostRef, PlacedSupport, PlacementPrimitive, SupportEntityValue,
@@ -42,8 +42,8 @@ use crate::supports::support_types::trunk::trunk_route_resolution::{
 use crate::supports::support_types::trunk::trunk_route_types::{
     SnappedRoute, SnappedRouteValidity, TrunkRouteValidity,
 };
+use crate::supports::tips::get_final_socket_position;
 use crate::supports::types::{Knot, LimitationCode, Roots, SupportState, Trunk, Vec3};
-use crate::geom::math_utils::{js_acos, js_hypot, js_max, js_min, rad_to_deg};
 
 /// Matches `validateAndCullOrphans`' post-thickening trunk check (segment
 /// diameter/2 + 0.15): a trunk that passes this gate must not die in the cull.
@@ -661,11 +661,7 @@ fn find_neighbor_attachment(
             (-1.0, -1.0),
         ];
         for (dx, dy) in OFFSETS {
-            let neighbor_key = format!(
-                "{},{}",
-                js_number_to_string(gx + dx),
-                js_number_to_string(gy + dy)
-            );
+            let neighbor_key = key_of(gx + dx, gy + dy);
             let hosts = hosts_by_node
                 .get(&neighbor_key)
                 .map(Vec::as_slice)
@@ -692,11 +688,7 @@ fn find_neighbor_attachment(
         }
         offsets.sort_by_key(|(ix, iy)| ix * ix + iy * iy);
         for (dx, dy) in offsets {
-            let neighbor_key = format!(
-                "{},{}",
-                js_number_to_string(gx + dx as f64),
-                js_number_to_string(gy + dy as f64)
-            );
+            let neighbor_key = key_of(gx + dx as f64, gy + dy as f64);
             let hosts = hosts_by_node
                 .get(&neighbor_key)
                 .map(Vec::as_slice)

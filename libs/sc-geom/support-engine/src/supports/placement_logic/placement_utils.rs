@@ -1,37 +1,26 @@
-//! DragonFruit `src/supports/PlacementLogic/PlacementUtils.ts`: the smoothed
-//! contact normal. (`findClosestMeshToPoint` picks between scene meshes and is
-//! the GUI's.)
+//! The surface normal at a ray hit, smoothed from the vertex normals.
 
-use crate::geom::{Matrix4, Vec3};
 use crate::bvh::Intersection;
+use crate::geom::{Matrix4, Vec3};
 
-/// three's `Triangle.getBarycoord`: `(1 - u - v, v, u)`, or zero for a
-/// degenerate triangle.
-fn barycoord(point: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
-    let v0 = c.sub(a);
-    let v1 = b.sub(a);
-    let v2 = point.sub(a);
-    let dot00 = v0.dot(v0);
-    let dot01 = v0.dot(v1);
-    let dot02 = v0.dot(v2);
-    let dot11 = v1.dot(v1);
-    let dot12 = v1.dot(v2);
-    let denom = dot00 * dot11 - dot01 * dot01;
-    if denom == 0.0 {
+/// The weights of `a`, `b` and `c` that make `point` (barycentric
+/// coordinates), or zero for a triangle with no area.
+fn weights(point: Vec3, a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
+    let (ac, ab, ap) = (c.sub(a), b.sub(a), point.sub(a));
+    let (cc, cb, cp, bb, bp) = (ac.dot(ac), ac.dot(ab), ac.dot(ap), ab.dot(ab), ab.dot(ap));
+    let area = cc * bb - cb * cb;
+    if area == 0.0 {
         return Vec3::ZERO;
     }
-    let inv_denom = 1.0 / denom;
-    let u = (dot11 * dot02 - dot01 * dot12) * inv_denom;
-    let v = (dot00 * dot12 - dot01 * dot02) * inv_denom;
-    Vec3::new(1.0 - u - v, v, u)
+    let inv = 1.0 / area;
+    let toward_c = (bb * cp - cb * bp) * inv;
+    let toward_b = (cc * bp - cb * cp) * inv;
+    Vec3::new(1.0 - toward_c - toward_b, toward_b, toward_c)
 }
 
-/// The interpolated vertex normal at a hit, in world space: smoother on
-/// curved surfaces than the raw face normal. Without vertex normals it is the
-/// (local) face normal, as DragonFruit returns it.
-///
-/// `positions` and `normals` are the geometry's attributes; the hit's face
-/// names their vertices.
+/// The normal at `hit` in world space, blended from the vertex normals of
+/// its face (smoother on curved surfaces than the face normal); without
+/// vertex normals, the face's own normal as the hit carries it.
 pub fn calculate_smoothed_normal(
     hit: &Intersection,
     positions: &[[f32; 3]],
@@ -41,23 +30,18 @@ pub fn calculate_smoothed_normal(
     let Some(normals) = normals else {
         return hit.face.normal;
     };
-    let v = |attr: &[[f32; 3]], i: u32| {
-        let p = attr[i as usize];
-        Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]))
+    let read = |attr: &[[f32; 3]], i: u32| {
+        let [x, y, z] = attr[i as usize];
+        Vec3::new(f64::from(x), f64::from(y), f64::from(z))
     };
-    let (a, b, c) = (hit.face.a, hit.face.b, hit.face.c);
-    let n_a = v(normals, a);
-    let n_b = v(normals, b);
-    let n_c = v(normals, c);
-    let p_a = v(positions, a).apply_matrix4(matrix_world);
-    let p_b = v(positions, b).apply_matrix4(matrix_world);
-    let p_c = v(positions, c).apply_matrix4(matrix_world);
-
-    let bary = barycoord(hit.point, p_a, p_b, p_c);
+    let corners = [hit.face.a, hit.face.b, hit.face.c];
+    let [pa, pb, pc] = corners.map(|i| read(positions, i).apply_matrix4(matrix_world));
+    let [na, nb, nc] = corners.map(|i| read(normals, i));
+    let w = weights(hit.point, pa, pb, pc);
     Vec3::ZERO
-        .add_scaled_vector(n_a, bary.x)
-        .add_scaled_vector(n_b, bary.y)
-        .add_scaled_vector(n_c, bary.z)
+        .add_scaled_vector(na, w.x)
+        .add_scaled_vector(nb, w.y)
+        .add_scaled_vector(nc, w.z)
         .normalize()
         .transform_direction(matrix_world)
 }

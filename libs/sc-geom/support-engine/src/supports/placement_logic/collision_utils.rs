@@ -1,28 +1,12 @@
-//! DragonFruit `src/supports/PlacementLogic/CollisionUtils.ts`.
-//!
-//! The mesh is a [`BvhMesh`]: DragonFruit's `THREE.Mesh` with its
-//! `boundsTree`, raycast through `acceleratedRaycast` with a double-sided
-//! material swapped in for the call (`DOUBLE_SIDED_MATERIAL`). The optional
-//! shared `THREE.Raycaster` argument is only an allocation saver and is gone.
+//! Whether a support's shaft or tip cone runs into the model: rays cast
+//! along it, through both sides of every face.
 
-use crate::supports::tips::get_final_socket_position;
-use crate::supports::tips::ContactCone;
-use crate::supports::types::Vec3;
+use crate::bvh::{BvhMesh, Intersection, Side};
 use crate::geom::Ray;
 use crate::geom::math_utils::{js_hypot, js_max, js_min};
-use crate::bvh::{BvhMesh, Intersection, Side};
-
-const WHISKER_DIAGONAL: f64 = std::f64::consts::FRAC_1_SQRT_2;
-const WHISKER_OFFSETS: [(f64, f64); 8] = [
-    (1.0, 0.0),
-    (-1.0, 0.0),
-    (0.0, 1.0),
-    (0.0, -1.0),
-    (WHISKER_DIAGONAL, WHISKER_DIAGONAL),
-    (-WHISKER_DIAGONAL, WHISKER_DIAGONAL),
-    (WHISKER_DIAGONAL, -WHISKER_DIAGONAL),
-    (-WHISKER_DIAGONAL, -WHISKER_DIAGONAL),
-];
+use crate::supports::tips::ContactCone;
+use crate::supports::tips::get_final_socket_position;
+use crate::supports::types::Vec3;
 
 /// How far before its contact a tip cone may go into the model: the tip's own
 /// way into its surface, and a crease or a bump of the surface around it.
@@ -38,7 +22,7 @@ const CONE_SIDE_SLACK_MM: f64 = 0.2;
 /// contact from behind it: no tip.
 pub const CONE_ALONG_SURFACE_DEG: f64 = 80.0;
 
-/// SoulCrafted (#500): whether `cone` goes into the model more than
+/// Whether `cone` goes into the model more than
 /// [`CONE_CROSSING_MARGIN_MM`] before its contact: through another part of the
 /// model, as a tip under a curled finger through the claw below it, or a
 /// tooth's tip through the jaw in front of the tooth; or with its side, as a
@@ -132,9 +116,7 @@ pub fn tip_cone_crosses_model(cone: &ContactCone, mesh: BvhMesh<'_>) -> bool {
     })
 }
 
-const WORLD_UP: Vec3 = Vec3::new(0.0, 1.0, 0.0);
-const WORLD_RIGHT: Vec3 = Vec3::new(1.0, 0.0, 0.0);
-
+/// What a shaft ran into first, if anything.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct CollisionResult {
     pub hit: bool,
@@ -144,14 +126,14 @@ pub struct CollisionResult {
 }
 
 impl CollisionResult {
-    const MISS: CollisionResult = CollisionResult {
+    const CLEAR: CollisionResult = CollisionResult {
         hit: false,
         point: None,
         normal: None,
         distance: None,
     };
 
-    fn of(hit: Intersection) -> Self {
+    fn at(hit: Intersection) -> Self {
         CollisionResult {
             hit: true,
             point: Some(hit.point),
@@ -161,118 +143,109 @@ impl CollisionResult {
     }
 }
 
-/// Checks if a cylindrical shaft collides with a mesh.
-/// Uses a bundle of rays (center + perimeter) to detect collisions.
-///
-/// - `start` - Start position of the shaft segment (e.g. Socket or Joint)
-/// - `end` - End position of the shaft segment (e.g. Joint or Base)
-/// - `radius` - Radius of the shaft
-/// - `mesh` - The model mesh to check against
+/// A shaft shorter than this is not checked, mm.
+const SHORTEST_CHECKED_MM: f64 = 0.1;
+/// How far past its start a ray sets off (at most a tenth of the shaft), so
+/// a shaft starting on the surface does not hit it at once, mm.
+const START_OFFSET_MM: f64 = 0.02;
+/// The rays round a shaft's rim: the four sides and the four diagonals.
+const RIM: [(f64, f64); 8] = {
+    const D: f64 = std::f64::consts::FRAC_1_SQRT_2;
+    [
+        (1.0, 0.0),
+        (-1.0, 0.0),
+        (0.0, 1.0),
+        (0.0, -1.0),
+        (D, D),
+        (-D, D),
+        (D, -D),
+        (-D, -D),
+    ]
+};
+
+/// The first face a shaft of `radius` from `start` to `end` runs into: a ray
+/// down its axis, then eight along its rim.
 pub fn check_shaft_collision(
     start: Vec3,
     end: Vec3,
     radius: f64,
     mesh: BvhMesh<'_>,
 ) -> CollisionResult {
-    let start_vec = start;
-    let mut direction = Vec3::new(end.x - start.x, end.y - start.y, end.z - start.z);
-    let length = direction.length();
-
-    // If segment is too short, skip check
-    if length < 0.1 {
-        return CollisionResult::MISS;
+    let way = Vec3::new(end.x - start.x, end.y - start.y, end.z - start.z);
+    let length = way.length();
+    if length < SHORTEST_CHECKED_MM {
+        return CollisionResult::CLEAR;
     }
-
-    direction = direction.multiply_scalar(1.0 / length);
-
-    // Avoid false positives when the ray starts exactly on the mesh surface.
-    // Move the origin slightly forward along the ray direction.
-    const RAY_ORIGIN_EPS_MM: f64 = 0.02;
-    let eps = js_min(RAY_ORIGIN_EPS_MM, js_max(0.0, length * 0.1));
-    let max_ray_distance = js_max(0.0, length - eps);
-
-    let cast_first_hit = |origin_x: f64, origin_y: f64, origin_z: f64| -> Option<Intersection> {
-        let ray = Ray::new(Vec3::new(origin_x, origin_y, origin_z), direction);
-        mesh.intersect_object(&ray, Side::Double, 0.0, max_ray_distance, false)
-            .into_iter()
-            .next()
+    let dir = way.multiply_scalar(1.0 / length);
+    let offset = js_min(START_OFFSET_MM, js_max(0.0, length * 0.1));
+    let reach = js_max(0.0, length - offset);
+    let first_hit = |x: f64, y: f64, z: f64| {
+        mesh.intersect_object(
+            &Ray::new(Vec3::new(x, y, z), dir),
+            Side::Double,
+            0.0,
+            reach,
+            false,
+        )
+        .into_iter()
+        .next()
     };
-
-    // 1. Check Center Ray
-    if let Some(center_hit) = cast_first_hit(
-        start_vec.x + direction.x * eps,
-        start_vec.y + direction.y * eps,
-        start_vec.z + direction.z * eps,
+    if let Some(hit) = first_hit(
+        start.x + dir.x * offset,
+        start.y + dir.y * offset,
+        start.z + dir.z * offset,
     ) {
-        return CollisionResult::of(center_hit);
+        return CollisionResult::at(hit);
     }
-
-    // 2. Check Perimeter Rays (Whiskers)
-    // We create whiskers around the shaft circumference to catch edge clips.
-    // We need a coordinate system perpendicular to the direction.
-
-    // Create arbitrary perp vector
-    let arbitrary = if direction.dot(WORLD_UP).abs() > 0.9 {
-        WORLD_RIGHT
+    // Two directions square to the shaft, for its rim.
+    let helper = if dir.dot(Vec3::new(0.0, 1.0, 0.0)).abs() > 0.9 {
+        Vec3::new(1.0, 0.0, 0.0)
     } else {
-        WORLD_UP
+        Vec3::new(0.0, 1.0, 0.0)
     };
-
-    let perp1 = Vec3::cross_vectors(direction, arbitrary).normalize();
-    let perp2 = Vec3::cross_vectors(direction, perp1).normalize();
-
-    for (u, v) in WHISKER_OFFSETS {
-        let offset_x = (perp1.x * u + perp2.x * v) * radius;
-        let offset_y = (perp1.y * u + perp2.y * v) * radius;
-        let offset_z = (perp1.z * u + perp2.z * v) * radius;
-
-        if let Some(whisker_hit) = cast_first_hit(
-            start_vec.x + offset_x + direction.x * eps,
-            start_vec.y + offset_y + direction.y * eps,
-            start_vec.z + offset_z + direction.z * eps,
+    let side_a = Vec3::cross_vectors(dir, helper).normalize();
+    let side_b = Vec3::cross_vectors(dir, side_a).normalize();
+    for (a, b) in RIM {
+        let out = Vec3::new(
+            (side_a.x * a + side_b.x * b) * radius,
+            (side_a.y * a + side_b.y * b) * radius,
+            (side_a.z * a + side_b.z * b) * radius,
+        );
+        if let Some(hit) = first_hit(
+            start.x + out.x + dir.x * offset,
+            start.y + out.y + dir.y * offset,
+            start.z + out.z + dir.z * offset,
         ) {
-            return CollisionResult::of(whisker_hit);
+            return CollisionResult::at(hit);
         }
     }
-
-    CollisionResult::MISS
+    CollisionResult::CLEAR
 }
 
-/// Clearance for a SHORT bridge (a twig) between two model surfaces.
-///
-/// `check_shaft_collision` fires whiskers offset from the axis by `radius`. A
-/// twig's socket sits ON the surface it touches, so for any canted twig — the
-/// normal case, since it bridges two features a couple of millimeters apart —
-/// a whisker offset towards the lower surface starts *inside* the material and
-/// the exit hit reads as a collision. Every canted twig was refused this way,
-/// automatically and by hand. Check the middle of the span instead: the sockets
-/// are anchored on surfaces by construction, and for a twig at most
-/// `stickVsTwigCutoffMm` long the middle is what would cross anything.
+/// Whether a short bridge between two surfaces (a twig) runs into the model
+/// on its way: the middle of its span only. Its ends sit on the surfaces they
+/// touch, so a rim ray at a leaning end would start inside the material and
+/// read its way out as a hit.
 pub fn check_short_bridge_collision(
     start: Vec3,
     end: Vec3,
     radius: f64,
     mesh: BvhMesh<'_>,
 ) -> CollisionResult {
-    let dx = end.x - start.x;
-    let dy = end.y - start.y;
-    let dz = end.z - start.z;
+    let (dx, dy, dz) = (end.x - start.x, end.y - start.y, end.z - start.z);
     let length = js_hypot(&[dx, dy, dz]);
-    let inset = js_min(radius + 0.1, length * 0.35);
-    if length <= inset * 2.2 {
-        return CollisionResult::MISS;
+    let trim = js_min(radius + 0.1, length * 0.35);
+    if length <= trim * 2.2 {
+        return CollisionResult::CLEAR;
     }
-
-    let ux = dx / length;
-    let uy = dy / length;
-    let uz = dz / length;
+    let (ux, uy, uz) = (dx / length, dy / length, dz / length);
     check_shaft_collision(
         Vec3::new(
-            start.x + ux * inset,
-            start.y + uy * inset,
-            start.z + uz * inset,
+            start.x + ux * trim,
+            start.y + uy * trim,
+            start.z + uz * trim,
         ),
-        Vec3::new(end.x - ux * inset, end.y - uy * inset, end.z - uz * inset),
+        Vec3::new(end.x - ux * trim, end.y - uy * trim, end.z - uz * trim),
         radius,
         mesh,
     )
