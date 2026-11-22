@@ -5775,6 +5775,7 @@ dependencies = [
  "sc-arrange",
  "sc-cut",
  "sc-geom",
+ "sc-lys",
  "sc-mesh-core",
  "sc-mesh-fixtures",
  "sc-mesh-formats",
