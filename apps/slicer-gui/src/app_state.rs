@@ -3510,10 +3510,10 @@ mod window_wiring_tests {
             let app = test_app(PreferencesSnapshot::for_tests());
             let (window, _pending_load, controller) = new_window(&app);
             let _drivers = app.install_window_drivers(&window, &controller);
-            window.invoke_support_option_changed(1, 20.0);
-            let density = window.get_support_density();
-            window.invoke_support_option_changed(1, 999.0);
-            let clamped = window.get_support_density();
+            window.invoke_support_option_changed(10, 2.0);
+            let density = window.get_support_raft_thickness();
+            window.invoke_support_option_changed(10, 999.0);
+            let clamped = window.get_support_raft_thickness();
             window.invoke_support_preset_picked(1);
             let names: Vec<String> = window
                 .get_support_preset_names()
@@ -3522,11 +3522,8 @@ mod window_wiring_tests {
                 .collect();
             (density, clamped, window.get_support_preset_index(), names)
         });
-        assert_eq!(density, 20.0);
-        assert_eq!(
-            clamped, 30.0,
-            "the area per support is capped at 30 mm2"
-        );
+        assert_eq!(density, 2.0);
+        assert_eq!(clamped, 3.0, "the raft is 3 mm thick at most");
         assert_eq!(preset_index, 1);
         // Only the zone presets ship (#490).
         assert_eq!(

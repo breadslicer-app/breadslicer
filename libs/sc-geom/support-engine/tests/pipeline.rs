@@ -8,8 +8,8 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 
 use support_engine::bvh::MeshBvh;
-use support_engine::geom::buffer_geometry::BufferGeometry;
 use support_engine::geom::Vec3;
+use support_engine::geom::buffer_geometry::BufferGeometry;
 use support_engine::pipeline::{
     CancelToken, ModelInput, PipelineError, PipelineSettings, Stage, generate_supports,
     generate_supports_with, plan_supports_with, prescan_models, world_soup,
@@ -118,8 +118,6 @@ fn triples(soup: &[f32]) -> Vec<[f32; 3]> {
         .map(|c| [c[0], c[1], c[2]])
         .collect()
 }
-
-
 
 /// Everything a run hands back that a reused scan could change.
 fn run_digest(out: &support_engine::pipeline::PipelineOutput) -> Value {

@@ -17,6 +17,7 @@ use super::helpers::{
     free_knot_id, host_entity_of, host_segment_span, is_host_at_attachment_capacity,
     member_max_angle_from_vertical_deg, origin_by_source,
 };
+use crate::geom::math_utils::{js_atan2, js_hypot, js_max, js_min, js_to_fixed};
 use crate::supports::auto_support::constants::{
     CAVITY_FAN_RADIUS_MM, CAVITY_STICK_FAN_RADIUS_MM, CAVITY_STICK_MAX_MEMBERS,
     GRID_HOST_FAN_RADIUS_MM, MAX_CAVITY_BRIDGE_MM, MAX_LEAF_SPAN_BEFORE_BRANCH_MM,
@@ -54,7 +55,6 @@ use crate::supports::support_types::trunk::trunk_builder::{
 };
 use crate::supports::support_types::trunk::trunk_route_resolution::get_resolved_snapped_root_pos;
 use crate::supports::types::{Knot, LimitationCode, SupportState, Vec3};
-use crate::geom::math_utils::{js_atan2, js_hypot, js_max, js_min, js_to_fixed};
 
 /// Why a candidate was rejected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -525,13 +525,11 @@ pub fn place_one_candidate(
                 }
             }
             let thinnest = || {
-                {
-                    let r = &live.auto_support.zone_rules;
-                    r.sizes
-                        .iter()
-                        .min_by(|a, b| a.trunk_diameter_mm.total_cmp(&b.trunk_diameter_mm))
-                        .map(|s| s.band())
-                }
+                let r = &live.auto_support.zone_rules;
+                r.sizes
+                    .iter()
+                    .min_by(|a, b| a.trunk_diameter_mm.total_cmp(&b.trunk_diameter_mm))
+                    .map(|s| s.band())
             };
             let band = ctx
                 .hand_zone_size()

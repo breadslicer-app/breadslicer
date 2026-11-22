@@ -2740,6 +2740,21 @@ mod fix_all {
         scene
     }
 
+    /// Miniatures leaving islands under 1 mm² alone: no first-layer,
+    /// overhang or stabilization tip on them, so the small cubes of
+    /// [`island_plate`] are islands the review asks a support for.
+    pub(crate) fn islands_left_alone() -> sc_geom::supports::SupportOptions {
+        let mut options = sc_geom::supports::SupportOptions::default();
+        let mut zones = options.zone_preset();
+        for band in &mut zones.rules.first_layer {
+            band.enabled &= band.min_area_mm2 >= 1.0;
+        }
+        zones.rules.overhang.min_area_mm2 = zones.rules.overhang.min_area_mm2.max(1.0);
+        zones.rules.stabilization.min_area_mm2 = zones.rules.stabilization.min_area_mm2.max(1.0);
+        options.zones = Some(zones);
+        options
+    }
+
     /// A 40 x 40 mm plate of 0.1 mm pixels, 120 layers of 0.05 mm.
     fn island_profile() -> SliceProfile {
         SliceProfile::new(
@@ -2788,10 +2803,7 @@ mod fix_all {
             ctrl.dialogs(),
             ctrl.clone(),
         );
-        supports.generate_now(sc_geom::supports::SupportOptions {
-            min_island_area_mm2: 1.0,
-            ..Default::default()
-        });
+        supports.generate_now(islands_left_alone());
         let hollow = HollowRun::install(&window, document.clone(), ctrl.dialogs(), ctrl.clone());
         let panel = ReviewPanel::install(
             &window,

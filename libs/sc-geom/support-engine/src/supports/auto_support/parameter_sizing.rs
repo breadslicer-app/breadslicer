@@ -19,8 +19,8 @@ use serde::{Deserialize, Serialize};
 use super::settings::{SizingBand, SizingPreset};
 use super::types::CandidatePoint;
 use super::zone_rules::ZoneRules;
-use crate::supports::settings::types::SupportSettings;
 use crate::geom::math_utils::{js_min, js_pow};
+use crate::supports::settings::types::SupportSettings;
 
 /// Per-support sizing overrides; `None` keeps the settings value.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
@@ -90,7 +90,6 @@ impl SizingBands {
     pub fn active(&self, settings: &SupportSettings) -> SizingBand {
         self.resolve(Some(&settings.auto_support.sizing_preset))
     }
-
 }
 
 // Model-scale sizing: three bounded power laws on top of the band, each

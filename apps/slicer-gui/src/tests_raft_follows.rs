@@ -282,14 +282,18 @@ fn the_raft_still_to_be_drawn_is_told_until_it_lands() {
 fn the_raft_of_one_model_alone_moves_with_it_while_it_is_dragged() {
     on_fresh_slint_thread(|| {
         let window = MainWindow::new().expect("the headless platform creates a main window");
-        let (document, run, leaves) = supported(&window, &[[20.0, 20.0, 8.0]]);
-        let model = leaves[0];
+        // A slab: a raft of lines needs two roots at least, and a unit cube
+        // under Miniatures stands on one.
+        let (document, run) = supported_slab(&window);
+        let model = document
+            .with_scene(|spatial| crate::raft_clash::model_bottoms(spatial)[0].0)
+            .expect("a scene");
         run.on_option(9, 1.0);
         run.on_option(14, 1.0);
         settle_rafts(&document, &run);
         let (raft, _) = plate_rafts(&document).pop().expect("one raft on the plate");
         let start = leaf_transform(&document, raft);
-        let (at, there) = ([20.0, 20.0, 8.0], [27.0, 15.0, 8.0]);
+        let (at, there) = ([10.0, 20.0, 9.0], [17.0, 15.0, 9.0]);
 
         // Live: the raft rides along with the set.
         move_live(&document, model, at, there);

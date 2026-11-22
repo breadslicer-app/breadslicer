@@ -34,16 +34,15 @@ use super::report::{
     BySource, CavityFallback, ForestLedgerEntry, ForestReport, ForestScanMetrics,
     PlacementDiagnostics, ReportDiagnostics, build_forest_report, bump, fan_key,
 };
+use crate::geom::Box3;
+use crate::geom::math_utils::{js_max, js_min, js_round};
 use crate::supports::auto_bracing::auto_brace::build_auto_braced_snapshot;
 use crate::supports::auto_bracing::mesh_clearance::BraceMeshes;
 use crate::supports::auto_support::constants::{
     CONSOLIDATION_BRANCH_MIN_HEIGHT_MM, CONSOLIDATION_FAN_RADIUS_MM, CONSOLIDATION_MAX_ANGLE_DEG,
     GRID_HOST_FAN_RADIUS_MM, MIN_LEAF_FAN_RADIUS_MM,
 };
-use crate::supports::auto_support::coverage::{
-    compute_region_coverage,
-    coverage_radius_for_area,
-};
+use crate::supports::auto_support::coverage::{compute_region_coverage, coverage_radius_for_area};
 use crate::supports::auto_support::load_budget::{
     LoadBudgetInput, PlacedContact, compute_load_budget,
 };
@@ -66,13 +65,10 @@ use crate::supports::auto_support::types::{
 use crate::supports::auto_support::zone_candidates::{ZoneInput, generate_zone_candidates};
 use crate::supports::model_mesh::ModelMesh;
 use crate::supports::support_kinds::{
-    PlacementPrimitive, SupportEntityValue, SupportOriginId, SupportTypeId,
-    contact_bridge_types, get_support_type_descriptor, is_auto_placed_type,
-    is_origin_convertible_to_tree,
+    PlacementPrimitive, SupportEntityValue, SupportOriginId, SupportTypeId, contact_bridge_types,
+    get_support_type_descriptor, is_auto_placed_type, is_origin_convertible_to_tree,
 };
 use crate::supports::types::{Knot, SupportState, Vec3};
-use crate::geom::Box3;
-use crate::geom::math_utils::{js_max, js_min, js_round};
 use crate::utils::math::quantize_to_scale;
 use crate::volume_analysis::islands::types::{DetectedIsland, IslandSource};
 

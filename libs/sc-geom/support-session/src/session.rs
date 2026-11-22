@@ -1592,8 +1592,8 @@ impl SupportSession {
         let sdf = RefCell::new(pooled.unwrap_or_else(|| {
             SdfCache::new(bvh.bvh.clone(), bvh.to_world, Some(settings.sdf_cell_mm))
         }));
-        let bands = SizingBands::factory()
-            .with_zone_sizes(&settings.supports.auto_support.zone_rules);
+        let bands =
+            SizingBands::factory().with_zone_sizes(&settings.supports.auto_support.zone_rules);
         let mut state = std::mem::take(&mut self.state);
         let outcome = {
             let mut new_id = self.id_source();
@@ -2243,21 +2243,20 @@ impl SupportSession {
     /// it touches (#524): the places a run picked, for showing them.
     pub fn tip_contacts(&self) -> Vec<([f64; 3], [f64; 3])> {
         let c = &self.state.collections;
-        let of =
-            |k: &support_engine::supports::tips::ContactCone| {
-                // The cone's axis points into the model: the surface normal is
-                // turned to face the other way, out of it.
-                let out = [-k.normal.x, -k.normal.y, -k.normal.z];
-                let n = k.surface_normal.map_or(out, |n| {
-                    let n = [n.x, n.y, n.z];
-                    if n[0] * out[0] + n[1] * out[1] + n[2] * out[2] < 0.0 {
-                        n.map(|c| -c)
-                    } else {
-                        n
-                    }
-                });
-                ([k.pos.x, k.pos.y, k.pos.z], n)
-            };
+        let of = |k: &support_engine::supports::tips::ContactCone| {
+            // The cone's axis points into the model: the surface normal is
+            // turned to face the other way, out of it.
+            let out = [-k.normal.x, -k.normal.y, -k.normal.z];
+            let n = k.surface_normal.map_or(out, |n| {
+                let n = [n.x, n.y, n.z];
+                if n[0] * out[0] + n[1] * out[1] + n[2] * out[2] < 0.0 {
+                    n.map(|c| -c)
+                } else {
+                    n
+                }
+            });
+            ([k.pos.x, k.pos.y, k.pos.z], n)
+        };
         c.trunks
             .values()
             .filter_map(|t| t.contact_cone.as_ref().map(of))
@@ -3669,7 +3668,9 @@ pub(crate) mod session_tests {
         assert!(!zoned.is_empty());
         let width = crate::zone_presets::minis_30().bracing.diameter_mm;
         assert!(
-            zoned.iter().all(|b| (b.profile.diameter - width).abs() < 1e-9),
+            zoned
+                .iter()
+                .all(|b| (b.profile.diameter - width).abs() < 1e-9),
             "the preset's own brace"
         );
     }

@@ -8,12 +8,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::native::islands::body::IslandBodyScan;
 use crate::pipeline::PipelineSettings;
-use crate::supports::auto_support::auto_place::helpers::apply_zone_size;
-use crate::supports::auto_support::settings::{AutoSupportSettings, auto_support_constraints};
-use crate::supports::auto_support::zone_rules::STABILIZATION_MAX_ANGLE_DEG;
 use crate::supports::auto_bracing::settings::{
     AutoBracingPattern, AutoBracingSettings, GridDiagonal, StackedBracing,
 };
+use crate::supports::auto_support::auto_place::helpers::apply_zone_size;
+use crate::supports::auto_support::settings::{AutoSupportSettings, auto_support_constraints};
+use crate::supports::auto_support::zone_rules::STABILIZATION_MAX_ANGLE_DEG;
 use crate::supports::auto_support::zone_rules::{
     AreaBand, BaseTip, IgnoreSmallIslands, OverhangRule, StabilizationRule, SupportSize,
     VolumeBand, ZoneRules,
@@ -458,9 +458,6 @@ pub fn apply_zone_preset(zones: &ZonePreset, settings: &mut PipelineSettings, on
     // The sizes are drawn as written: no model scaling.
     auto.model_scale_enabled = false;
     auto.size_scale = 1.0;
-    // The zones stand in for pose anchors and minima rings.
-    auto.stabilization_enabled = false;
-    auto.minima_reinforcement_enabled = false;
     auto.zone_rules = rules.clone();
     if let Some(i) = rules.default_size_index() {
         apply_zone_size(supports, &rules, i);

@@ -4,10 +4,9 @@
 //! (`computeMaxConnectedDiameterFromTrunk`, the connected-graph walk, is the
 //! store's and is ported with it.)
 
-
+use crate::geom::math_utils::js_max;
 use crate::supports::support_kinds::{SupportEntityValue, get_support_type_descriptor};
 use crate::supports::types::Leaf;
-use crate::geom::math_utils::js_max;
 
 fn leaf_diameter(leaf: &Leaf) -> f64 {
     let p = &leaf.contact_cone.profile;
@@ -33,23 +32,13 @@ pub fn member_diameter_of(entity: &SupportEntityValue) -> f64 {
         SupportEntityValue::Brace(_) | SupportEntityValue::Leaf(_) => None,
     };
     let type_id = match entity {
-        SupportEntityValue::Trunk(_) => {
-            crate::supports::support_kinds::SupportTypeId::Trunk
-        }
-        SupportEntityValue::Branch(_) => {
-            crate::supports::support_kinds::SupportTypeId::Branch
-        }
+        SupportEntityValue::Trunk(_) => crate::supports::support_kinds::SupportTypeId::Trunk,
+        SupportEntityValue::Branch(_) => crate::supports::support_kinds::SupportTypeId::Branch,
         SupportEntityValue::Leaf(_) => crate::supports::support_kinds::SupportTypeId::Leaf,
         SupportEntityValue::Twig(_) => crate::supports::support_kinds::SupportTypeId::Twig,
-        SupportEntityValue::Stick(_) => {
-            crate::supports::support_kinds::SupportTypeId::Stick
-        }
-        SupportEntityValue::Brace(_) => {
-            crate::supports::support_kinds::SupportTypeId::Brace
-        }
-        SupportEntityValue::Stump(_) => {
-            crate::supports::support_kinds::SupportTypeId::Stump
-        }
+        SupportEntityValue::Stick(_) => crate::supports::support_kinds::SupportTypeId::Stick,
+        SupportEntityValue::Brace(_) => crate::supports::support_kinds::SupportTypeId::Brace,
+        SupportEntityValue::Stump(_) => crate::supports::support_kinds::SupportTypeId::Stump,
         SupportEntityValue::Kickstand(_) => {
             crate::supports::support_kinds::SupportTypeId::Kickstand
         }

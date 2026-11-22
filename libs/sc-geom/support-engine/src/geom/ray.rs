@@ -84,5 +84,4 @@ impl Ray {
         let t = e2.dot(q) * inv;
         (t >= 0.0).then(|| self.at(t))
     }
-
 }

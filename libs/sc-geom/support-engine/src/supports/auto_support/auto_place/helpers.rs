@@ -10,6 +10,9 @@ use std::collections::{HashMap, HashSet};
 use indexmap::{IndexMap, IndexSet};
 use serde::{Deserialize, Serialize};
 
+use crate::bvh::{BvhMesh, Intersection, MeshBvh, Side};
+use crate::geom::math_utils::{js_atan2, js_cos, js_hypot, js_max, js_min, js_sin};
+use crate::geom::{Matrix4, Ray};
 use crate::supports::auto_support::constants::{GRIDLESS_MERGE_RADIUS_MM, MERGE_HOST_LOAD_WEIGHT};
 use crate::supports::auto_support::parameter_sizing::SizingBands;
 use crate::supports::auto_support::types::CandidateSource;
@@ -21,7 +24,6 @@ use crate::supports::placement_logic::placement_utils::calculate_smoothed_normal
 use crate::supports::placement_logic::smart_placement_search_utils::member_departure_angle_from_vertical_deg;
 use crate::supports::placement_logic_v3::smart_placement_v3::RouterStats;
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::tips::ContactCone;
 use crate::supports::support_kinds::{
     ConeBodyFollows, SHAFT_HOSTED_MEMBER_TYPE_ORDER, SupportEntityValue, SupportOriginId,
     SupportTypeId, get_support_type_descriptor, near_plate_origin,
@@ -29,10 +31,8 @@ use crate::supports::support_kinds::{
 use crate::supports::support_types::branch::branch_builder::{
     BranchBuildInput, BranchBuildResult, build_branch_data,
 };
+use crate::supports::tips::ContactCone;
 use crate::supports::types::{Branch, Knot, Segment, SupportState, Trunk, Vec3};
-use crate::geom::math_utils::{js_atan2, js_cos, js_hypot, js_max, js_min, js_sin};
-use crate::geom::{Matrix4, Ray};
-use crate::bvh::{BvhMesh, Intersection, MeshBvh, Side};
 
 /// The model mesh as the plan reads it: DragonFruit's `THREE.Mesh`.
 #[derive(Clone, Copy, Debug)]
@@ -164,11 +164,7 @@ impl<'a> PlanCtx<'a> {
     ) -> Option<&crate::supports::auto_support::zone_rules::SupportSize> {
         self.exact_contact.get()?;
         let i = self.active_zone.get()?;
-        self.base_live
-            .auto_support
-            .zone_rules
-            .sizes
-            .get(i)
+        self.base_live.auto_support.zone_rules.sizes.get(i)
     }
 
     /// Places what follows with zone size `size` (`None`: the run's own).
@@ -196,11 +192,7 @@ impl<'a> PlanCtx<'a> {
             return None;
         }
         let i = self.active_zone.get()?;
-        self.base_live
-            .auto_support
-            .zone_rules
-            .sizes
-            .get(i)
+        self.base_live.auto_support.zone_rules.sizes.get(i)
     }
 
     /// The zone size whose tip a contact of `tip_diameter_mm` was drawn

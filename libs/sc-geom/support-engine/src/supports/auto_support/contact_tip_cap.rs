@@ -8,4 +8,3 @@
 //! feature's silhouette (`reach - d`); the sum over the two signs of the
 //! narrower axis is the span the disc has to fit inside. The SDF is the oracle
 //! the rest of placement routes against, so this queries the same field.
-

@@ -94,7 +94,6 @@ impl SizingPreset {
 #[serde(rename_all = "camelCase", default)]
 pub struct AutoSupportSettings {
     pub enabled: bool,
-    pub min_island_area_mm2: f64,
     pub tip_influence_radius_mm: f64,
     pub prioritize_intersection: bool,
     /// Max combined leaves + branches that can attach to a single trunk.
@@ -102,25 +101,12 @@ pub struct AutoSupportSettings {
     /// Projected surface area each grid support carries (mm²) — the density knob.
     /// Grid spacing = √areaPerSupportMm2.
     pub area_per_support_mm2: f64,
-    /// Overhang regions at or above this projected area (mm²) get a density
-    /// grid; smaller regions get a single support.
-    pub grid_area_threshold_mm2: f64,
     /// Surface angle from horizontal (deg) at and below which a face counts
     /// as an overhang needing supports. 0° = flat ceiling; the resin standard
     /// is 45°. Steeper faces are considered self-supporting.
     pub overhang_self_support_angle_deg: f64,
     /// Master multiplier over the preset sizing bands (shaft/tip/root).
     pub size_scale: f64,
-    /// Grid spacing multiplier on flat ceilings (0°) — the densest case.
-    pub flat_density_boost: f64,
-    /// Grid spacing multiplier at the self-support angle — the sparsest case.
-    pub slope_relax_factor: f64,
-    /// Area-scaling exponent for flat-region density: spacing ∝ (threshold/area)^exp
-    /// on the flat end. 0 disables area scaling.
-    pub suction_area_exponent: f64,
-    /// Percentage of each region's projected footprint the auto grid must
-    /// cover before gap-fill stops (75–100).
-    pub coverage_target_percent: f64,
     /// The Support Studio preset whose tip, shaft and roots numbers size this run.
     /// An open id — the three factory presets plus any preset the user made — and a
     /// value that no longer resolves (a deleted preset) falls back to the factory
@@ -130,18 +116,7 @@ pub struct AutoSupportSettings {
     pub leaf_fan_radius_mm: f64,
     /// Leaf fanning: max angle from vertical for a fan leaf (deg).
     pub leaf_fan_max_angle_deg: f64,
-    /// Debug: color supports by placement origin in the scene instead of the model color.
-    pub debug_support_origin_colors: bool,
     pub debug_skip_auto_bracing: bool,
-    /// Add stabilization anchors for poses bearing on a point/edge (default on).
-    pub stabilization_enabled: bool,
-    /// Ring mesh minima (the first point of a section) with reinforcement
-    /// contacts on their own flank (default on).
-    pub minima_reinforcement_enabled: bool,
-    /// Fraction of the local free width a contact tip may occupy so the
-    /// rendered disc fits the feature it lands on. **Calibration, not a
-    /// preference** (0.9 measured). Read by `applyContactTipCap`.
-    pub tip_contact_margin_scale: f64,
     /// Least shaft diameter a hosted member takes, as a fraction of the host
     /// shaft it sprouts from. **Calibration, not a preference** (0.7 measured).
     /// Read by `memberShaftDiameterMm`.
@@ -153,8 +128,6 @@ pub struct AutoSupportSettings {
     pub model_size_factor_cap: f64,
     /// Ceiling of the run-level load factor. **Calibration, not a preference.**
     pub model_load_factor_cap: f64,
-    /// Ceiling of the height factor. **Calibration, not a preference.**
-    pub height_factor_cap: f64,
     /// The zone rules (#360): the run picks every support's size and
     /// spacing by zone and draws each size exactly (no model scaling, no
     /// tip floor). Miniatures' unless a preset says otherwise.
@@ -209,31 +182,20 @@ pub fn create_default_auto_support_settings() -> AutoSupportSettings {
     use auto_support_constraints as c;
     AutoSupportSettings {
         enabled: true,
-        min_island_area_mm2: c::MIN_ISLAND_AREA_MM2.default_value,
         tip_influence_radius_mm: c::TIP_INFLUENCE_RADIUS_MM.default_value,
         prioritize_intersection: false,
         max_attachments_per_trunk: c::MAX_ATTACHMENTS_PER_TRUNK.default_value,
         area_per_support_mm2: c::AREA_PER_SUPPORT_MM2.default_value,
-        grid_area_threshold_mm2: c::GRID_AREA_THRESHOLD_MM2.default_value,
         overhang_self_support_angle_deg: c::OVERHANG_SELF_SUPPORT_ANGLE_DEG.default_value,
         size_scale: c::SIZE_SCALE.default_value,
-        flat_density_boost: c::FLAT_DENSITY_BOOST.default_value,
-        slope_relax_factor: c::SLOPE_RELAX_FACTOR.default_value,
-        suction_area_exponent: c::SUCTION_AREA_EXPONENT.default_value,
-        coverage_target_percent: c::COVERAGE_TARGET_PERCENT.default_value,
         sizing_preset: SizingPreset::Structure.as_str().to_owned(),
         leaf_fan_radius_mm: c::LEAF_FAN_RADIUS_MM.default_value,
         leaf_fan_max_angle_deg: c::LEAF_FAN_MAX_ANGLE_DEG.default_value,
-        tip_contact_margin_scale: c::TIP_CONTACT_MARGIN_SCALE.default_value,
         member_host_shaft_ratio: c::MEMBER_HOST_SHAFT_RATIO.default_value,
         model_scale_enabled: true,
         model_size_factor_cap: c::MODEL_SIZE_FACTOR_CAP.default_value,
         model_load_factor_cap: c::MODEL_LOAD_FACTOR_CAP.default_value,
-        height_factor_cap: c::HEIGHT_FACTOR_CAP.default_value,
-        debug_support_origin_colors: false,
         debug_skip_auto_bracing: false,
-        stabilization_enabled: true,
-        minima_reinforcement_enabled: true,
         zone_rules: super::presets::minis_30().rules,
     }
 }
@@ -260,7 +222,6 @@ pub fn normalize_auto_support_settings(source: &AutoSupportSettings) -> AutoSupp
     let clamp = |value: f64, constraint: NumericConstraint| clamp_numeric(Some(value), constraint);
     AutoSupportSettings {
         enabled: source.enabled,
-        min_island_area_mm2: clamp(source.min_island_area_mm2, c::MIN_ISLAND_AREA_MM2),
         tip_influence_radius_mm: clamp(source.tip_influence_radius_mm, c::TIP_INFLUENCE_RADIUS_MM),
         prioritize_intersection: source.prioritize_intersection,
         max_attachments_per_trunk: clamp(
@@ -268,32 +229,19 @@ pub fn normalize_auto_support_settings(source: &AutoSupportSettings) -> AutoSupp
             c::MAX_ATTACHMENTS_PER_TRUNK,
         ),
         area_per_support_mm2: clamp(source.area_per_support_mm2, c::AREA_PER_SUPPORT_MM2),
-        grid_area_threshold_mm2: clamp(source.grid_area_threshold_mm2, c::GRID_AREA_THRESHOLD_MM2),
         overhang_self_support_angle_deg: clamp(
             source.overhang_self_support_angle_deg,
             c::OVERHANG_SELF_SUPPORT_ANGLE_DEG,
         ),
         size_scale: clamp(source.size_scale, c::SIZE_SCALE),
-        flat_density_boost: clamp(source.flat_density_boost, c::FLAT_DENSITY_BOOST),
-        slope_relax_factor: clamp(source.slope_relax_factor, c::SLOPE_RELAX_FACTOR),
-        suction_area_exponent: clamp(source.suction_area_exponent, c::SUCTION_AREA_EXPONENT),
-        coverage_target_percent: clamp(source.coverage_target_percent, c::COVERAGE_TARGET_PERCENT),
         sizing_preset: normalize_sizing_preset(&source.sizing_preset, &defaults.sizing_preset),
         leaf_fan_radius_mm: clamp(source.leaf_fan_radius_mm, c::LEAF_FAN_RADIUS_MM),
         leaf_fan_max_angle_deg: clamp(source.leaf_fan_max_angle_deg, c::LEAF_FAN_MAX_ANGLE_DEG),
-        tip_contact_margin_scale: clamp(
-            source.tip_contact_margin_scale,
-            c::TIP_CONTACT_MARGIN_SCALE,
-        ),
         member_host_shaft_ratio: clamp(source.member_host_shaft_ratio, c::MEMBER_HOST_SHAFT_RATIO),
         model_scale_enabled: source.model_scale_enabled,
         model_size_factor_cap: clamp(source.model_size_factor_cap, c::MODEL_SIZE_FACTOR_CAP),
         model_load_factor_cap: clamp(source.model_load_factor_cap, c::MODEL_LOAD_FACTOR_CAP),
-        height_factor_cap: clamp(source.height_factor_cap, c::HEIGHT_FACTOR_CAP),
-        debug_support_origin_colors: source.debug_support_origin_colors,
         debug_skip_auto_bracing: source.debug_skip_auto_bracing,
-        stabilization_enabled: source.stabilization_enabled,
-        minima_reinforcement_enabled: source.minima_reinforcement_enabled,
         zone_rules: source.zone_rules.clamped(),
     }
 }

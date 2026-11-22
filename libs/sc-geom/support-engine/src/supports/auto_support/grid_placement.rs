@@ -9,9 +9,9 @@
 use std::collections::{HashMap, HashSet};
 
 use super::types::js_compare;
+use crate::bvh::{BvhMesh, Side};
 use crate::geom::math_utils::{js_atan2, js_max, js_round};
 use crate::geom::{Matrix3, Ray, Vec3};
-use crate::bvh::{BvhMesh, Side};
 use crate::volume_analysis::islands::types::DetectedIsland;
 use crate::volume_analysis::islands::voxel_footprint::{FootprintPoint, cell_key_bits};
 

@@ -32,12 +32,12 @@ use crate::features::slicing::support_world_triangles::{
 use crate::geom::buffer_geometry::BufferGeometry;
 use crate::geom::{Matrix4, Vec3};
 use crate::native::islands::body::IslandBodyScan;
-use crate::native::welded::WeldedMesh;
 use crate::native::mesh_minima::{CombinedIslandScanResult, scan_islands_with_bodies};
 use crate::native::overhang::{
     OVERHANG_WELD_EPSILON, OverhangScan, classify_overhangs, overhang_and_stability,
     overhang_and_stability_from_soup,
 };
+use crate::native::welded::WeldedMesh;
 use crate::perf::{self, PerfFrame};
 use crate::supports::auto_bracing::mesh_clearance::{BraceMesh, BraceMeshes};
 use crate::supports::auto_support::auto_place::helpers::{PlanCtx, PlanMesh};
@@ -699,8 +699,7 @@ fn run_pipeline(
             )
         })
         .collect();
-    let bands =
-        SizingBands::factory().with_zone_sizes(&settings.supports.auto_support.zone_rules);
+    let bands = SizingBands::factory().with_zone_sizes(&settings.supports.auto_support.zone_rules);
     let angle = scan_angle(settings);
 
     let mut current = state.clone();

@@ -4,8 +4,8 @@
 use std::collections::HashMap;
 
 use super::constants::influence_radius_mm;
-use crate::supports::types::Vec3;
 use crate::geom::math_utils::js_max;
+use crate::supports::types::Vec3;
 use crate::volume_analysis::islands::types::DetectedIsland;
 use crate::volume_analysis::islands::voxel_footprint::cell_key_bits;
 

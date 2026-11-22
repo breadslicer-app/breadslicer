@@ -396,6 +396,23 @@ fn state_digest(c: &SupportCollections) -> u64 {
     h.0
 }
 
+/// How many edges of the support meshes are not shared by exactly two
+/// triangles: a mesh the slicer takes has none.
+fn open_edges(outcome: &SupportOutcome) -> usize {
+    let mut open = 0;
+    for mesh in outcome.sets.iter().filter_map(|s| s.mesh.as_ref()) {
+        let mut edges: HashMap<(u32, u32), u32> = HashMap::new();
+        for f in mesh.faces() {
+            let v = f.vertices.map(u32::from);
+            for (a, b) in [(v[0], v[1]), (v[1], v[2]), (v[2], v[0])] {
+                *edges.entry((a.min(b), a.max(b))).or_default() += 1;
+            }
+        }
+        open += edges.values().filter(|&&n| n != 2).count();
+    }
+    open
+}
+
 /// The digest of the support meshes, vertex bits and faces in order.
 fn mesh_digest(outcome: &SupportOutcome) -> u64 {
     let mut h = Fnv::new();
@@ -1787,7 +1804,11 @@ fn run_scene(
             .expect("start the support run")
             .join()
             .expect("the support run");
-        eprintln!("job {:.0} ms", ms(t.elapsed()));
+        eprintln!(
+            "job {:.0} ms, open edges {}",
+            ms(t.elapsed()),
+            open_edges(&outcome)
+        );
         outcomes.push((ms(t.elapsed()), outcome));
     }
     // What the job alone takes: whoever ran this reads the process's peak.
