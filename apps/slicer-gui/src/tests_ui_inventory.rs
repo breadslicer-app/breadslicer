@@ -459,6 +459,80 @@ fn the_pictures_of_the_review_are_written_when_asked() {
     }
 }
 
+/// The FORCES card over the view (#245), beside the review, its force
+/// coloured by load and a picked support's line over it, in English and
+/// Spanish.
+#[test]
+fn the_pictures_of_the_forces_card_are_written_when_asked() {
+    let Some(dir) = std::env::var_os(SHOTS_ENV).map(std::path::PathBuf::from) else {
+        return;
+    };
+    std::fs::create_dir_all(&dir).expect("the folder is made");
+    for language in ["en", "es"] {
+        let dir = dir.clone();
+        on_fresh_slint_thread(move || {
+            let window = MainWindow::new().expect("a main window");
+            slint::select_bundled_translation(language).expect("bundled language");
+            window.show().expect("the window shows");
+            window
+                .window()
+                .set_size(slint::LogicalSize::new(1600.0, 1000.0));
+            window.set_has_scene(true);
+            window.set_workspace_section(WorkspaceSection::Slice);
+            window.set_slice_layer_count(800);
+            window.set_selected_layer_index(310.0);
+            window.set_review_state(1);
+            window.set_review_summary("1 warning".into());
+            // A mini's force: the base on the plate, then the figure on its
+            // tips, loaded hardest where its arms start.
+            let layers = 800;
+            let force: Vec<f64> = (0..layers)
+                .map(|l| {
+                    let l = l as f64;
+                    if l < 60.0 {
+                        40.0
+                    } else {
+                        6.0 + 10.0 * ((l - 60.0) / 140.0).sin().abs() + l / 80.0
+                    }
+                })
+                .collect();
+            let share: Vec<f64> = (0..layers)
+                .map(|l| {
+                    if l < 60 {
+                        0.0
+                    } else {
+                        (l as f64 / 420.0).min(1.2)
+                            * if (300..340).contains(&l) { 1.4 } else { 0.7 }
+                    }
+                })
+                .collect();
+            window.set_slice_timeline_valid(true);
+            window.set_slice_timeline_force(crate::layer_timeline::chart_path(&force).into());
+            window.set_slice_timeline_force_image(slint::Image::from_rgba8(
+                crate::stress_view::chart_pixels(&force, &share),
+            ));
+            window.set_slice_timeline_has_image(true);
+            window.set_slice_timeline_supports_caption("Supports: pull as layer 31 peels".into());
+            window.set_slice_timeline_peak("Hardest peel: layer 31 · 40.0 N".into());
+            let mut path = String::from("M 0 100");
+            for p in 0..=100 {
+                let x = 75.0 + p as f64 * 9.0;
+                let y = 100.0 - 60.0 * (p as f64 / 30.0).min(1.0) * if p > 50 { 0.6 } else { 1.0 };
+                path.push_str(&format!(" L {x:.1} {y:.1}"));
+            }
+            window.set_slice_timeline_support_path(path.into());
+            window.set_slice_timeline_holds_at(0.0);
+            window.set_slice_timeline_support_note(
+                "Picked support: hardest pull 0.21 N on layer 412, 64 % of what its tip holds."
+                    .into(),
+            );
+            write(window.window(), &dir, &format!("{language}-forces"));
+            window.set_stress_open(false);
+            write(window.window(), &dir, &format!("{language}-forces-folded"));
+        });
+    }
+}
+
 /// Pictures of the Send to printer card with a printer of the user's own
 /// (#631): folded to its line, open, warning about another profile, and at
 /// the name before sending, in English and Spanish.

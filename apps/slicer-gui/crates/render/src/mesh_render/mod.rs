@@ -29,6 +29,7 @@ pub mod mock;
 mod overhang_map;
 mod overlay;
 mod smooth_shading;
+mod stress_paint;
 mod support_lines;
 mod surface_normals;
 mod surface_paint;
@@ -91,6 +92,7 @@ use scene_upload::{
     MODEL_ENTRY_SIZE, WorldBoxes, build_model_entries_on, build_plate_warning_masks,
     renderable_leaf_count,
 };
+pub use stress_paint::{LOAD_LEVELS, STRESS_BANDS, StressBands, StressPaint, load_tint};
 pub use support_lines::SupportLines;
 pub use surface_paint::{BrushRing, PaintLayer};
 use targets::{MsaaTargets, TargetPool};
@@ -143,6 +145,8 @@ struct FrameLook {
     /// picked in Scene settings (#137): 0 drawn whole, 1 gone for their
     /// lines, between translucent.
     support_view_fade: f32,
+    /// The stress view paints the models (#245).
+    stress: bool,
 }
 
 const TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -408,6 +412,10 @@ pub struct Renderer {
     /// The marks last handed to [`Self::set_hint_marks`], split between
     /// `hints` and `island_marks`.
     hint_source: Option<Overlay>,
+    /// The stress view (#245): the models' bands, and each support drawn
+    /// over itself in its colour.
+    stress_bands: Option<std::sync::Arc<StressBands>>,
+    stress_marks: overlay::OverlaySlot,
     surface_paint: surface_paint::PaintSlot,
     /// The overhang map over the models of a workspace frame, when on.
     overhang_map: Option<OverhangMap>,
@@ -528,6 +536,8 @@ impl Renderer {
             island_marks: overlay::OverlaySlot::default(),
             island_hidden: overlay::OverlaySlot::default(),
             hint_source: None,
+            stress_bands: None,
+            stress_marks: overlay::OverlaySlot::default(),
             surface_paint: surface_paint::PaintSlot::default(),
             overhang_map: None,
             support_tips: Vec::new(),
@@ -1038,6 +1048,7 @@ impl Renderer {
                 supports_shown_up_to_mm: self.supports_shown_up_to_mm,
                 supports_hidden: self.supports_hidden,
                 support_view_fade: self.support_view_fade,
+                stress: self.stress_bands.is_some(),
             },
         )
     }
@@ -1279,6 +1290,7 @@ impl Renderer {
                 supports_shown_up_to_mm: f32::MAX,
                 supports_hidden: false,
                 support_view_fade: 0.0,
+                stress: false,
             },
         )
     }
@@ -1341,6 +1353,7 @@ impl Renderer {
             supports_shown_up_to_mm,
             supports_hidden,
             support_view_fade,
+            stress,
         } = look;
         let tip_cell_mm = self.tip_cell_mm;
         if self.core.device_loss.is_lost() {
@@ -1392,7 +1405,32 @@ impl Renderer {
                 &mut self.world_boxes,
                 overhang_map.is_some(),
             ) {
-                Ok(entries) if entries.len() == inst.gpu.object_count() => {
+                Ok(mut entries) if entries.len() == inst.gpu.object_count() => {
+                    if stress {
+                        // The models of the plate sliced alone (#245).
+                        let only = self
+                            .stress_bands
+                            .as_ref()
+                            .and_then(|bands| bands.plate)
+                            .filter(|_| self.plates.count() > 1);
+                        for (index, entry) in entries.iter_mut().enumerate() {
+                            if let Some(plate) = only {
+                                let on = self.world_boxes.box_at(index).and_then(|aabb| {
+                                    let (min, max) = (aabb.min().coords(), aabb.max().coords());
+                                    crate::plates::cell_at(
+                                        &build_volume,
+                                        self.plates,
+                                        (min[0] + max[0]) / 2.0,
+                                        (min[1] + max[1]) / 2.0,
+                                    )
+                                });
+                                if on != Some(plate) {
+                                    continue;
+                                }
+                            }
+                            entry.paint_stress();
+                        }
+                    }
                     // Each entry lives at `i * model_stride`. The stride is at
                     // least `MODEL_ENTRY_SIZE` and a multiple of the device's
                     // uniform offset alignment (typically 256 bytes), so
@@ -1524,6 +1562,14 @@ impl Renderer {
                     self.plates.count() as f32,
                     self.plates.active() as f32,
                 ]
+            },
+            stress_range: match (&self.stress_bands, stress) {
+                (Some(bands), true) => bands.range(),
+                _ => [0.0; 4],
+            },
+            stress: match (&self.stress_bands, stress) {
+                (Some(bands), true) => bands.packed(),
+                _ => [[0.0; 4]; STRESS_BANDS / 4],
             },
         };
         self.core.queue.write_buffer(
@@ -1662,6 +1708,13 @@ impl Renderer {
                     &self.pipelines.mesh.hint_pipeline,
                     &self.pipelines.mesh.uniforms_bind_group,
                 );
+                if stress {
+                    self.stress_marks.record(
+                        &mut pass,
+                        &self.pipelines.mesh.hint_pipeline,
+                        &self.pipelines.mesh.uniforms_bind_group,
+                    );
+                }
                 self.overlay.record(
                     &mut pass,
                     &self.pipelines.mesh.overlay_pipeline,

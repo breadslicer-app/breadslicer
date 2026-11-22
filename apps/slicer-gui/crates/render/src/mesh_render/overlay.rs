@@ -54,6 +54,32 @@ pub enum OverlayTint {
     Measure = 13,
     /// Supports the Select tool picked (#567): the selection's amber.
     Picked = 14,
+    /// A support painted by the load on its tip (#245), in one of eight
+    /// steps from green (little) through yellow to red (all it holds).
+    Load0 = 15,
+    Load1 = 16,
+    Load2 = 17,
+    Load3 = 18,
+    Load4 = 19,
+    Load5 = 20,
+    Load6 = 21,
+    Load7 = 22,
+}
+
+impl OverlayTint {
+    /// The load colour of step `level` (0 to 7, more clamped to 7).
+    pub fn load(level: u32) -> Self {
+        match level {
+            0 => Self::Load0,
+            1 => Self::Load1,
+            2 => Self::Load2,
+            3 => Self::Load3,
+            4 => Self::Load4,
+            5 => Self::Load5,
+            6 => Self::Load6,
+            _ => Self::Load7,
+        }
+    }
 }
 
 /// The overlay as a whole: its pieces, each shared so a piece that did not

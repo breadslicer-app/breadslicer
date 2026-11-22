@@ -35,6 +35,12 @@ struct Uniforms {
     // The plates (#545): xy = how far apart they stand, z = how many,
     // w = the active one.
     plates: vec4<f32>,
+    // The stress view (#245): x the bottom and y the top of its bands, mm,
+    // z 1 while it paints.
+    stress_range: vec4<f32>,
+    // Its bands, four to a lane: the share of what the most loaded tip on
+    // each height holds.
+    stress: array<vec4<f32>, 128>,
 };
 
 struct ModelEntry {
@@ -152,7 +158,45 @@ fn placed(position: vec3<f32>, normal: vec3<f32>) -> VsOut {
     // bends it slightly; the shading tolerates that.
     out.normal = (model_entry.model * vec4<f32>(normal, 0.0)).xyz;
     out.surface = vec4<f32>(0.0);
+    // A support painted by its load (#245) lies on the support itself: a
+    // hair toward the eye, so it wins the depth it shares.
+    if (model_entry.flags.z >= LOAD_FIRST && model_entry.flags.z <= LOAD_LAST) {
+        out.clip_pos.z = out.clip_pos.z - 2e-5 * out.clip_pos.w;
+    }
     return out;
+}
+
+// The stress view (#245). `MODEL_STRESS` is `flags.z` of a model it paints;
+// the supports' overlay tints run from `LOAD_FIRST` to `LOAD_LAST`.
+const MODEL_STRESS: u32 = 23u;
+const LOAD_FIRST: u32 = 15u;
+const LOAD_LAST: u32 = 22u;
+const STRESS_LOW: vec3<f32> = vec3<f32>(0.30, 0.78, 0.46);
+const STRESS_MID: vec3<f32> = vec3<f32>(0.96, 0.84, 0.30);
+const STRESS_HIGH: vec3<f32> = vec3<f32>(0.93, 0.24, 0.22);
+const STRESS_STRENGTH: f32 = 0.88;
+
+// The colour of a share of what a tip holds: green, yellow at half, red at
+// all of it and past.
+fn stress_color(share: f32) -> vec3<f32> {
+    let s = clamp(share, 0.0, 1.0);
+    if (s < 0.5) {
+        return mix(STRESS_LOW, STRESS_MID, s * 2.0);
+    }
+    return mix(STRESS_MID, STRESS_HIGH, (s - 0.5) * 2.0);
+}
+
+// `base` with the stress view over it at height `z`: plain where the plate
+// holds it.
+fn stress_paint(base: vec3<f32>, z: f32) -> vec3<f32> {
+    let span = max(u.stress_range.y - u.stress_range.x, 1e-3);
+    let at = clamp((z - u.stress_range.x) / span, 0.0, 0.999999);
+    let band = u32(at * 512.0);
+    let share = u.stress[band / 4u][band % 4u];
+    if (share <= 0.0) {
+        return base;
+    }
+    return mix(base, stress_color(share), STRESS_STRENGTH);
 }
 
 // Build-envelope warning palette, in the theme's highlight, the amber
@@ -342,6 +386,9 @@ fn surface_color(
         let map_n = select(-flat_n, normalize(surface.xyz), reads_surface);
         washed = overhang_paint(washed, map_n, world_pos);
     }
+    if (tint == MODEL_STRESS) {
+        washed = stress_paint(washed, world_pos.z);
+    }
     // Componentwise envelope test: a fragment outside on any axis of the
     // plate under it (#545) is painted in the full warning amber instead of
     // the wash.
@@ -512,6 +559,10 @@ fn fs_overlay(in: VsOut) -> @location(0) vec4<f32> {
     } else if (in.tint == 12u) {
         // The island the camera went to (#538, #542): a lighter magenta.
         color = vec4<f32>(1.00, 0.62, 0.98, 0.95);
+    } else if (in.tint >= LOAD_FIRST && in.tint <= LOAD_LAST) {
+        // A support by the load on its tip (#245).
+        let share = f32(in.tint - LOAD_FIRST) / f32(LOAD_LAST - LOAD_FIRST);
+        color = vec4<f32>(stress_color(share), 0.92);
     }
     return vec4<f32>(color.rgb * intensity, color.a);
 }

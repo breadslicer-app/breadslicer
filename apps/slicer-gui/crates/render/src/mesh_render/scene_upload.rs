@@ -71,6 +71,20 @@ pub(super) const MODEL_ENTRY_SIZE: u64 = size_of::<ModelEntry>() as u64;
 /// every vertex hands the rasteriser.
 const MODEL_OVERHANG_MAP: u32 = 6;
 
+/// `flags.z` of a model the stress view paints (#245), in place of the
+/// overhang map.
+const MODEL_STRESS: u32 = 23;
+
+impl ModelEntry {
+    /// Paints a model by load (#245); a support mesh is left as it is: its
+    /// own paint is drawn over it.
+    pub(super) fn paint_stress(&mut self) {
+        if !self.is_supports() {
+            self.flags[2] = MODEL_STRESS;
+        }
+    }
+}
+
 impl ModelEntry {
     /// A preview overlay piece: world coordinates already, so the identity
     /// transform, and its tint in `flags.z`.
@@ -865,6 +879,12 @@ impl WorldBoxes {
     /// `index`-th leaf occurrence. On a miss it comes from the hull points of
     /// `shared` (the `Arc` holding `mesh`) when they are ready and vouch for
     /// the matrix, and from a walk over every vertex otherwise.
+    /// The box remembered for leaf occurrence `index`, as the last frame
+    /// drew it.
+    pub(super) fn box_at(&self, index: usize) -> Option<&Aabb> {
+        self.slots.get(index)?.as_ref().map(|slot| &slot.aabb)
+    }
+
     fn world_box(
         &mut self,
         index: usize,

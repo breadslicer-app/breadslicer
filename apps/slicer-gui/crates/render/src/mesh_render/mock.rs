@@ -105,6 +105,8 @@ pub struct MockRendererState {
     /// What the last `set_hidden_nodes` asked for (#16).
     pub hidden_nodes: Vec<NodeId>,
     pub support_lines: Option<std::sync::Arc<super::SupportLines>>,
+    /// What the last `set_stress` asked for (#245).
+    pub stress: Option<super::StressPaint>,
 }
 
 impl MockRendererState {
@@ -128,6 +130,7 @@ impl MockRendererState {
             supports_hidden: false,
             hidden_nodes: Vec::new(),
             support_lines: None,
+            stress: None,
         }))
     }
 }
@@ -149,6 +152,10 @@ impl MockRenderer {
 impl MeshRenderer for MockRenderer {
     fn set_overhang_map(&mut self, map: Option<super::OverhangMap>) {
         self.state.borrow_mut().overhang_map = map;
+    }
+
+    fn set_stress(&mut self, stress: Option<&super::StressPaint>) {
+        self.state.borrow_mut().stress = stress.cloned();
     }
 
     fn set_support_tips(&mut self, tips: &[super::SupportTip]) {

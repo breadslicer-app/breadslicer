@@ -179,6 +179,9 @@ struct Prescan {
     run_waiting: bool,
 }
 
+/// Told the picked supports, their sets' leaves and tips (#245).
+type ChosenListener = Rc<dyn Fn(Vec<(NodeId, [f64; 3])>)>;
+
 pub(crate) struct SupportRun {
     ui: slint::Weak<MainWindow>,
     bus: Rc<PreferencesBus>,
@@ -258,6 +261,9 @@ pub(crate) struct SupportRun {
     /// where its tip touches the model, which a redraw keeps.
     chosen: RefCell<Vec<(NodeId, [f64; 3])>>,
     chosen_events: RefCell<Option<SceneSubscription>>,
+    /// Told the picked supports each time they are shown, none while the
+    /// Select tool is off: the FORCES card draws their load (#245).
+    chosen_listeners: RefCell<Vec<ChosenListener>>,
     /// The empty set a model with none would start, kept while the scene
     /// and the options stay as they were: Add previews on it before the
     /// first click (#564: a model with no supports showed no preview).
@@ -2143,6 +2149,7 @@ impl SupportRun {
             picked: Cell::new(None),
             chosen: RefCell::new(Vec::new()),
             chosen_events: RefCell::new(None),
+            chosen_listeners: RefCell::new(Vec::new()),
             part_focus: RefCell::new(None),
             part_hover: Cell::new(None),
             part_arrow: Cell::new(None),
@@ -5885,9 +5892,24 @@ impl SupportRun {
         (!shapes.is_empty()).then_some(shapes)
     }
 
+    /// Calls `listener` with the picked supports each time they are shown
+    /// (#245).
+    pub(crate) fn on_chosen(&self, listener: impl Fn(Vec<(NodeId, [f64; 3])>) + 'static) {
+        self.chosen_listeners.borrow_mut().push(Rc::new(listener));
+    }
+
     /// Shows the picked supports in the scene (amber), how many there are,
     /// and their numbers in the panel.
     fn show_chosen(&self, ui: &MainWindow) {
+        let picked = if ui.get_support_tool() == 5 {
+            self.chosen.borrow().clone()
+        } else {
+            Vec::new()
+        };
+        let listeners: Vec<_> = self.chosen_listeners.borrow().clone();
+        for listener in listeners {
+            listener(picked.clone());
+        }
         if ui.get_support_tool() != 5 {
             return;
         }
@@ -8932,7 +8954,7 @@ const SHAFT_PICK_MM: f64 = 1.5;
 /// The support a click of the Select tool at `p` (world mm) picks (#377):
 /// the one whose own shaft passes nearest, trunk, branch or tip; else the
 /// one with a tip, joint or foot nearest, within reach.
-fn support_picked_at(session: &SupportSession, p: [f64; 3]) -> Option<String> {
+pub(crate) fn support_picked_at(session: &SupportSession, p: [f64; 3]) -> Option<String> {
     session
         .shaft_near(p, SHAFT_PICK_MM)
         .or_else(|| session.support_near(p, SELECT_REACH_MM))
@@ -11336,6 +11358,72 @@ mod hand_edit_tests {
                 translation([20.0, 20.0, 8.0])
             );
             assert_eq!(run.sets_in_force().len(), 2, "the old sets, in force");
+        });
+    }
+
+    /// #245: each tip the review loads finds its support again through the
+    /// slice's frame, and the supports a peel pulls on are drawn over
+    /// themselves in the colour of their load; a support no peel reaches is
+    /// left plain.
+    #[test]
+    fn a_tip_s_load_paints_its_own_support() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (_document, run, _leaves) =
+                supported(&window, &[[20.0, 20.0, 8.0], [50.0, 20.0, 8.0]]);
+            let sets = run.sets_in_force();
+            assert_eq!(sets.len(), 2);
+            let frame = sc_print_glue::PlateFrame::default();
+            // Every tip of both sets, with its set and support.
+            let tips: Vec<(usize, String, [f64; 3])> = sets
+                .iter()
+                .enumerate()
+                .flat_map(|(set, drawn)| {
+                    drawn.session.pieces().into_iter().filter_map(move |piece| {
+                        piece.contacts.first().map(|c| (set, piece.id.clone(), c.tip))
+                    })
+                })
+                .collect();
+            assert!(tips.len() >= 2, "each cube stands on a tip: {}", tips.len());
+            let mut loads = bread_review::PlateLoads::default();
+            for (k, (set, _, at)) in tips.iter().enumerate() {
+                loads.tips.push(bread_review::TipLoad {
+                    at_mm: frame.point_mm(sets[*set].leaf, *at),
+                    radius_mm: 0.1,
+                    layer: 10,
+                    worst_n: if k == 0 { 2.0 } else { 0.0 },
+                    worst_layer: 10,
+                    capacity_n: bread_peel::Band::new(1.0, 1.0, 1.0),
+                });
+            }
+            let owners = crate::stress_view::tip_owners(&loads, &frame, &sets);
+            for (owner, (set, id, _)) in owners.iter().zip(&tips) {
+                assert_eq!(owner.as_ref(), Some(&(*set, id.clone())));
+            }
+            let shares = crate::stress_view::support_shares(&loads, &owners, sets.len(), None);
+            assert_eq!(shares[tips[0].0], vec![(tips[0].1.clone(), 2.0)]);
+            let others: usize = shares.iter().map(Vec::len).sum();
+            assert_eq!(others, 1, "the tips no peel reaches stay plain");
+            let overlay = crate::stress_view::support_overlay(&sets, &shares);
+            assert_eq!(overlay.len(), 1, "one support pulled on, one colour");
+            assert_eq!(overlay[0].tint, OverlayTint::Load7, "past all it holds: red");
+            assert!(!overlay[0].indices.is_empty());
+
+            // As layer 1 peels, the second tip alone is pulled, on half of
+            // what it holds; the first, the hardest over the print, not.
+            loads.curve_layers = 1;
+            loads.tip_curves = vec![Vec::new(); loads.tips.len()];
+            loads.tip_curves[1] = vec![0.0, 0.5, 0.0];
+            let at = crate::stress_view::support_shares(&loads, &owners, sets.len(), Some(1));
+            assert_eq!(at[tips[1].0], vec![(tips[1].1.clone(), 0.5)]);
+            assert_eq!(at.iter().map(Vec::len).sum::<usize>(), 1);
+            let overlay = crate::stress_view::support_overlay(&sets, &at);
+            assert_eq!(overlay[0].tint, crate::mesh_render::load_tint(0.5));
+
+            // A click on a tip in the Slice tab picks its support.
+            let (set, id, at) = &tips[1];
+            let picked = support_picked_at(&sets[*set].session, *at).expect("its support");
+            assert_eq!(&picked, id);
         });
     }
 

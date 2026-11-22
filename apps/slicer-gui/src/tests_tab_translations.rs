@@ -890,6 +890,10 @@ const DIALOG_SLINT: &[(&str, &str)] = &[
         "layer-timeline.slint",
         include_str!("../ui/workspace/layer-timeline.slint"),
     ),
+    (
+        "stress-card.slint",
+        include_str!("../ui/workspace/stress-card.slint"),
+    ),
 ];
 
 /// Every Rust file with texts: the dialogs, the messages and the rest (#48).
@@ -928,6 +932,7 @@ const DIALOG_SOURCES: &[(&str, &str)] = &[
     ("language.rs", include_str!("language.rs")),
     ("layer_pixels.rs", include_str!("layer_pixels.rs")),
     ("layer_timeline.rs", include_str!("layer_timeline.rs")),
+    ("stress_view.rs", include_str!("stress_view.rs")),
     ("lib.rs", include_str!("lib.rs")),
     ("mesh_check.rs", include_str!("mesh_check.rs")),
     ("mesh_loader.rs", include_str!("mesh_loader.rs")),

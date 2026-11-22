@@ -69,7 +69,7 @@ use crate::repair_report::object_names_by_leaf;
 use crate::repair_run::RepairRun;
 use crate::review::{ReviewOutcome, SupportSet, erased_stack, review_slices_deleting};
 use crate::review_panel::ReviewPanel;
-use crate::scene_document::{SceneDocument, SceneEvent};
+use crate::scene_document::{SceneDocument, SceneEvent, SceneRevision};
 use crate::slice_projection::{SliceFailure, current_layer_values, load_selected_profiles};
 use crate::slice_result::{
     LayerValues, ReSliceDecision, SliceParams, SliceResult, decide_re_slice, layers_changed,
@@ -82,6 +82,15 @@ const PROGRESS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// How long the "already up to date" hint stays up after an unchanged Slice
 /// press before it fades back out.
 const UP_TO_DATE_HINT_DURATION: Duration = Duration::from_secs(10);
+
+/// How often the Supports tab looks whether its forces need measuring again
+/// (#245).
+const FORCES_POLL: Duration = Duration::from_millis(400);
+
+/// How long the scene stands still in the Supports tab before its forces are
+/// measured on their own (#245): a hand edit after another does not slice
+/// in between.
+const FORCES_SETTLE: Duration = Duration::from_millis(1500);
 
 /// Shared completed/total layer counters: the worker writes them, the UI polls
 /// them into the modal. Both count plate layers, not the engine's layer-slices
@@ -156,6 +165,9 @@ enum SliceTrigger {
     IslandsRepaired,
     /// Export every plate, slicing each in turn (#549).
     EveryPlate,
+    /// The forces of the Supports tab, measured on their own once the scene
+    /// stands still (#245): quiet, and given way to any other slice.
+    Forces,
 }
 
 impl SliceTrigger {
@@ -164,7 +176,12 @@ impl SliceTrigger {
     fn asked_for(self) -> bool {
         matches!(
             self,
-            Self::FixAll | Self::Repair | Self::Islands | Self::IslandsRepaired | Self::EveryPlate
+            Self::FixAll
+                | Self::Repair
+                | Self::Islands
+                | Self::IslandsRepaired
+                | Self::EveryPlate
+                | Self::Forces
         )
     }
 
@@ -234,6 +251,18 @@ pub(crate) struct SliceRun {
     // delay. Restarted on each unchanged press so repeated presses keep it
     // visible; stopped when a real slice starts.
     tooltip_timer: Rc<slint::Timer>,
+    // Looks whether the Supports tab's forces need measuring (#245).
+    forces_timer: slint::Timer,
+    // The scene and plate the Supports tab has stood still on, since when.
+    forces_still: Cell<Option<(SceneRevision, u32, std::time::Instant)>>,
+    // The scene and plate last measured on their own: a slice that fails is
+    // not tried again on the same scene.
+    forces_tried: Cell<Option<(SceneRevision, u32)>>,
+    // The scene the quiet slice in flight was cut from.
+    forces_launched: Cell<Option<SceneRevision>>,
+    // A slice asked for while the quiet one ran (#245): it is cancelled and
+    // this one starts once it lands, quiet or not.
+    after_forces: Cell<Option<(SliceTrigger, bool)>>,
 }
 
 impl SliceRun {
@@ -271,7 +300,22 @@ impl SliceRun {
             plate_slices: RefCell::new((1, HashMap::new())),
             plates_watch: RefCell::new(None),
             tooltip_timer: Rc::new(slint::Timer::default()),
+            forces_timer: slint::Timer::default(),
+            forces_still: Cell::new(None),
+            forces_tried: Cell::new(None),
+            forces_launched: Cell::new(None),
+            after_forces: Cell::new(None),
         });
+        {
+            // The forces of the Supports tab, measured on their own (#245).
+            let weak = Rc::downgrade(&run);
+            run.forces_timer
+                .start(slint::TimerMode::Repeated, FORCES_POLL, move || {
+                    if let Some(run) = weak.upgrade() {
+                        run.forces_tick();
+                    }
+                });
+        }
         {
             let run = run.clone();
             ui.on_slice_requested(move || run.start());
@@ -476,6 +520,15 @@ impl SliceRun {
         let Some(ui) = self.ui.upgrade() else {
             return false;
         };
+        // The quiet slice of the forces gives way to any other (#245).
+        if ui.get_slicing_in_progress()
+            && self.trigger.get() == SliceTrigger::Forces
+            && trigger != SliceTrigger::Forces
+        {
+            self.cancel();
+            self.after_forces.set(Some((trigger, self.quiet.get())));
+            return true;
+        }
         // While Fix All runs, the Slice button and a Repair wait: the slices
         // of its passes come from the run itself (#390, #163).
         if ui.get_slicing_in_progress() || (trigger != SliceTrigger::FixAll && self.review.fixing())
@@ -493,7 +546,9 @@ impl SliceRun {
             self.document.scene_revision(),
             self.document.print_format(),
         ) else {
-            self.dialogs.show_error(missing_selection_texts);
+            if trigger != SliceTrigger::Forces {
+                self.dialogs.show_error(missing_selection_texts);
+            }
             return false;
         };
 
@@ -507,7 +562,9 @@ impl SliceRun {
         }
         // The plate's own slice, kept aside, while still current (#547).
         if self.bring_back_plate_slice() {
-            self.show_up_to_date_hint();
+            if trigger != SliceTrigger::Forces {
+                self.show_up_to_date_hint();
+            }
             return false;
         }
         let held = self.document.slice_params();
@@ -528,6 +585,7 @@ impl SliceRun {
             ReSliceDecision::Unchanged if self.review.deletes_pending() => {
                 self.launch(current, trigger)
             }
+            ReSliceDecision::Unchanged if trigger == SliceTrigger::Forces => false,
             // The held slice already shows the islands: their marks again.
             ReSliceDecision::Unchanged if trigger.for_islands() => {
                 self.review.publish_islands();
@@ -749,6 +807,9 @@ impl SliceRun {
                 )
                 .is_ok_and(|leaves| leaves.is_empty());
         if bare {
+            if trigger == SliceTrigger::Forces {
+                return false;
+            }
             let name = self
                 .document
                 .plate_names()
@@ -790,11 +851,15 @@ impl SliceRun {
         *self.cancel.borrow_mut() = Some(cancel.clone());
         *self.pending_params.borrow_mut() = Some(current.clone());
         self.trigger.set(trigger);
+        self.forces_launched
+            .set((trigger == SliceTrigger::Forces).then(|| self.document.scene_revision()));
         self.review
             // A slice of every plate asks nothing on the way (#549).
             .slice_started(
                 trigger == SliceTrigger::FixAll,
-                trigger.for_islands() || trigger == SliceTrigger::EveryPlate,
+                trigger.for_islands()
+                    || trigger == SliceTrigger::EveryPlate
+                    || trigger == SliceTrigger::Forces,
             );
         let patches = self.review.fills_for_slice();
         *self.pending_fills.borrow_mut() = patches.ids;
@@ -948,6 +1013,16 @@ impl SliceRun {
     }
 
     fn finish(self: &Rc<Self>) {
+        self.finish_run();
+        // A slice asked for while the quiet one of the forces ran (#245).
+        if let Some((trigger, quiet)) = self.after_forces.take() {
+            self.quiet.set(quiet);
+            self.start_with(trigger);
+            self.quiet.set(false);
+        }
+    }
+
+    fn finish_run(self: &Rc<Self>) {
         let taken = self
             .slot
             .lock()
@@ -956,7 +1031,12 @@ impl SliceRun {
         *self.cancel.borrow_mut() = None;
         // Whether Generate asked for this analysis (#606): only a review
         // that lands goes on, and a slice repaired on its own keeps it.
-        let islands_after = self.islands_after.replace(false);
+        let forces = self.trigger.get() == SliceTrigger::Forces;
+        let islands_after = if forces {
+            false
+        } else {
+            self.islands_after.replace(false)
+        };
         let pending = self.pending_params.borrow_mut().take();
         let fill_ids = std::mem::take(&mut *self.pending_fills.borrow_mut());
         let deleted = std::mem::take(&mut *self.pending_deletes.borrow_mut());
@@ -1017,6 +1097,10 @@ impl SliceRun {
             }
             Ok(SliceRunOutcome::Cancelled) => {
                 self.tell_landed(false);
+                // The forces cut short are measured again once still (#245).
+                if forces {
+                    self.forces_tried.set(None);
+                }
                 // A cancelled run carries no data; any prior result stays.
                 // A Fix All run whose slice this was is cancelled with it
                 // (#163).
@@ -1025,6 +1109,12 @@ impl SliceRun {
             Err(err) => {
                 self.tell_landed(false);
                 self.review.slice_ended_without_result(false);
+                // A slice nobody asked for says nothing (#245): the forces
+                // wait for the next change.
+                if forces {
+                    crate::breadcrumbs::note(&format!("slice: forces not measured: {err}"));
+                    return;
+                }
                 // The objects a failure names, as the object list names them
                 // now.
                 let names = self
@@ -1080,6 +1170,71 @@ impl SliceRun {
 }
 
 impl SliceRun {
+    /// Measures the forces of the Supports tab on their own (#245): once the
+    /// scene stood still for [`FORCES_SETTLE`], with supports in force, a
+    /// FORCES card to fill and nothing else working, a quiet slice of the
+    /// plate when the one held is not the scene as it stands. A change, or
+    /// leaving the tab, cancels it while it runs.
+    fn forces_tick(self: &Rc<Self>) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let revision = self.document.scene_revision();
+        let plate = self.document.slice_plate();
+        let in_supports = ui.get_workspace_section() == crate::WorkspaceSection::Supports;
+        if ui.get_slicing_in_progress() {
+            if self.trigger.get() == SliceTrigger::Forces
+                && (!in_supports
+                    || self.forces_launched.get() != Some(revision)
+                    || self.ctrl.is_mid_gesture())
+            {
+                self.cancel();
+            }
+            self.forces_still.set(None);
+            return;
+        }
+        let wanted = in_supports
+            && (ui.get_stress_open() || ui.get_stress_paint())
+            && self.document.is_loaded()
+            && !ui.get_loading()
+            && !ui.get_saving_in_progress()
+            && !ui.get_repairing_in_progress()
+            && !ui.get_support_gen_in_progress()
+            && !ui.get_hollow_busy()
+            && !ui.get_arranging()
+            && !self.review.fixing()
+            && !self.ctrl.is_mid_gesture()
+            && self.review.supports().any_set_in_force();
+        let held_now = self
+            .document
+            .slice_params()
+            .is_some_and(|held| held.plate == plate)
+            && !self.document.held_slice_changed();
+        if !wanted || held_now || self.forces_tried.get() == Some((revision, plate)) {
+            self.forces_still.set(None);
+            return;
+        }
+        match self.forces_still.get() {
+            Some((r, p, since)) if r == revision && p == plate => {
+                if since.elapsed() < FORCES_SETTLE {
+                    return;
+                }
+            }
+            _ => {
+                self.forces_still
+                    .set(Some((revision, plate, std::time::Instant::now())));
+                return;
+            }
+        }
+        self.forces_still.set(None);
+        self.forces_tried.set(Some((revision, plate)));
+        self.quiet.set(true);
+        if self.start_with(SliceTrigger::Forces) {
+            crate::breadcrumbs::note("slice: the forces of the Supports tab");
+        }
+        self.quiet.set(false);
+    }
+
     /// The card's Repair (#407): repairs `leaves` and, once they slice,
     /// slices again.
     fn repair_and_slice(self: &Rc<Self>, leaves: &[NodeId]) {

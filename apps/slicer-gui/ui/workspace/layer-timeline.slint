@@ -32,6 +32,18 @@ export component LayerTimeline inherits VerticalLayout {
     in property <int> generation;
     // 0 force, 1 area, 2 perimeter, 3 time.
     in-out property <int> figure: 0;
+    // The force drawn coloured by load (#245): each layer's bar in the
+    // colour of its most loaded tip. Shown in place of the force's path.
+    in property <image> force-image;
+    in property <bool> has-force-image: false;
+    // The picked support's load along the print (#245), in the chart's box,
+    // and where all its tip holds stands, from the top (0 to 1; < 0 none).
+    in property <string> support-path;
+    in property <float> holds-at: -1;
+    // A line under the chart for the picked support.
+    in property <string> support-note;
+    // The chart's height.
+    in property <length> chart-height: 84px;
     pure callback readout(int, int) -> string;
     callback layer-picked(int);
 
@@ -56,7 +68,7 @@ export component LayerTimeline inherits VerticalLayout {
     }
 
     chart := Rectangle {
-        height: 84px;
+        height: root.chart-height;
         background: Theme.well;
         border-width: 1px;
         border-color: Theme.border-soft;
@@ -76,6 +88,7 @@ export component LayerTimeline inherits VerticalLayout {
             viewbox-width: 1000;
             viewbox-height: 100;
             fit: fill;
+            visible: !(root.figure == 0 && root.has-force-image);
             commands: root.figure == 0 ? root.force-path
                 : root.figure == 1 ? root.area-path
                 : root.figure == 2 ? root.perimeter-path
@@ -83,6 +96,40 @@ export component LayerTimeline inherits VerticalLayout {
             fill: Theme.hover;
             stroke: Theme.text-muted;
             stroke-width: 1px;
+        }
+
+        if root.figure == 0 && root.has-force-image: Image {
+            x: 0;
+            y: 10px;
+            width: parent.width;
+            height: parent.height - 10px;
+            source: root.force-image;
+            image-fit: fill;
+        }
+
+        // All a tip holds, for the picked support's line.
+        if root.support-path != "" && root.holds-at >= 0: Rectangle {
+            x: 0;
+            y: 10px + root.holds-at * (parent.height - 10px);
+            width: parent.width;
+            height: 1px;
+            background: #ffffff40;
+        }
+
+        // The picked support's load (#245).
+        if root.support-path != "": Path {
+            x: 0;
+            y: 10px;
+            width: parent.width;
+            height: parent.height - 10px;
+            viewbox-x: 0;
+            viewbox-y: 0;
+            viewbox-width: 1000;
+            viewbox-height: 100;
+            fit: fill;
+            commands: root.support-path;
+            stroke: #ffffff;
+            stroke-width: 1.5px;
         }
 
         // The force's spikes, along the top.
@@ -139,6 +186,13 @@ export component LayerTimeline inherits VerticalLayout {
         font-family: Theme.mono;
         font-size: Theme.font-xs;
         color: Theme.text-muted;
+    }
+    if root.support-note != "": Text {
+        text: root.support-note;
+        font-family: Theme.mono;
+        font-size: Theme.font-xs;
+        color: Theme.text;
+        wrap: word-wrap;
     }
     Note {
         text: @tr("LayerTimeline" => "The force is an estimate of the peel, not yet calibrated with prints: it compares layers, not whether a support holds.");

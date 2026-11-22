@@ -105,6 +105,9 @@ pub(crate) struct NameBeingEdited {
 /// Told each time the held slice's estimate is worked out again.
 type EstimateListener = Rc<dyn Fn()>;
 
+/// Told the pixel of a click in the Slice tab (#245).
+type SliceClick = Rc<dyn Fn(f32, f32)>;
+
 pub(crate) struct ViewportController {
     ui: slint::Weak<MainWindow>,
     session: SessionState,
@@ -152,6 +155,11 @@ pub(crate) struct ViewportController {
     /// The marks of where supports are recommended (#524), drawn in the
     /// Supports tab.
     hint_marks: RefCell<Option<crate::mesh_render::Overlay>>,
+    /// The stress view (#245), painted in the Supports and Slice tabs.
+    stress: RefCell<Option<crate::mesh_render::StressPaint>>,
+    /// Told the pixel of each click in the Slice tab (#245): the FORCES
+    /// card goes to the layer clicked.
+    slice_click: RefCell<Option<SliceClick>>,
     /// What a Repair run left broken, marked over the scene (#253).
     repair_marks: crate::repair_marks::MarksLayer,
     /// The Measure tool (#652).
@@ -374,6 +382,8 @@ impl ViewportController {
             readout_base: Cell::new(None),
             overlay: RefCell::new(None),
             hint_marks: RefCell::new(None),
+            stress: RefCell::new(None),
+            slice_click: RefCell::new(None),
             repair_marks: Default::default(),
             measure: Default::default(),
             tool_models: RefCell::new(Vec::new()),
@@ -460,6 +470,8 @@ impl ViewportController {
             readout_base: Cell::new(None),
             overlay: RefCell::new(None),
             hint_marks: RefCell::new(None),
+            stress: RefCell::new(None),
+            slice_click: RefCell::new(None),
             repair_marks: Default::default(),
             measure: Default::default(),
             tool_models: RefCell::new(Vec::new()),
@@ -1670,6 +1682,48 @@ impl ViewportController {
     pub(crate) fn set_hint_marks(&self, marks: Option<crate::mesh_render::Overlay>) {
         *self.hint_marks.borrow_mut() = marks;
         self.mark_dirty();
+    }
+
+    /// Paints the scene by load (#245) in the Supports and Slice tabs until
+    /// replaced (`None` takes the paint off).
+    pub(crate) fn set_stress(&self, stress: Option<crate::mesh_render::StressPaint>) {
+        *self.stress.borrow_mut() = stress;
+        self.mark_dirty();
+    }
+
+    /// Calls `listener` with the pixel of each click in the Slice tab
+    /// (#245).
+    pub(crate) fn on_slice_click(&self, listener: impl Fn(f32, f32) + 'static) {
+        *self.slice_click.borrow_mut() = Some(Rc::new(listener));
+    }
+
+    /// What a ray from the camera through pixel `(x, y)` meets first of what
+    /// the view shows with the scene cut at `cut_z` (#245): what stands
+    /// above the cut is not drawn, so it is looked through; a ray inside a
+    /// part where it crosses the cut meets the cut's face, at that height.
+    pub(crate) fn scene_point_below(
+        &self,
+        x: f32,
+        y: f32,
+        cut_z: f32,
+    ) -> Option<super::support_drag::ScreenHit> {
+        let vp = self.render.viewport()?;
+        let ray = {
+            let camera_slot = self.camera.camera_cell().borrow();
+            let camera = camera_slot.as_ref()?;
+            picking::ray_from_pixel(
+                camera,
+                crate::mesh_render::default_fov_y(),
+                vp.width(),
+                vp.height(),
+                x,
+                y,
+            )
+        };
+        self.session
+            .document()
+            .with_scene(|spatial| point_below_cut(&ray, spatial, cut_z))
+            .flatten()
     }
 
     /// Shows `pieces` over the scene until replaced (`None` clears them).
@@ -4921,6 +4975,12 @@ impl ViewportController {
     /// document's selection setters: a hit selects its leaf, a miss runs the
     /// Esc cascade.
     fn run_pick_at(&self, cursor: ScreenPoint) {
+        if self.session.section() == WorkspaceSection::Slice {
+            let listener = self.slice_click.borrow().clone();
+            if let Some(listener) = listener {
+                listener(cursor.x, cursor.y);
+            }
+        }
         let Some(pick) = self.input.pick_at(
             self.session.document(),
             self.camera.camera_cell(),
@@ -6347,6 +6407,13 @@ impl ViewportController {
             .then(|| self.hint_marks.borrow().clone())
             .flatten();
         renderer.set_hint_marks(hints.as_ref());
+        let stress = matches!(
+            self.session.section(),
+            WorkspaceSection::Supports | WorkspaceSection::Slice
+        )
+        .then(|| self.stress.borrow().clone())
+        .flatten();
+        renderer.set_stress(stress.as_ref());
         let overhang_map = self.overhang_map();
         renderer.set_overhang_map(overhang_map);
         if overhang_map.is_some() {
@@ -6827,6 +6894,95 @@ pub(crate) fn lasso_region(
         polygon,
         depth: None,
     })
+}
+
+/// [`ViewportController::scene_point_below`] on the scene: the hits above
+/// `cut_z` are passed through, counting the surfaces crossed; an odd count
+/// at the cut is inside a part, whose cut face the ray meets.
+fn point_below_cut(
+    ray: &picking::Ray,
+    spatial: &sc_mesh_spatial::SceneSpatial,
+    cut_z: f32,
+) -> Option<super::support_drag::ScreenHit> {
+    const STEP_MM: f32 = 1e-3;
+    let mut origin = ray.origin;
+    let mut crossed: Option<sc_scene::NodeId> = None;
+    let mut inside = false;
+    for _ in 0..256 {
+        let along = picking::Ray {
+            origin,
+            direction: ray.direction,
+        };
+        let hit = picking::pick_face_where(&along, spatial, |_| true);
+        let point = hit.map(|hit| origin + ray.direction * hit.t);
+        if inside
+            && ray.direction.z < 0.0
+            && point.is_none_or(|p| p.z <= cut_z)
+            && let Some(leaf) = crossed
+        {
+            let t = (cut_z - origin.z) / ray.direction.z;
+            return Some(super::support_drag::ScreenHit {
+                leaf,
+                point: (origin + ray.direction * t.max(0.0)).into(),
+            });
+        }
+        let (hit, point) = (hit?, point?);
+        if point.z <= cut_z {
+            return Some(super::support_drag::ScreenHit {
+                leaf: hit.leaf,
+                point: point.into(),
+            });
+        }
+        if ray.direction.z >= 0.0 {
+            return None;
+        }
+        inside = !inside;
+        crossed = Some(hit.leaf);
+        origin = point + ray.direction * STEP_MM;
+    }
+    None
+}
+
+#[cfg(test)]
+mod point_below_cut_tests {
+    use super::*;
+    use glam::Vec3;
+
+    fn ray(origin: [f32; 3], direction: [f32; 3]) -> picking::Ray {
+        picking::Ray {
+            origin: Vec3::from(origin),
+            direction: Vec3::from(direction).normalize(),
+        }
+    }
+
+    /// The unit cube, from -0.5 to 0.5, cut at 0: what stands above the
+    /// cut is looked through, and a ray down through the cube meets the
+    /// cut's face.
+    #[test]
+    fn a_ray_meets_what_the_cut_scene_shows() {
+        let spatial =
+            sc_mesh_spatial::SceneSpatial::from_graph(crate::test_support::scenes::cube_scene());
+        let down = point_below_cut(&ray([0.13, 0.07, 5.0], [0.0, 0.0, -1.0]), &spatial, 0.0)
+            .expect("the cut face");
+        assert!(down.point[2].abs() < 1e-3, "on the cut: {:?}", down.point);
+        assert!((down.point[0] - 0.13).abs() < 1e-3);
+
+        let below = point_below_cut(&ray([-5.0, 0.11, -0.25], [1.0, 0.0, 0.0]), &spatial, 0.0)
+            .expect("the side under the cut");
+        assert!((below.point[0] + 0.5).abs() < 1e-3, "{:?}", below.point);
+
+        assert!(
+            point_below_cut(&ray([-5.0, 0.11, 0.25], [1.0, 0.0, 0.0]), &spatial, 0.0).is_none(),
+            "the side above the cut is not drawn"
+        );
+        assert!(
+            point_below_cut(&ray([3.0, 0.0, 5.0], [0.0, 0.0, -1.0]), &spatial, 0.0).is_none(),
+            "beside the cube: nothing"
+        );
+        let whole = point_below_cut(&ray([0.13, 0.07, 5.0], [0.0, 0.0, -1.0]), &spatial, 2.0)
+            .expect("the top, under a cut above it");
+        assert!((whole.point[2] - 0.5).abs() < 1e-3, "{:?}", whole.point);
+    }
 }
 
 #[cfg(test)]
