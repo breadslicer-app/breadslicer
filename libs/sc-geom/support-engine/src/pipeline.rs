@@ -789,17 +789,15 @@ fn run_pipeline(
             &PlanInput {
                 islands: &islands.filtered,
                 model_id: &model.id,
-                settings_override: Some(&settings.supports.auto_support),
-                base_state: &current,
-                committed: &current,
-                has_raft,
+                settings: &settings.supports.auto_support,
+                state: &current,
                 brace_meshes: &brace_meshes,
-                zone: Some(ZonePlanInput {
+                zone: ZonePlanInput {
                     keep_out: &settings.keep_out,
                     detail: detail.as_deref(),
                     steep: &steep,
                     layer_height_mm: settings.layer_height_mm,
-                }),
+                },
             },
             &ctx,
         );

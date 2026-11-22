@@ -74,34 +74,6 @@ impl SizingBands {
 /// Resin density, g/mm³ (1.1 g/cm³).
 pub const RESIN_DENSITY_G_PER_MM3: f64 = 0.0011;
 
-/// What the model-wide terms are worked out from.
-#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ModelSizingContext {
-    /// The model's volume, mm³.
-    pub model_volume_mm3: f64,
-    /// The model's top, mm.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_z_max_mm: Option<f64>,
-    /// How many candidates are placed.
-    pub total_candidates: f64,
-    /// The model's size (box diagonal), mm.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_size_mm: Option<f64>,
-}
-
-/// The base size a region of `area_mm2` counts as, for the run's records and
-/// the load budget (not for drawing).
-pub fn preset_for_area(area_mm2: f64) -> SizingPreset {
-    if area_mm2 <= 0.15 {
-        SizingPreset::Detail
-    } else if area_mm2 <= 0.5 {
-        SizingPreset::Structure
-    } else {
-        SizingPreset::Anchor
-    }
-}
-
 /// The sizes a candidate is drawn with: its zone size exactly as written
 /// (#360), the root widened by the adaptive base when the rules have one
 /// (#471).

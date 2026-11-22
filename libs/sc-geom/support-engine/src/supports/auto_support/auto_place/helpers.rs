@@ -280,24 +280,6 @@ pub fn free_knot_id(draft: &SupportState, base_id: &str) -> String {
     format!("{base_id}-{n}")
 }
 
-/// Exact volume (mm³) of a closed mesh via the signed tetrahedron sum.
-pub fn compute_mesh_volume_mm3(bvh: &MeshBvh) -> f64 {
-    let pos = bvh.positions();
-    let at = |i: u32| {
-        let p = pos[i as usize];
-        (f64::from(p[0]), f64::from(p[1]), f64::from(p[2]))
-    };
-    let mut vol = 0.0;
-    for tri in bvh.index().chunks(3) {
-        let (ax, ay, az) = at(tri[0]);
-        let (bx, by, bz) = at(tri[1]);
-        let (cx, cy, cz) = at(tri[2]);
-        vol +=
-            (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6.0;
-    }
-    vol.abs()
-}
-
 /// One host entity in the draft, with the type that owns it.
 #[derive(Clone, Copy, Debug)]
 pub struct HostEntry<'d> {
