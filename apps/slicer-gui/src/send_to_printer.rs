@@ -22,9 +22,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use bread_printer_link::sdcp::{self, Printer, Refusal};
 use futures_channel::oneshot;
 use sc_print_primitives::{MaterialId, PrinterId};
-use bread_printer_link::sdcp::{self, Printer, Refusal};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::MainWindow;

@@ -16,15 +16,15 @@ use std::time::Instant;
 
 use anyhow::{Result, anyhow};
 use bpaf::{Parser, construct, long, positional};
-use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_mesh_formats::filetypes::{WriteFormat, infer_mesh_file_format_from_extension};
-use sc_mesh_formats::scene_writer::flatten_graph_to_mesh;
-use sc_mesh_formats::{DEFAULT_MAX_MESH_FILE_SIZE_BYTES, load_mesh_from_path};
 use bread_orient::{
     Candidate, CostBreakdown, DEFAULT_AREA_PER_TIP_MM2, DEFAULT_LIFT_MM,
     DEFAULT_OVERHANG_ANGLE_DEG, Fit, KEEP_MARGIN, Note, OrientAnalysis, OrientContext, Preset,
     SearchOutcome, turned_about_footprint,
 };
+use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
+use sc_mesh_formats::filetypes::{WriteFormat, infer_mesh_file_format_from_extension};
+use sc_mesh_formats::scene_writer::flatten_graph_to_mesh;
+use sc_mesh_formats::{DEFAULT_MAX_MESH_FILE_SIZE_BYTES, load_mesh_from_path};
 use sc_print_profiles::ProfileLibraries;
 use serde_json::{Value, json};
 

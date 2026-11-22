@@ -36,14 +36,14 @@ use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::time::Duration;
 
-use sc_geom::supports::{SupportContact, recommended_lift_mm};
-use sc_print_glue::{PlateFrame, SlicedPlate};
 use bread_review::finding::sort_findings;
 use bread_review::{
     CavityFill, Finding, Growth, Island, IslandStart, ReviewInput, ReviewLeaf, ReviewOptions,
     SweepWatch, TipCone, TipPlan, TipPlanOptions, erase_stack, plan_all_tips, review_with,
 };
 use bread_review::{ReviewReport, deleted_island_note};
+use sc_geom::supports::{SupportContact, recommended_lift_mm};
+use sc_print_glue::{PlateFrame, SlicedPlate};
 use sc_scene::NodeId;
 use sc_sl1cer::contour::{ContourLayer, ContourStack};
 use sc_sl1cer::profile::{LayerSchedule, SliceProfile};
@@ -515,9 +515,9 @@ fn guarded(review: impl FnOnce() -> Result<ReviewOutcome, String>) -> ReviewOutc
 mod review_tests {
     use std::sync::Arc;
 
+    use bread_review::CheckKind;
     use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
     use sc_mesh_fixtures::unit_cube_mesh;
-    use bread_review::CheckKind;
     use sc_scene::{LeafPayload, Scene, SceneMetadata};
     use sc_sl1cer::contour::merge_stacks;
     use sc_sl1cer::profile::{

@@ -11,8 +11,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use sc_print_primitives::{MaterialId, NetworkProtocol, PrinterId};
 use bread_printer_link::sdcp::Printer;
+use sc_print_primitives::{MaterialId, NetworkProtocol, PrinterId};
 use serde_json::{Value, json};
 
 use crate::i18n::ctr;

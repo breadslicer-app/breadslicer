@@ -41,8 +41,8 @@
 
 use std::sync::Arc;
 
-use sc_project_formats::ReviewDecision;
 use bread_review::{CavityFill, CheckKind, Finding};
+use sc_project_formats::ReviewDecision;
 
 use crate::scene_document::SceneRevision;
 

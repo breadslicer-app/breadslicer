@@ -21,9 +21,9 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
+use bread_orient::{OrientAnalysis, OrientContext, Preset, SearchMode, SearchOutcome};
 use glam::Vec3;
 use sc_mesh_core::{IndexedMesh, Vertex};
-use bread_orient::{OrientAnalysis, OrientContext, Preset, SearchMode, SearchOutcome};
 use sc_scene::{NodeId, PAINTED, PaintChanges, PaintKind, SurfaceTags, UNPAINTED, carry_tags};
 use sc_scene_edit::SceneEdit;
 

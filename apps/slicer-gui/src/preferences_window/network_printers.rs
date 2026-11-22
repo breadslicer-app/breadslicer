@@ -290,8 +290,8 @@ pub(crate) fn wire(
 mod tests {
     use std::net::Ipv4Addr;
 
-    use sc_print_primitives::NetworkProtocol;
     use bread_printer_link::sdcp::Printer;
+    use sc_print_primitives::NetworkProtocol;
     use slint::Model;
 
     use super::*;

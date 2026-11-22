@@ -29,15 +29,15 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
-use sc_geom::supports::{SupportContact, recommended_lift_mm};
-use sc_print_glue::{PlateFrame, SlicedPlate};
-use sc_print_profiles::ProfileLibraries;
-use sc_print_profiles::{EffectiveMaterial, PrinterProfile};
 use bread_review::{
     CavityFill, Finding, Held, IslandStart, Part, PlannedTip, PlateRegions, ReviewContext,
     ReviewInput, ReviewLeaf, ReviewOptions, ReviewReport, Severity, SuggestedFix, TipCone, TipPlan,
     TipPlanOptions, check_regions, erase_stack, fill_stack, plan_all_tips,
 };
+use sc_geom::supports::{SupportContact, recommended_lift_mm};
+use sc_print_glue::{PlateFrame, SlicedPlate};
+use sc_print_profiles::ProfileLibraries;
+use sc_print_profiles::{EffectiveMaterial, PrinterProfile};
 use sc_scene::{NodeId, Scene};
 use sc_sl1cer::contour::{ContourLayer, ContourStack};
 
