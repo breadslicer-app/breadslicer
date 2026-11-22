@@ -212,7 +212,7 @@ const GRID_PARENT_REACH_NODES: f64 = 1.5;
 /// (#464).
 pub(super) fn grid_join_height(
     candidate: &CandidatePoint,
-    sizing_ctx: Option<&ModelSizingContext>,
+    _sizing_ctx: Option<&ModelSizingContext>,
     ctx: &PlanCtx<'_>,
 ) -> Option<f64> {
     let live = ctx.live();
@@ -222,13 +222,7 @@ pub(super) fn grid_join_height(
         } else {
             ctx.contact_at(candidate.tip_pos)
         };
-    let overrides = size_parameters(
-        candidate,
-        live.auto_support.size_scale,
-        sizing_ctx,
-        live,
-        ctx.bands,
-    );
+    let overrides = size_parameters(candidate, live, ctx.bands);
     let built = build_sized_trunk(
         &TrunkBuildInput {
             tip_pos,
@@ -400,7 +394,7 @@ pub fn place_one_candidate(
     }
 
     // Empirical sizing from the candidate's own island area.
-    let overrides = size_parameters(candidate, auto.size_scale, args.sizing_ctx, live, ctx.bands);
+    let overrides = size_parameters(candidate, live, ctx.bands);
     let is_small_island = (candidate.source != CandidateSource::Overhang
         && candidate.island_area_mm2 < 5.0)
         || candidate.z_height < 15.0;
@@ -492,12 +486,7 @@ pub fn place_one_candidate(
             };
             // SoulCrafted (#471): supports only from the plate stand on
             // nothing but the plate: no bridge from the model below.
-            if live
-                .auto_support
-                .zone_rules
-                .as_ref()
-                .is_some_and(|r| r.plate_only)
-            {
+            if live.auto_support.zone_rules.plate_only {
                 let mut out = PlaceOutcome::rejected(RejectReason::Trunk(error), preset);
                 out.cavity_fan_refusal = cavity_fan_refusal;
                 return out;
@@ -536,12 +525,13 @@ pub fn place_one_candidate(
                 }
             }
             let thinnest = || {
-                live.auto_support.zone_rules.as_ref().and_then(|r| {
+                {
+                    let r = &live.auto_support.zone_rules;
                     r.sizes
                         .iter()
                         .min_by(|a, b| a.trunk_diameter_mm.total_cmp(&b.trunk_diameter_mm))
                         .map(|s| s.band())
-                })
+                }
             };
             let band = ctx
                 .hand_zone_size()

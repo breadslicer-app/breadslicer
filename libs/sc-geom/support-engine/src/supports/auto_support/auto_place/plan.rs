@@ -36,24 +36,17 @@ use super::report::{
 };
 use crate::supports::auto_bracing::auto_brace::build_auto_braced_snapshot;
 use crate::supports::auto_bracing::mesh_clearance::BraceMeshes;
-use crate::supports::auto_support::candidate_generation::{
-    deduplicate_candidates, generate_candidates,
-};
 use crate::supports::auto_support::constants::{
     CONSOLIDATION_BRANCH_MIN_HEIGHT_MM, CONSOLIDATION_FAN_RADIUS_MM, CONSOLIDATION_MAX_ANGLE_DEG,
     GRID_HOST_FAN_RADIUS_MM, MIN_LEAF_FAN_RADIUS_MM,
 };
 use crate::supports::auto_support::coverage::{
-    MAX_GAP_FILL_PASSES, build_gap_fill_candidates, collect_support_tips, compute_region_coverage,
+    compute_region_coverage,
     coverage_radius_for_area,
-};
-use crate::supports::auto_support::grid_placement::{
-    generate_grid_candidates, should_use_density_grid,
 };
 use crate::supports::auto_support::load_budget::{
     LoadBudgetInput, PlacedContact, compute_load_budget,
 };
-use crate::supports::auto_support::minima_reinforcement::compute_minima_reinforcement_points;
 use crate::supports::auto_support::parameter_sizing::{
     ModelSizingContext, RESIN_DENSITY_G_PER_MM3, model_sizing_factors, preset_for_area,
     size_parameters,
@@ -66,7 +59,6 @@ use crate::supports::auto_support::settings::{
     AutoSupportSettings, SizingPreset, create_default_auto_support_settings,
     normalize_auto_support_settings,
 };
-use crate::supports::auto_support::stabilization::compute_stabilization_anchors;
 use crate::supports::auto_support::support_draft::{draft_add_entity, draft_add_primitive};
 use crate::supports::auto_support::types::{
     AutoSupportMesh, CandidatePoint, CandidateSource, js_compare,
@@ -74,11 +66,10 @@ use crate::supports::auto_support::types::{
 use crate::supports::auto_support::zone_candidates::{ZoneInput, generate_zone_candidates};
 use crate::supports::model_mesh::ModelMesh;
 use crate::supports::support_kinds::{
-    PlacementPrimitive, SupportEntityValue, SupportOriginId, SupportPlacementMetric, SupportTypeId,
+    PlacementPrimitive, SupportEntityValue, SupportOriginId, SupportTypeId,
     contact_bridge_types, get_support_type_descriptor, is_auto_placed_type,
     is_origin_convertible_to_tree,
 };
-use crate::supports::support_types::trunk::trunk_replacement::max_connected_diameter::compute_forest_diameter_profile;
 use crate::supports::types::{Knot, SupportState, Vec3};
 use crate::geom::Box3;
 use crate::geom::math_utils::{js_max, js_min, js_round};
@@ -739,15 +730,13 @@ pub fn compute_auto_support_plan(
         })
         .cloned()
         .collect();
-    let slender_part = pose_stability
+    let _slender_part = pose_stability
         .as_ref()
         .is_some_and(|p| is_slender_part(p.height_mm, p.volume_mm3, p.bearing_area_mm2));
 
-    let zone_rules = auto.zone_rules.as_ref();
-    let mut candidates: Vec<CandidatePoint> = if let Some(rules) = zone_rules {
-        // SoulCrafted (#360): the zone rules make every candidate, and they
-        // stand in for the stabilization anchors, the minima rings, the
-        // density grid and the deduplication below.
+    // The zone rules (#360) make every candidate.
+    let rules = &auto.zone_rules;
+    let mut candidates: Vec<CandidatePoint> = {
         let field = mesh.map(|m| m.field());
         let auto_mesh = mesh.zip(field.as_deref()).map(|(m, f)| AutoSupportMesh {
             mesh: ModelMesh {
@@ -772,120 +761,9 @@ pub fn compute_auto_support_plan(
             keep_out: zone.keep_out,
             detail: zone.detail,
         })
-    } else {
-        let field = mesh.map(|m| m.field());
-        let auto_mesh = mesh.zip(field.as_deref()).map(|(m, f)| AutoSupportMesh {
-            mesh: ModelMesh {
-                field: f,
-                rays: m.rays(),
-            },
-            side: m.side,
-            blocked: m.blocked,
-        });
-        generate_candidates(&islands_to_cover, &auto, auto_mesh, live, ctx.bands)
     };
     for c in &mut candidates {
         c.model_id = model_id.to_owned();
-    }
-
-    // Stabilization anchors: standalone trunks that broaden a point/edge bearing.
-    if auto.stabilization_enabled
-        && zone_rules.is_none()
-        && let Some(m) = mesh
-    {
-        let anchors = compute_stabilization_anchors(
-            m.bvh.positions(),
-            Some(m.bvh.index()),
-            &m.matrix,
-            input.has_raft,
-        );
-        for (i, a) in anchors.iter().enumerate() {
-            candidates.push(CandidatePoint {
-                id: format!("stab-{i}"),
-                tip_pos: Vec3::new(a.x, a.y, a.z),
-                tip_normal: Vec3::new(0.0, 0.0, -1.0),
-                model_id: model_id.to_owned(),
-                source: CandidateSource::Stabilization,
-                island_area_mm2: 0.05,
-                z_height: a.z,
-                priority: 0.0,
-                tip_diameter_mm: None,
-                grid_point: None,
-                zone_size: None,
-                enclosed: false,
-            });
-        }
-    }
-
-    // Minima reinforcement: a ring of contacts on a minima's own flank.
-    if auto.minima_reinforcement_enabled
-        && zone_rules.is_none()
-        && let Some(m) = mesh
-    {
-        let points =
-            compute_minima_reinforcement_points(&islands_to_cover, m.rays(), m.side, &auto);
-        for (i, p) in points.iter().enumerate() {
-            candidates.push(CandidatePoint {
-                id: format!("reinf-{}-{i}", p.island_id),
-                tip_pos: Vec3::new(p.x, p.y, p.z),
-                tip_normal: Vec3::new(0.0, 0.0, -1.0),
-                model_id: model_id.to_owned(),
-                source: CandidateSource::Reinforcement,
-                island_area_mm2: 0.05,
-                z_height: p.z,
-                priority: 0.0,
-                tip_diameter_mm: None,
-                grid_point: None,
-                zone_size: None,
-                enclosed: false,
-            });
-        }
-    }
-
-    // The density grid replaces the single candidate of every region it serves.
-    let overhang_islands: Vec<DetectedIsland> = islands_to_cover
-        .iter()
-        .filter(|i| i.source == IslandSource::Overhang)
-        .cloned()
-        .collect();
-    let eligible: Vec<DetectedIsland> = overhang_islands
-        .iter()
-        .filter(|i| zone_rules.is_none() && should_use_density_grid(i, &auto))
-        .cloned()
-        .collect();
-    if !eligible.is_empty() {
-        let mut generated = {
-            let field = mesh.map(|m| m.field());
-            let auto_mesh = mesh.zip(field.as_deref()).map(|(m, f)| AutoSupportMesh {
-                mesh: ModelMesh {
-                    field: f,
-                    rays: m.rays(),
-                },
-                side: m.side,
-                blocked: m.blocked,
-            });
-            generate_grid_candidates(
-                &eligible,
-                &auto,
-                auto_mesh,
-                slender_part,
-                pose_stability.as_ref().map_or(0.0, |p| p.thickness_mm),
-                live,
-                ctx.bands,
-            )
-        };
-        for c in &mut generated {
-            c.model_id = model_id.to_owned();
-        }
-        let generated_region_ids: HashSet<&str> = eligible.iter().map(|i| i.id.as_str()).collect();
-        if !generated.is_empty() {
-            generated.extend(
-                candidates
-                    .into_iter()
-                    .filter(|c| !generated_region_ids.contains(c.id.as_str())),
-            );
-            candidates = generated;
-        }
     }
     if candidates.is_empty() {
         return noop_plan(before.clone(), AutoPlaceStatus::NoCandidates);
@@ -895,9 +773,6 @@ pub fn compute_auto_support_plan(
     perf::mark("auto:dedup-filter");
     // ── 2. Dedup, then the already-supported filter ─────────────────
     let before_dedup = candidates.len();
-    if zone_rules.is_none() {
-        candidates = deduplicate_candidates(&candidates, &auto);
-    }
     let deduped_candidates = candidates.len();
     if candidates.is_empty() {
         return noop_plan(before.clone(), AutoPlaceStatus::AllDeduplicated);
@@ -1124,12 +999,7 @@ pub fn compute_auto_support_plan(
 
     ctx.set_zone(None);
     // Mini supports, unless the zone preset turns them off (#471).
-    if !live
-        .auto_support
-        .zone_rules
-        .as_ref()
-        .is_some_and(|r| r.keep_long_island_branches)
-    {
+    if !live.auto_support.zone_rules.keep_long_island_branches {
         rehang_island_branches(
             &mut run,
             model_id,
@@ -1141,38 +1011,6 @@ pub fn compute_auto_support_plan(
     }
     perf::measure("auto:consolidation");
     perf::mark("auto:gap-fill");
-    // ── Coverage convergence (gap-fill) ─────────────────────────────
-    // The zone rules set their own density: no gap-fill on top.
-    let gap_fill_passes = if zone_rules.is_some() {
-        0
-    } else {
-        MAX_GAP_FILL_PASSES
-    };
-    for _ in 0..gap_fill_passes {
-        // Reads the committed store, not the draft, as DragonFruit does.
-        let tips = collect_support_tips(input.committed);
-        let mut gap_candidates = build_gap_fill_candidates(&overhang_islands, &auto, &tips);
-        if gap_candidates.is_empty() {
-            break;
-        }
-        for c in &mut gap_candidates {
-            c.model_id = model_id.to_owned();
-        }
-        let mut placed_this_pass = 0;
-        for c in &gap_candidates {
-            if let Some(kind) = run.place(c, model_ctx.as_ref(), ctx)
-                && get_support_type_descriptor(kind)
-                    .placement_rule
-                    .is_some_and(|r| r.metric == SupportPlacementMetric::TipHeight)
-            {
-                placed_this_pass += 1;
-            }
-        }
-        if placed_this_pass == 0 {
-            break;
-        }
-    }
-
     perf::measure("auto:gap-fill");
     perf::mark("auto:analytics");
     // ── Coverage analytics ───────────────────────────────────────────
@@ -1208,28 +1046,9 @@ pub fn compute_auto_support_plan(
                 zone_size: None,
                 enclosed: false,
             };
-            let size_scale = live.auto_support.size_scale;
-            let s_min = size_parameters(
-                &sample(min_area, 10.0),
-                size_scale,
-                Some(mctx),
-                live,
-                ctx.bands,
-            );
-            let s_max = size_parameters(
-                &sample(max_area, z_max),
-                size_scale,
-                Some(mctx),
-                live,
-                ctx.bands,
-            );
-            let s_avg = size_parameters(
-                &sample(avg_area, z_max / 2.0),
-                size_scale,
-                Some(mctx),
-                live,
-                ctx.bands,
-            );
+            let s_min = size_parameters(&sample(min_area, 10.0), live, ctx.bands);
+            let s_max = size_parameters(&sample(max_area, z_max), live, ctx.bands);
+            let s_avg = size_parameters(&sample(avg_area, z_max / 2.0), live, ctx.bands);
             let hosts = placed_host_count(&run.placed);
             let kinds = run.diagnostics.hosts_by_kind;
             SizingDebugInfo {
@@ -1525,10 +1344,6 @@ pub fn compute_auto_support_plan(
     // ── 4. Forest resize, rehost, orphan cull, cone sync, report ────
     if changed {
         // A zone size keeps its trunk whatever it carries (#360).
-        if zone_rules.is_none() {
-            let resized = compute_forest_diameter_profile(&run.draft, live, &mut || ctx.id());
-            run.draft = resized;
-        }
         run.draft = rehost_legacy_knots(&run.draft);
         let mut orphan_infos: Vec<OrphanInfo> = Vec::new();
         let pre_cull_draft = run.draft.clone();
@@ -1563,10 +1378,6 @@ pub fn compute_auto_support_plan(
                     {
                         replaced.push((*i, id));
                     }
-                }
-                if !replaced.is_empty() && zone_rules.is_none() {
-                    run.draft = compute_forest_diameter_profile(&run.draft, live, &mut || ctx.id());
-                    run.draft = rehost_legacy_knots(&run.draft);
                 }
                 // Placed again, a support may take a route the first pass did
                 // not: it is measured on every model of the plate exactly,
@@ -1604,12 +1415,7 @@ pub fn compute_auto_support_plan(
                 );
             }
         }
-        let leaf_body_ratio = if zone_rules.is_some() {
-            auto.member_host_shaft_ratio
-        } else {
-            1.0
-        };
-        run.draft = sync_contact_cone_diameters_with(&run.draft, leaf_body_ratio);
+        run.draft = sync_contact_cone_diameters_with(&run.draft, auto.member_host_shaft_ratio);
 
         let mut forest_report = build_forest_report(&run.draft, &run.forest_ledger);
         let mut by_source = BySource::default();
@@ -1623,7 +1429,10 @@ pub fn compute_auto_support_plan(
         forest_report.scan = Some(ForestScanMetrics {
             islands: islands.len(),
             by_source,
-            overhang_regions: overhang_islands.len(),
+            overhang_regions: islands_to_cover
+                .iter()
+                .filter(|i| i.source == IslandSource::Overhang)
+                .count(),
             anchor_clusters: 0,
             anchor_regions: 0,
             candidates: candidates.len(),

@@ -155,12 +155,10 @@ pub struct AutoSupportSettings {
     pub model_load_factor_cap: f64,
     /// Ceiling of the height factor. **Calibration, not a preference.**
     pub height_factor_cap: f64,
-    /// SoulCrafted (#360): a zone preset. When set, the run picks every
-    /// support's size and spacing by zone and draws each size exactly
-    /// (no model scaling, no tip floor); the density, sizing tier and
-    /// overhang knobs above are not read for placement.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub zone_rules: Option<ZoneRules>,
+    /// The zone rules (#360): the run picks every support's size and
+    /// spacing by zone and draws each size exactly (no model scaling, no
+    /// tip floor). Miniatures' unless a preset says otherwise.
+    pub zone_rules: ZoneRules,
 }
 
 impl Default for AutoSupportSettings {
@@ -236,7 +234,7 @@ pub fn create_default_auto_support_settings() -> AutoSupportSettings {
         debug_skip_auto_bracing: false,
         stabilization_enabled: true,
         minima_reinforcement_enabled: true,
-        zone_rules: None,
+        zone_rules: super::presets::minis_30().rules,
     }
 }
 
@@ -296,7 +294,7 @@ pub fn normalize_auto_support_settings(source: &AutoSupportSettings) -> AutoSupp
         debug_skip_auto_bracing: source.debug_skip_auto_bracing,
         stabilization_enabled: source.stabilization_enabled,
         minima_reinforcement_enabled: source.minima_reinforcement_enabled,
-        zone_rules: source.zone_rules.as_ref().map(ZoneRules::clamped),
+        zone_rules: source.zone_rules.clamped(),
     }
 }
 

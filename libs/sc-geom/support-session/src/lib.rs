@@ -36,7 +36,10 @@ mod hand_log;
 mod options;
 mod session;
 mod shift;
-pub mod zone_presets;
+/// The zone presets that ship, and how one is applied.
+pub mod zone_presets {
+    pub use support_engine::supports::auto_support::presets::*;
+}
 
 pub use document::{
     Drawings, RestoreError, RestoredSet, SUPPORT_DOCUMENT_VERSION, SUPPORT_GENERATOR,

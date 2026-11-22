@@ -84,7 +84,7 @@ pub fn filter_line_raft_edges(
 const ON_EDGE_MM: f64 = 1e-5;
 
 /// SoulCrafted: splits the flat faces (the caps) of `g` where a point of the
-/// mesh lies on one of their edges. Beams on one line (a grid lays them so)
+/// mesh lies on one of their outer edges (an edge no other cap face holds). Beams on one line (a grid lays them so)
 /// leave holes in the union with sides on that line, and earcut runs one cap
 /// edge past their corners while the walls stop there: a T in the mesh, open
 /// edges the slicer refuses. A split face becomes a fan about its centre, so
@@ -121,7 +121,25 @@ fn split_at_t_junctions(g: &mut BufferGeometry) {
             points.push(*p);
         }
     }
-    let on_edge = |a: [f32; 3], b: [f32; 3]| -> Vec<(f64, [f32; 3])> {
+    // How many flat faces hold each edge: one shared by two lies inside a
+    // cap, and splitting it on one side only would open it.
+    let key = |a: [f32; 3], b: [f32; 3]| {
+        let (a, b) = (a.map(f32::to_bits), b.map(f32::to_bits));
+        if a <= b { (a, b) } else { (b, a) }
+    };
+    let mut cap_edges: HashMap<([u32; 3], [u32; 3]), u32> = HashMap::new();
+    for t in corners.as_chunks::<3>().0 {
+        let [a, b, c] = *t;
+        if a[2] == b[2] && b[2] == c[2] {
+            for (p, q) in [(a, b), (b, c), (c, a)] {
+                *cap_edges.entry(key(p, q)).or_default() += 1;
+            }
+        }
+    }
+    let on_edge = |a: [f32; 3], b: [f32; 3], own: [f32; 3]| -> Vec<(f64, [f32; 3])> {
+        if cap_edges.get(&key(a, b)).is_some_and(|&n| n > 1) {
+            return Vec::new();
+        }
         let (ax, ay) = (f64::from(a[0]), f64::from(a[1]));
         let (dx, dy) = (f64::from(b[0]) - ax, f64::from(b[1]) - ay);
         let len2 = dx * dx + dy * dy;
@@ -138,7 +156,9 @@ fn split_at_t_junctions(g: &mut BufferGeometry) {
                     continue;
                 };
                 for p in points {
-                    if *p == a || *p == b {
+                    // The face's own third corner never splits it: on a
+                    // sliver it lies almost on the edge across.
+                    if *p == a || *p == b || *p == own {
                         continue;
                     }
                     let (px, py) = (f64::from(p[0]) - ax, f64::from(p[1]) - ay);
@@ -157,7 +177,7 @@ fn split_at_t_junctions(g: &mut BufferGeometry) {
         let [a, b, c] = *t;
         let flat = a[2] == b[2] && b[2] == c[2];
         let mut rims: Vec<Vec<(f64, [f32; 3])>> = if flat {
-            vec![on_edge(a, b), on_edge(b, c), on_edge(c, a)]
+            vec![on_edge(a, b, c), on_edge(b, c, a), on_edge(c, a, b)]
         } else {
             Vec::new()
         };

@@ -167,7 +167,6 @@ impl<'a> PlanCtx<'a> {
         self.base_live
             .auto_support
             .zone_rules
-            .as_ref()?
             .sizes
             .get(i)
     }
@@ -200,7 +199,6 @@ impl<'a> PlanCtx<'a> {
         self.base_live
             .auto_support
             .zone_rules
-            .as_ref()?
             .sizes
             .get(i)
     }
@@ -208,7 +206,7 @@ impl<'a> PlanCtx<'a> {
     /// The zone size whose tip a contact of `tip_diameter_mm` was drawn
     /// with, when the run has zone rules.
     pub fn zone_of_tip(&self, tip_diameter_mm: f64) -> Option<usize> {
-        let rules = self.base_live.auto_support.zone_rules.as_ref()?;
+        let rules = &self.base_live.auto_support.zone_rules;
         rules
             .sizes
             .iter()
@@ -225,9 +223,7 @@ impl<'a> PlanCtx<'a> {
 /// the size's tip, trunk and base, and the size as its sizing preset (the
 /// band table knows it by that id). Empty without zone rules.
 pub fn zone_lives(live: &SupportSettings) -> Vec<SupportSettings> {
-    let Some(rules) = live.auto_support.zone_rules.as_ref() else {
-        return Vec::new();
-    };
+    let rules = &live.auto_support.zone_rules;
     (0..rules.sizes.len())
         .map(|i| {
             let mut sized = live.clone();
@@ -835,11 +831,7 @@ pub fn build_hosted_branch(
     // SoulCrafted (#360): a zone size's trunk is its band, so a member at
     // the band would be as thick as its host and its tilted end would stick
     // out of it; it takes its share of the host instead.
-    let band_shaft_mm = if ctx.live().auto_support.zone_rules.is_some() {
-        band_shaft_mm.min(host_diameter_mm * host_ratio)
-    } else {
-        band_shaft_mm
-    };
+    let band_shaft_mm = band_shaft_mm.min(host_diameter_mm * host_ratio);
     let floored_shaft_mm = member_shaft_diameter_mm(band_shaft_mm, host_diameter_mm, host_ratio);
     let build = |shaft_mm: f64| {
         let field = ctx.mesh.as_ref().map(|m| m.field());

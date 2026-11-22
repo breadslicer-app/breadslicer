@@ -8,10 +8,6 @@ pub const ANCHOR_HEIGHT_THRESHOLD_MM: f64 = 5.0;
 /// Max span (mm) for a leaf cone attached to a host knot (grid path).
 pub const MAX_AUTO_LEAF_SPAN_MM: f64 = 2.5;
 
-/// Islands below this area (mm²) get a shrunk per-point tip (detail band)
-/// instead of the active band contact — matches the detail preset boundary.
-pub const SMALL_ISLAND_TIP_AREA_MM2: f64 = 0.15;
-
 /// Tangent-plane reach (mm) each side of the free-width probe looks out to.
 /// The cap only binds while the free width is under
 /// `bandTip / autoSupport.tipContactMarginScale` (at the widest band,
@@ -25,17 +21,6 @@ pub const SMALL_ISLAND_TIP_AREA_MM2: f64 = 0.15;
 /// boundary contact would cap. Past the reach the width reads full and the cap
 /// is a no-op, which is the correct answer for a feature wider than the tip.
 pub const CONTACT_WIDTH_PROBE_MM: f64 = 0.5;
-
-/// Islands with bbox extent at/below this (mm) get a single tip at the bbox
-/// center — robust for specks where centroid/medial math is noise.
-pub const ISLAND_SUB_HEAD_MM: f64 = 0.5;
-/// Islands this long (mm) or longer with narrow width split into a symmetric
-/// tip pair instead of one center tip.
-pub const ISLAND_TWO_POINT_MIN_MM: f64 = 1.5;
-pub const ISLAND_TWO_POINT_MAX_MM: f64 = 6.0;
-/// Two-point split only when the minor bbox axis is below this (mm); wide
-/// blobs keep one candidate (the grid path covers their area).
-pub const ISLAND_TWO_POINT_MAX_WIDTH_MM: f64 = 2.5;
 
 /// Leaf spans above this (mm) route to branches with real shafts instead of
 /// long tapered leaf cones — an 8–11 mm leaf reads as a spindly spike next
@@ -66,10 +51,6 @@ pub fn influence_radius_mm(diff_z_mm: f64) -> f64 {
     knots[knots.len() - 1].1
 }
 
-/// Vertical restack allowance (mm): candidates farther apart in Z than this
-/// never dedup each other (staircase shelves keep their own supports),
-/// mirroring Prusa's removing_delta.
-pub const SUPPORT_RESTSTACK_DELTA_MM: f64 = 5.0;
 /// Longest cavity bridge auto-placement will keep.
 ///
 /// Currently inert -- the span it is compared against measures ~0. See the
@@ -98,23 +79,6 @@ pub const CAVITY_STICK_MAX_MEMBERS: f64 = 4.0;
 
 /// Distance (mm) within which an existing support tip counts a candidate as already supported.
 pub const ALREADY_SUPPORTED_RADIUS_MM: f64 = 3.0;
-
-/// Minima reinforcement: radius (mm) of the ring of contacts drawn around a mesh
-/// minima's own contact. Close enough to land on the feature it reinforces (a
-/// minima is a sharp local low point, not a broad face) and outside the contact
-/// cone's own body, so the ring never collides with the tip support it rings.
-pub const MINIMA_RING_RADIUS_MM: f64 = 2.5;
-
-/// Minima reinforcement: contact directions sampled on the ring (mm apart at
-/// the default radius ≈ the default density-grid spacing). Directions whose
-/// ray finds no valid flank are dropped, so this is an upper bound.
-pub const MINIMA_RING_COUNT: usize = 6;
-
-/// Minima reinforcement: least rise (mm) at the ring radius for a contact to
-/// count as the feature's flank. Below it the surface around the minima is flat
-/// as far as detection is concerned (the voxel mask is 0.25 mm) — a flat is the
-/// density grid's job, and a sub-voxel dip is served by its single tip.
-pub const MINIMA_RING_MIN_RISE_MM: f64 = 0.2;
 
 /// Gridless mode: merge candidates within this 3D distance of an existing trunk.
 pub const GRIDLESS_MERGE_RADIUS_MM: f64 = 4.0;
@@ -168,18 +132,3 @@ pub const CONSOLIDATION_BRANCH_MIN_HEIGHT_MM: f64 = 10.0;
 /// Self-support threshold: surfaces flatter than this angle from horizontal
 /// (deg) are flagged as overhang. Density modulation is normalized to it.
 pub const OVERHANG_SELF_SUPPORT_ANGLE_DEG: f64 = 45.0;
-
-/// Where the relaxation toward the slope spacing *starts*, as a fraction of the
-/// self-support angle (0.6 ⇒ 27° at the 45° default).
-///
-/// Relaxation is for a surface that prints by itself, and only the end of the band
-/// is that: a 25° underside peels and needs the density exactly as a flat ceiling
-/// does. Blending linearly from 0° put that underside more than half way to the
-/// slope spacing, which starves a part's shallow rims and ledges — the sections a
-/// cauldron's lip is made of — and is what made dropping `slopeRelaxFactor` and
-/// boosting `flatDensityBoost` by hand visibly help.
-///
-/// Below the start the region keeps the flat spacing; from there to the threshold it
-/// ramps, so the spacing stays continuous and the knob keeps its meaning at the end
-/// of the band it describes.
-pub const SLOPE_RELAX_RAMP_START: f64 = 0.6;

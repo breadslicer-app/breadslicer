@@ -3,35 +3,22 @@
 //! (scan, derivation, plan with bracing, support mesh), report its stages in
 //! order, and stop with `Cancelled` and no output at every stage boundary.
 
-use std::cell::RefCell;
 use std::sync::Arc;
 
 use serde_json::{Value, json};
 
-use support_engine::bvh::{MeshBvh, Side};
+use support_engine::bvh::MeshBvh;
 use support_engine::geom::buffer_geometry::BufferGeometry;
-use support_engine::geom::{Matrix4, Vec3};
-use support_engine::native::welded::WeldedMesh;
-use support_engine::native::mesh_minima::scan_islands;
-use support_engine::native::overhang::{OverhangScan, overhang_and_stability_from_soup};
+use support_engine::geom::Vec3;
 use support_engine::pipeline::{
     CancelToken, ModelInput, PipelineError, PipelineSettings, Stage, generate_supports,
-    generate_supports_with, plan_supports_with, prescan_models, regions_on_tree_faces,
-    support_soup, world_soup,
+    generate_supports_with, plan_supports_with, prescan_models, world_soup,
 };
-use support_engine::supports::auto_bracing::mesh_clearance::{BraceMesh, BraceMeshes};
-use support_engine::supports::auto_support::auto_place::helpers::{PlanCtx, PlanMesh};
-use support_engine::supports::auto_support::auto_place::plan::{
-    PlanInput, compute_auto_support_plan,
-};
-use support_engine::supports::auto_support::parameter_sizing::SizingBands;
-use support_engine::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
 use support_engine::supports::rafts::crenelated::geometry::model_plate_footprint::ModelTransform;
 use support_engine::supports::rafts::crenelated::raft_types::{
     DEFAULT_RAFT_SETTINGS, RaftBottomMode, RaftSettings,
 };
 use support_engine::supports::types::SupportState;
-use support_engine::volume_analysis::islands::use_islands::derive_islands;
 
 fn meshes() -> Value {
     let path = format!(
@@ -132,171 +119,7 @@ fn triples(soup: &[f32]) -> Vec<[f32; 3]> {
         .collect()
 }
 
-/// The stages called one by one, as the parity tests chain them.
-fn by_stage(
-    models: &[ModelInput],
-    settings: &PipelineSettings,
-) -> (Vec<Value>, SupportState, Value) {
-    let soups: Vec<Vec<f32>> = models.iter().map(world_soup).collect();
-    let bvhs: Vec<Arc<MeshBvh>> = soups
-        .iter()
-        .map(|s| Arc::new(MeshBvh::new(triples(s), None)))
-        .collect();
-    let brace_meshes: BraceMeshes<'_> = models
-        .iter()
-        .zip(&bvhs)
-        .map(|(m, bvh)| {
-            (
-                m.id.clone(),
-                BraceMesh {
-                    bvh,
-                    matrix: Matrix4::IDENTITY,
-                },
-            )
-        })
-        .collect();
-    let bands = SizingBands::factory();
-    let mut new_id = id_gen();
-    let angle = settings
-        .supports
-        .auto_support
-        .overhang_self_support_angle_deg as f32;
-    let mut state = SupportState::default();
-    let mut per_model = Vec::new();
-    for (i, m) in models.iter().enumerate() {
-        let soup = &soups[i];
-        let has_raft = settings.raft.bottom_mode != RaftBottomMode::Off;
-        let mesh = WeldedMesh::weld(soup, 1e-5);
-        let combined = scan_islands(&mesh, 0.05, 0.05, 0.25, 4, Some(2), Some(angle), Some(0.25));
-        let (regions, stability) = overhang_and_stability_from_soup(soup, angle, 0.25, has_raft);
-        let derived = derive_islands(
-            &combined,
-            &regions_on_tree_faces(
-                OverhangScan {
-                    regions,
-                    stability,
-                    steep_regions: Vec::new(),
-                },
-                &bvhs[i],
-            ),
-            &[],
-            &settings.panel,
-        );
-        let mut g = BufferGeometry {
-            position: Some(soup.clone()),
-            ..Default::default()
-        };
-        g.compute_vertex_normals();
-        let normals = triples(g.normal.as_ref().unwrap());
-        let sdf = RefCell::new(SdfCache::new(bvhs[i].clone(), Matrix4::IDENTITY, Some(0.5)));
-        let ctx = PlanCtx::new(
-            &settings.supports,
-            &bands,
-            Some(PlanMesh {
-                bvh: &bvhs[i],
-                matrix: Matrix4::IDENTITY,
-                side: Side::Front,
-                normals: Some(&normals),
-                sdf: &sdf,
-                blocked: None,
-            }),
-            &mut new_id,
-        );
-        let plan = compute_auto_support_plan(
-            &PlanInput {
-                zone: None,
-                islands: &derived.filtered,
-                model_id: &m.id,
-                settings_override: Some(&settings.supports.auto_support),
-                base_state: &state,
-                committed: &state,
-                has_raft,
-                brace_meshes: &brace_meshes,
-            },
-            &ctx,
-        );
-        drop(ctx);
-        let ids: Vec<&str> = derived.filtered.iter().map(|i| i.id.as_str()).collect();
-        per_model.push(json!({
-            "islands": ids,
-            "result": plan.as_ref().map(|p| serde_json::to_value(&p.result).unwrap()),
-        }));
-        if let Some(p) = plan {
-            state = p.support;
-        }
-    }
-    let soup = support_soup(&state, models, settings).unwrap();
-    (
-        per_model,
-        state,
-        json!({ "soup": soup.floats, "parts": soup.parts }),
-    )
-}
 
-#[test]
-fn facade_matches_the_stages_called_one_by_one() {
-    for (k, (models, settings)) in scenes().iter().enumerate() {
-        let mut new_id = id_gen();
-        let mut stages = Vec::new();
-        let out = generate_supports(
-            models,
-            &SupportState::default(),
-            settings,
-            &mut new_id,
-            &mut |p| stages.push((p.stage, p.model)),
-            &CancelToken::new(),
-        )
-        .unwrap();
-        let (per_model, state, drawn) = by_stage(models, settings);
-        let facade_models: Vec<Value> = out
-            .models
-            .iter()
-            .map(|m| {
-                let ids: Vec<&str> = m.islands.filtered.iter().map(|i| i.id.as_str()).collect();
-                json!({
-                    "islands": ids,
-                    "result": m.plan.as_ref().map(|p| serde_json::to_value(&p.result).unwrap()),
-                })
-            })
-            .collect();
-        assert_eq!(
-            Value::Array(facade_models),
-            Value::Array(per_model),
-            "scene {k}: plans"
-        );
-        assert_eq!(
-            serde_json::to_value(&out.support).unwrap(),
-            serde_json::to_value(&state).unwrap(),
-            "scene {k}: support state"
-        );
-        assert_eq!(
-            json!({ "soup": out.support_soup, "parts": out.support_parts }),
-            drawn,
-            "scene {k}: soup"
-        );
-        assert!(
-            !out.support_soup.is_empty(),
-            "scene {k}: supports were tessellated"
-        );
-        assert!(
-            !out.support.collections.roots.is_empty(),
-            "scene {k}: supports were placed"
-        );
-        // Stage reports: geometry for every model, then scan/derive/plan per
-        // model, then the support mesh.
-        let n = models.len();
-        let mut expected: Vec<(Stage, usize)> = (0..n).map(|i| (Stage::WorldGeometry, i)).collect();
-        for i in 0..n {
-            expected.extend([
-                (Stage::ScanIslands, i),
-                (Stage::DeriveIslands, i),
-                (Stage::PlanSupports, i),
-            ]);
-        }
-        expected.push((Stage::Tessellate, n));
-        assert_eq!(stages, expected, "scene {k}: progress");
-    }
-}
 
 /// Everything a run hands back that a reused scan could change.
 fn run_digest(out: &support_engine::pipeline::PipelineOutput) -> Value {

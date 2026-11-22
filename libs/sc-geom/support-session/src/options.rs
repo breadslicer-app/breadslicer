@@ -8,15 +8,12 @@
 
 use serde::{Deserialize, Serialize};
 use support_engine::features::slicing::smooth_shafts::{ShaftStyle, SmoothShaftParams};
-use support_engine::native::islands::body::IslandBodyScan;
 use support_engine::pipeline::PipelineSettings;
-use support_engine::supports::auto_support::auto_place::helpers::apply_zone_size;
 use support_engine::supports::auto_support::settings::{SizingPreset, auto_support_constraints};
-use support_engine::supports::auto_support::zone_rules::{STABILIZATION_MAX_ANGLE_DEG, ZoneRules};
 use support_engine::supports::rafts::crenelated::geometry::compute_raft_footprint::raft_band_top_mm;
 use support_engine::supports::rafts::crenelated::raft_types::{RaftBottomMode, RaftSettings};
 
-use crate::zone_presets::ZonePreset;
+use crate::zone_presets::{ZonePreset, apply_zone_preset, zone_self_support_angle_deg};
 
 /// How high a model is lifted off the plate to leave room for its supports
 /// under it, in millimetres: the usual automatic lift of resin slicers, and
@@ -119,7 +116,7 @@ impl Default for SupportOptions {
             raft_pads: false,
             raft_tabs: false,
             one_raft: false,
-            zones: None,
+            zones: Some(crate::zone_presets::minis_30()),
         }
     }
 }
@@ -163,7 +160,9 @@ impl SupportOptions {
             } else {
                 0.0
             },
-            zones: self.zones.as_ref().map(|z| ZonePreset {
+            // Options without zones (from the presets that had none) take
+            // Miniatures: every set is placed by zones.
+            zones: Some(self.zones.clone().unwrap_or_else(crate::zone_presets::minis_30)).map(|z| ZonePreset {
                 rules: z.rules.clamped(),
                 auto_lift_mm: clamp(z.auto_lift_mm, 0.0, 50.0, DEFAULT_SUPPORT_LIFT_MM),
                 bracing: z.bracing.clone(),
@@ -224,7 +223,7 @@ impl SupportOptions {
             ShaftStyle::DragonFruit
         };
         if let Some(zones) = &o.zones {
-            apply_zones(zones, settings, o.one_raft);
+            apply_zone_preset(zones, settings, o.one_raft);
         }
         o.apply_raft(settings);
     }
@@ -263,58 +262,6 @@ impl SupportOptions {
         }
         apart
     }
-}
-
-/// The self-support angle a zone preset's rules classify by, degrees from
-/// horizontal, inside the bounds the scans accept.
-fn zone_self_support_angle_deg(rules: &ZoneRules) -> f64 {
-    rules.self_support_angle_deg().clamp(
-        auto_support_constraints::OVERHANG_SELF_SUPPORT_ANGLE_DEG.min,
-        auto_support_constraints::OVERHANG_SELF_SUPPORT_ANGLE_DEG.max,
-    )
-}
-
-/// Writes a zone preset into `settings` (#360): its rules, the overhang
-/// angle the scans classify by, its default size for supports placed by
-/// hand, the scans its zones read, its bracing and its sizes drawn exactly.
-/// Under one raft for all (#576) the grid of pillars is left off: its
-/// supports lean out to pillars fixed on the plate, a hundredth of a degree
-/// of a turn hangs one from another pillar further out, and the room a model
-/// takes swings with it; dropping near the model they keep it compact.
-fn apply_zones(zones: &ZonePreset, settings: &mut PipelineSettings, one_raft: bool) {
-    let rules = zones.rules.clamped();
-    let supports = &mut settings.supports;
-    let auto = &mut supports.auto_support;
-    auto.overhang_self_support_angle_deg = zone_self_support_angle_deg(&rules);
-    // The sizes are drawn as written: no model scaling.
-    auto.model_scale_enabled = false;
-    auto.size_scale = 1.0;
-    // The zones stand in for DragonFruit's pose anchors and minima rings.
-    auto.stabilization_enabled = false;
-    auto.minima_reinforcement_enabled = false;
-    auto.zone_rules = Some(rules.clone());
-    if let Some(i) = rules.default_size_index() {
-        apply_zone_size(supports, &rules, i);
-    }
-    if let Some(spacing_mm) = zones.grid_mm.filter(|_| !one_raft) {
-        supports.grid.enabled = true;
-        supports.grid.spacing_mm = spacing_mm;
-        supports.grid.pillars = true;
-        // A pillar takes all that hangs from its node.
-        supports.auto_support.max_attachments_per_trunk = f64::MAX;
-    }
-    zones.bracing.apply(&mut supports.auto_bracing);
-    supports.auto_bracing.follow_trunks = rules.braces_follow_trunks;
-    settings.tip_drawing.per_support_penetration = true;
-    settings.scan.island_bodies = Some(IslandBodyScan::new(
-        &rules.section_heights_mm(),
-        rules.volume_cap_mm3(),
-    ));
-    settings.scan.steep_angle_deg = rules
-        .stabilization
-        .enabled
-        .then_some(STABILIZATION_MAX_ANGLE_DEG as f32);
-    settings.panel.keep_covered_voxel_islands = true;
 }
 
 impl SupportOptions {
@@ -358,6 +305,8 @@ impl SupportOptions {
 #[cfg(test)]
 mod options_tests {
     use super::*;
+    use support_engine::supports::auto_support::settings::AutoSupportSettings;
+    use support_engine::supports::settings::types::GridSettings;
 
     #[test]
     fn defaults_change_nothing() {
@@ -440,10 +389,10 @@ mod options_tests {
         let base = PipelineSettings::defaults(0.05);
         let mut off = base.clone();
         with(None).apply(&mut off);
-        assert_eq!(off.supports.grid, base.supports.grid);
+        assert_eq!(off.supports.grid, GridSettings::default());
         assert_eq!(
             off.supports.auto_support.max_attachments_per_trunk,
-            base.supports.auto_support.max_attachments_per_trunk
+            AutoSupportSettings::default().max_attachments_per_trunk
         );
         for (asked, spacing) in [(5.0, 5.0), (0.2, 1.0), (80.0, 50.0)] {
             let mut on = base.clone();
@@ -473,16 +422,16 @@ mod options_tests {
             ..minis
         }
         .apply(&mut shared);
-        assert_eq!(shared.supports.grid, base.supports.grid);
+        assert_eq!(shared.supports.grid, GridSettings::default());
         assert_eq!(
             shared.supports.auto_support.max_attachments_per_trunk,
-            base.supports.auto_support.max_attachments_per_trunk
+            AutoSupportSettings::default().max_attachments_per_trunk
         );
     }
 
     /// A tip holds the overhang around it as far as its options space
-    /// overhang tips (#484): a zone preset's overhang spacing, else the side
-    /// of the area each support carries.
+    /// overhang tips (#484): its zone preset's overhang spacing; options
+    /// without zones are Miniatures'.
     #[test]
     fn a_tip_reaches_as_far_as_its_options_space_overhang_tips() {
         let zoned = |preset: ZonePreset| SupportOptions {
@@ -495,16 +444,11 @@ mod options_tests {
             zoned(crate::zone_presets::figures_150()).tip_reach_mm(),
             2.8
         );
-        let classic = SupportOptions {
-            area_per_support_mm2: 16.0,
+        let without = SupportOptions {
+            zones: None,
             ..Default::default()
         };
-        assert_eq!(classic.tip_reach_mm(), 4.0);
-        let wild = SupportOptions {
-            area_per_support_mm2: 1000.0,
-            ..Default::default()
-        };
-        assert_eq!(wild.tip_reach_mm(), 30f64.sqrt());
+        assert_eq!(without.tip_reach_mm(), 1.8);
     }
 
     #[test]
