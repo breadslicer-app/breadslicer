@@ -1,0 +1,40 @@
+[package]
+name = "support-pipeline"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+authors = ["SynrgStudio"]
+description = "One call from a scene's models to their supports and rafts: the stages run in turn."
+categories = ["algorithms"]
+keywords = ["geometry", "support", "3d-printing", "SLA"]
+repository = "https://github.com/breadslicer-app/breadslicer"
+autotests = false
+
+[lints]
+workspace = true
+
+[dependencies]
+support-geom = { path = "../support-geom", version = "0.1.0" }
+support-model = { path = "../support-model", version = "0.1.0" }
+support-mesh = { path = "../support-mesh", version = "0.1.0" }
+support-placement = { path = "../support-placement", version = "0.1.0" }
+support-bracing = { path = "../support-bracing", version = "0.1.0" }
+engine-base = { path = "../engine-base", version = "0.1.0" }
+islands = { path = "../islands", version = "0.1.0" }
+surface-analysis = { path = "../surface-analysis", version = "0.1.0" }
+ahash = "0.8.12"
+earcutr = "0.5.0"
+glam = "0.32"
+i_float = "5.0.0"
+i_overlay = "9.1.0"
+indexmap = { version = "2.14.2", features = ["serde"] }
+rayon = "1.12"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.150", features = ["preserve_order", "float_roundtrip"] }
+smallvec = "1.16"
+
+# Every file in `tests/` is a module of this one test binary, so the crate is
+# linked once for its integration tests instead of once per file.
+[[test]]
+name = "main"
+path = "tests/main.rs"

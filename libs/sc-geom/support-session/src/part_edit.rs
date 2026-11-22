@@ -13,11 +13,11 @@
 
 use std::collections::HashSet;
 
-use support_engine::supports::tips::get_final_socket_position;
-use support_engine::supports::types::{Joint, Roots, Segment, SegmentShape};
-use support_engine::geom::Vec3;
+use support_geom::geom::Vec3;
+use support_model::tips::get_final_socket_position;
+use support_model::types::{Joint, Roots, Segment, SegmentShape};
 
-use support_engine::supports::auto_support::zone_rules::SupportSize;
+use support_model::auto_support::zone_rules::SupportSize;
 
 use super::{
     AddNote, AddOptions, At, EditError, EditPreview, FORCED_MAX_ANGLE_DEG, HandShape,

@@ -122,7 +122,7 @@ fn cancelling_stops_the_run() {
 #[test]
 fn support_meshes_of_real_scenes_are_edge_manifold() {
     let path = format!(
-        "{}/../support-engine/tests/fixtures/native_islands.json",
+        "{}/../support-pipeline/tests/fixtures/native_islands.json",
         env!("CARGO_MANIFEST_DIR")
     );
     let fixture: serde_json::Value =
@@ -343,7 +343,7 @@ fn a_session_put_down_lets_go_of_its_edit_caches_and_edits_as_before() {
 #[ignore = "measurement"]
 fn manual_edit_on_real_scenes() {
     let path = format!(
-        "{}/../support-engine/tests/fixtures/native_islands.json",
+        "{}/../support-pipeline/tests/fixtures/native_islands.json",
         env!("CARGO_MANIFEST_DIR")
     );
     let fixture: serde_json::Value =

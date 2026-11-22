@@ -1,0 +1,27 @@
+[package]
+name = "support-model"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+authors = ["SynrgStudio"]
+description = "What a support is: its kinds, tips and shafts, settings, zone rules and presets."
+categories = ["algorithms"]
+keywords = ["geometry", "support", "3d-printing", "SLA"]
+repository = "https://github.com/breadslicer-app/breadslicer"
+autotests = false
+
+[lints]
+workspace = true
+
+[dependencies]
+support-geom = { path = "../support-geom", version = "0.1.0" }
+ahash = "0.8.12"
+earcutr = "0.5.0"
+glam = "0.32"
+i_float = "5.0.0"
+i_overlay = "9.1.0"
+indexmap = { version = "2.14.2", features = ["serde"] }
+rayon = "1.12"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.150", features = ["preserve_order", "float_roundtrip"] }
+smallvec = "1.16"

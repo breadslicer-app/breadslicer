@@ -4122,13 +4122,6 @@ impl SupportRun {
         hand.rules.sizes.iter().position(|s| s.id == id)
     }
 
-    /// The hand size the Add tool places, with the person's numbers.
-    fn hand_shape(&self, ui: &MainWindow) -> Option<sc_geom::supports::SupportSize> {
-        hand_tip_size(ui.get_support_tip_size())?;
-        let i = self.hand_size_index(ui)?;
-        Some(self.hand.borrow().rules.sizes[i].clone())
-    }
-
     /// Replaces the hand sizes, saves them and shows them.
     fn set_hand(self: &Rc<Self>, hand: ZonePreset) {
         save_hand_sizes(&hand);

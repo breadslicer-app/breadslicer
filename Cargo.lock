@@ -5769,7 +5769,12 @@ dependencies = [
  "sc-sla-formats",
  "sc-sla-formats-uvtools",
  "serde_json",
- "support-engine",
+ "support-bracing",
+ "support-geom",
+ "support-mesh",
+ "support-model",
+ "support-pipeline",
+ "support-placement",
  "tempfile",
  "windows-sys 0.61.2",
 ]
@@ -6444,22 +6449,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "support-engine"
-version = "0.0.1"
+name = "support-bracing"
+version = "0.1.0"
 dependencies = [
  "ahash",
  "earcutr",
- "engine-base",
  "glam",
  "i_float",
  "i_overlay",
  "indexmap",
- "islands",
  "rayon",
  "serde",
  "serde_json",
  "smallvec",
- "surface-analysis",
+ "support-geom",
+ "support-model",
+ "support-placement",
 ]
 
 [[package]]
@@ -6488,6 +6493,102 @@ dependencies = [
 ]
 
 [[package]]
+name = "support-geom"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "earcutr",
+ "glam",
+ "i_float",
+ "i_overlay",
+ "indexmap",
+ "rayon",
+ "serde",
+ "serde_json",
+ "smallvec",
+]
+
+[[package]]
+name = "support-mesh"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "earcutr",
+ "glam",
+ "i_float",
+ "i_overlay",
+ "indexmap",
+ "rayon",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "support-geom",
+ "support-model",
+]
+
+[[package]]
+name = "support-model"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "earcutr",
+ "glam",
+ "i_float",
+ "i_overlay",
+ "indexmap",
+ "rayon",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "support-geom",
+]
+
+[[package]]
+name = "support-pipeline"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "earcutr",
+ "engine-base",
+ "glam",
+ "i_float",
+ "i_overlay",
+ "indexmap",
+ "islands",
+ "rayon",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "support-bracing",
+ "support-geom",
+ "support-mesh",
+ "support-model",
+ "support-placement",
+ "surface-analysis",
+]
+
+[[package]]
+name = "support-placement"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "earcutr",
+ "engine-base",
+ "glam",
+ "i_float",
+ "i_overlay",
+ "indexmap",
+ "islands",
+ "rayon",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "support-geom",
+ "support-model",
+ "surface-analysis",
+]
+
+[[package]]
 name = "support-session"
 version = "0.0.1"
 dependencies = [
@@ -6500,7 +6601,12 @@ dependencies = [
  "sc-scene",
  "serde",
  "serde_json",
- "support-engine",
+ "support-bracing",
+ "support-geom",
+ "support-mesh",
+ "support-model",
+ "support-pipeline",
+ "support-placement",
 ]
 
 [[package]]
