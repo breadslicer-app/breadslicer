@@ -105,6 +105,9 @@ pub(crate) struct NameBeingEdited {
 /// Told each time the held slice's estimate is worked out again.
 type EstimateListener = Rc<dyn Fn()>;
 
+/// Told the pixel of a click in the Slice tab (#245).
+type SliceClick = Rc<dyn Fn(f32, f32)>;
+
 pub(crate) struct ViewportController {
     ui: slint::Weak<MainWindow>,
     session: SessionState,
@@ -156,7 +159,7 @@ pub(crate) struct ViewportController {
     stress: RefCell<Option<crate::mesh_render::StressPaint>>,
     /// Told the pixel of each click in the Slice tab (#245): the FORCES
     /// card goes to the layer clicked.
-    slice_click: RefCell<Option<Rc<dyn Fn(f32, f32)>>>,
+    slice_click: RefCell<Option<SliceClick>>,
     /// What a Repair run left broken, marked over the scene (#253).
     repair_marks: crate::repair_marks::MarksLayer,
     /// The Measure tool (#652).

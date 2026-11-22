@@ -123,7 +123,7 @@ pub(crate) fn chart_pixels(force_n: &[f64], share: &[f64]) -> SharedPixelBuffer<
 /// layer, laid on [`STRESS_BANDS`] even bands from the plate to `tops`' last.
 pub(crate) fn height_bands(share: &[f64], tops: &[f64], plate: Option<u32>) -> Option<StressBands> {
     let top = *tops.last()?;
-    if !(top > 0.0) {
+    if top.is_nan() || top <= 0.0 {
         return None;
     }
     let mut bands = vec![0.0f32; STRESS_BANDS];
@@ -244,6 +244,10 @@ pub(crate) fn support_overlay(sets: &[DrawnSet], shares: &[Vec<(String, f64)>]) 
     pieces.into()
 }
 
+/// Where the thread drawing the supports' paint leaves it, with the review
+/// it was drawn for.
+type DrawingSlot = Arc<Mutex<Option<(u64, Overlay)>>>;
+
 /// What the view holds of the review on show.
 struct Held {
     loads: Arc<PlateLoads>,
@@ -265,7 +269,7 @@ pub(crate) struct StressView {
     /// Moves with each review shown: a drawing of the supports for an older
     /// one is dropped.
     generation: Cell<u64>,
-    drawing: RefCell<Option<Arc<Mutex<Option<(u64, Overlay)>>>>>,
+    drawing: RefCell<Option<DrawingSlot>>,
     /// The supports' paint last drawn, with the review it was drawn for.
     supports: RefCell<Option<(u64, Overlay)>>,
     poll: slint::Timer,

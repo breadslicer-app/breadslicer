@@ -179,6 +179,9 @@ struct Prescan {
     run_waiting: bool,
 }
 
+/// Told the picked supports, their sets' leaves and tips (#245).
+type ChosenListener = Rc<dyn Fn(Vec<(NodeId, [f64; 3])>)>;
+
 pub(crate) struct SupportRun {
     ui: slint::Weak<MainWindow>,
     bus: Rc<PreferencesBus>,
@@ -260,7 +263,7 @@ pub(crate) struct SupportRun {
     chosen_events: RefCell<Option<SceneSubscription>>,
     /// Told the picked supports each time they are shown, none while the
     /// Select tool is off: the FORCES card draws their load (#245).
-    chosen_listeners: RefCell<Vec<Rc<dyn Fn(Vec<(NodeId, [f64; 3])>)>>>,
+    chosen_listeners: RefCell<Vec<ChosenListener>>,
     /// The empty set a model with none would start, kept while the scene
     /// and the options stay as they were: Add previews on it before the
     /// first click (#564: a model with no supports showed no preview).
