@@ -1282,13 +1282,23 @@ mod part_edit_tests {
         let (session, first, second) = two_trunks();
         let foot = session.parts_of(&first).unwrap().foot.unwrap();
         let low = [foot[0], foot[1], foot[2] + 1.0];
-        assert_eq!(session.shaft_near(low, 0.6).as_deref(), Some(first.as_str()));
+        assert_eq!(
+            session.shaft_near(low, 0.6).as_deref(),
+            Some(first.as_str())
+        );
         let other = session.parts_of(&second).unwrap().foot.unwrap();
         let low = [other[0] + 0.3, other[1], other[2] + 2.0];
-        assert_eq!(session.shaft_near(low, 0.6).as_deref(), Some(second.as_str()));
+        assert_eq!(
+            session.shaft_near(low, 0.6).as_deref(),
+            Some(second.as_str())
+        );
         assert!(session.shaft_near([40.0, 40.0, 1.0], 0.6).is_none());
-        let own = session.own_drawing_of(std::slice::from_ref(&first)).unwrap();
-        let all = session.drawing_of(&[first.clone(), second.clone()]).unwrap();
+        let own = session
+            .own_drawing_of(std::slice::from_ref(&first))
+            .unwrap();
+        let all = session
+            .drawing_of(&[first.clone(), second.clone()])
+            .unwrap();
         assert!(own.faces().len() < all.faces().len());
     }
 

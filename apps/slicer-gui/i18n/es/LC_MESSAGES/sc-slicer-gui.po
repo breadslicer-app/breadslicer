@@ -9619,10 +9619,10 @@ msgstr "varios"
 
 #: src/support_run.rs
 msgctxt "Inspector"
-msgid "{n} support picked: the numbers below draw it again; drag its trunk or an elbow to move it."
-msgid_plural "{n} supports picked: the numbers below draw them again; drag a trunk or an elbow to move it."
-msgstr[0] "{n} soporte elegido: los números de abajo lo dibujan de nuevo; arrastrá su tronco o un codo para moverlo."
-msgstr[1] "{n} soportes elegidos: los números de abajo los dibujan de nuevo; arrastrá un tronco o un codo para moverlo."
+msgid "{n} support picked: the numbers below draw it again; move it with its gizmo, a cube takes an elbow."
+msgid_plural "{n} supports picked: the numbers below draw them again; pick one alone to move it."
+msgstr[0] "{n} soporte elegido: los números de abajo lo dibujan de nuevo; movelo con su gizmo, un cubito toma un codo."
+msgstr[1] "{n} soportes elegidos: los números de abajo los dibujan de nuevo; elegí uno solo para moverlo."
 
 #: src/support_run.rs
 msgctxt "Inspector"
@@ -9636,10 +9636,10 @@ msgstr "Elegidos"
 
 #: src/support_run.rs
 msgctxt "Inspector"
-msgid "{n} picked support holds others up and stays as it is: pick the ones at the ends."
-msgid_plural "{n} picked supports hold others up and stay as they are: pick the ones at the ends."
-msgstr[0] "{n} soporte elegido sostiene a otros y queda como está: elegí los de las puntas."
-msgstr[1] "{n} soportes elegidos sostienen a otros y quedan como están: elegí los de las puntas."
+msgid "{n} picked support holds others up: it moves with its gizmo, and the sizes below leave it as it is."
+msgid_plural "{n} picked supports hold others up: they move with the gizmo, and the sizes below leave them as they are."
+msgstr[0] "{n} soporte elegido sostiene a otros: se mueve con su gizmo, y los tamaños de abajo lo dejan como está."
+msgstr[1] "{n} soportes elegidos sostienen a otros: se mueven con el gizmo, y los tamaños de abajo los dejan como están."
 
 #: ui/main-window.slint
 msgctxt "Inspector"
