@@ -1,182 +1,160 @@
-//! DragonFruit `src/supports/PlacementLogic/Pathfinding/ColumnClearanceMap.ts`.
+//! For each cell of a grid over the model seen from above, the lowest
+//! height a ball of the clearance radius round any of the model's vertices
+//! reaches. It answers "is this column down to the plate blocked?" without
+//! marching the distance field.
 //!
-//! Column clearance map: one scalar per XY cell - the lowest Z that a ball of
-//! `clearance` around a *mesh vertex* reaches - which answers the router's
-//! column query without marching the distance field.
-//!
-//! Why vertices. Every rasterized version of this had to bound how far a cell
-//! could sit from the surface it stood for, and that bound is what killed them: a
-//! triangle that only clips a cell charges its lowest vertex to a cell up to a
-//! triangle-width away, which on a coarse part is hundreds of times the error the
-//! verdict can absorb. A mesh vertex has no such error - it *is* on the solid -
-//! so a ball of `clearance` around it is provably inside the blocked set. That
-//! makes `blocked` sound by construction, with no conservatism and no error
-//! budget beyond the query's own snap to a cell centre.
-//!
-//! Why a scalar is enough. The router's columns all run from a walk point down
-//! to `rootTopZ`, and `rootTopZ` is below the model. So a column is blocked
-//! exactly when the blocked set at that XY has an element in `[rootTopZ, zTop]`,
-//! and with the set's minimum `lo` that is `lo <= zTop` - provided `lo` is a real
-//! blocked Z. The whole Z-interval structure therefore collapses to its minimum,
-//! which is what makes the build a single min-push instead of per-cell lists.
-//!
-//! What it cannot say: `clear`. Proving nothing is within clearance needs the map
-//! to be *complete*, and vertices are not - a point can sit near a triangle's
-//! interior, far from all three corners. So `clear` falls through to the march.
-//!
-//! `buildMs` (wall-clock) is not recorded: it is a report, never read.
+//! Vertices, not triangles: a vertex is on the solid, so a ball round it is
+//! within the clearance of the model, and a cell's lowest such point is a
+//! blocked height for sure. A column below the model is blocked exactly when
+//! a blocked height lies in it, and with the lowest one known that is a
+//! single comparison. The map cannot prove a column clear (a point can sit
+//! near a triangle's middle, far from its corners): it says blocked or does
+//! not know.
 
 use rayon::prelude::*;
 
 use crate::geom::math_utils::{js_max, js_min};
 use crate::geom::{Matrix4, Vec3};
 
+/// What a column check can tell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColumnVerdict {
     Blocked,
     Unknown,
 }
 
+/// The size of a built map.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ColumnClearanceMapStats {
     pub cell_mm: f64,
     pub width: usize,
     pub height: usize,
     pub cells: usize,
-    /// Radius the balls were drawn at: `clearance` minus the query's snap.
+    /// The radius the balls were drawn with: the clearance less a query's
+    /// snap to its cell's corner.
     pub radius_mm: f64,
     pub vertex_count: usize,
     pub bytes: usize,
 }
 
-const MAX_CELLS: f64 = 12_000_000.0;
-const SLOP_MM: f64 = 0.02;
-const NO_SOLID: f32 = f32::INFINITY;
+/// A map past this many cells is not built.
+const MOST_CELLS: f64 = 12_000_000.0;
+/// Taken off the radius past the snap, mm.
+const SLACK_MM: f64 = 0.02;
+/// A cell no ball reaches.
+const EMPTY: f32 = f32::INFINITY;
+/// Rows filled by one parallel job.
+const ROWS_PER_JOB: usize = 32;
 
+/// See the module notes.
 #[derive(Debug, Clone)]
 pub struct ColumnClearanceMap {
     pub stats: ColumnClearanceMapStats,
     cell: f64,
-    ox: f64,
-    oy: f64,
-    w: usize,
-    h: usize,
-    lo: Vec<f32>,
+    origin: (f64, f64),
+    width: usize,
+    height: usize,
+    lowest: Vec<f32>,
 }
 
 impl ColumnClearanceMap {
-    /// Build from a mesh's position attribute under its world matrix. Returns
-    /// `None` when the grid would be unreasonably large.
-    ///
-    /// Each vertex is an exact point of the solid, so the ball drawn around it is
-    /// a set of points that are all within `clearance` of the model. The only
-    /// error left is the query: it snaps to a cell centre, so the radius is
-    /// shrunk by half a cell diagonal (the worst case distance from a cell centre
-    /// to a point inside it) to keep the claim true for the point actually asked
-    /// about.
+    /// The map of the vertices `positions` under `matrix_world`, with cells of
+    /// `cell_mm`; `None` when it would be too big. A query snaps to its
+    /// cell's corner, so the balls shrink by half a cell's diagonal to stay
+    /// within the clearance of the point asked about.
     pub fn build(
         positions: &[[f32; 3]],
         matrix_world: &Matrix4,
         clearance_mm: f64,
         cell_mm: f64,
     ) -> Option<Self> {
-        // World positions once, in parallel: the bounds and every band below
-        // read them.
-        let world: Vec<Vec3> = positions
+        let points: Vec<Vec3> = positions
             .par_iter()
             .map(|p| {
                 Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]))
                     .apply_matrix4(matrix_world)
             })
             .collect();
-
-        let (mut min_x, mut min_y, mut max_x, mut max_y) = (
-            f64::INFINITY,
-            f64::INFINITY,
-            f64::NEG_INFINITY,
-            f64::NEG_INFINITY,
-        );
-        for v in &world {
-            if v.x < min_x {
-                min_x = v.x;
+        let mut lo = (f64::INFINITY, f64::INFINITY);
+        let mut hi = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+        for p in &points {
+            if p.x < lo.0 {
+                lo.0 = p.x;
             }
-            if v.y < min_y {
-                min_y = v.y;
+            if p.y < lo.1 {
+                lo.1 = p.y;
             }
-            if v.x > max_x {
-                max_x = v.x;
+            if p.x > hi.0 {
+                hi.0 = p.x;
             }
-            if v.y > max_y {
-                max_y = v.y;
+            if p.y > hi.1 {
+                hi.1 = p.y;
             }
         }
-        let w = ((max_x - min_x) / cell_mm).ceil() + 2.0;
-        let h = ((max_y - min_y) / cell_mm).ceil() + 2.0;
-        if !(w * h).is_finite() || w * h > MAX_CELLS {
+        let w = ((hi.0 - lo.0) / cell_mm).ceil() + 2.0;
+        let h = ((hi.1 - lo.1) / cell_mm).ceil() + 2.0;
+        if !(w * h).is_finite() || w * h > MOST_CELLS {
             return None;
         }
-        let (w, h) = (w as usize, h as usize);
-        let ox = min_x - cell_mm;
-        let oy = min_y - cell_mm;
-
-        let snap_mm = cell_mm * std::f64::consts::FRAC_1_SQRT_2 + SLOP_MM;
-        let radius = js_max(0.01, clearance_mm - snap_mm);
+        let (width, height) = (w as usize, h as usize);
+        let origin = (lo.0 - cell_mm, lo.1 - cell_mm);
+        let radius = js_max(
+            0.01,
+            clearance_mm - (cell_mm * std::f64::consts::FRAC_1_SQRT_2 + SLACK_MM),
+        );
         let r2 = radius * radius;
-        let rc = (radius / cell_mm).ceil() as i64;
+        let reach = (radius / cell_mm).ceil() as i64;
 
-        // Vertices bucketed by the row they fall in (a counting sort), so a
-        // band of rows finds the vertices that reach it without a full pass.
-        let row_of = |v: &Vec3| (((v.y - oy) / cell_mm).floor() as i64).clamp(0, h as i64 - 1);
-        let mut row_starts = vec![0usize; h + 1];
-        for v in &world {
-            row_starts[row_of(v) as usize + 1] += 1;
+        // The vertices sorted by row (counting sort): a job finds those that
+        // reach its rows at once.
+        let row = |p: &Vec3| {
+            (((p.y - origin.1) / cell_mm).floor() as i64).clamp(0, height as i64 - 1) as usize
+        };
+        let mut starts = vec![0usize; height + 1];
+        for p in &points {
+            starts[row(p) + 1] += 1;
         }
-        for r in 0..h {
-            row_starts[r + 1] += row_starts[r];
+        for r in 0..height {
+            starts[r + 1] += starts[r];
         }
-        let mut fill = row_starts.clone();
-        let mut by_row = vec![0u32; world.len()];
-        for (i, v) in world.iter().enumerate() {
-            let r = row_of(v) as usize;
-            by_row[fill[r]] = i as u32;
-            fill[r] += 1;
+        let mut next = starts.clone();
+        let mut sorted = vec![0u32; points.len()];
+        for (i, p) in points.iter().enumerate() {
+            let r = row(p);
+            sorted[next[r]] = i as u32;
+            next[r] += 1;
         }
 
-        // Push each vertex's ball into the cells it can reach, keeping the
-        // lowest Z. Only the minimum is kept, so the update is a compare and a
-        // store - no lists, no merging, no sorting. A cell's minimum does not
-        // depend on the order its candidates arrive in, so bands of rows fill
-        // in parallel, each from the vertices within reach of its rows, and
-        // give the sequential result.
-        const BAND_ROWS: usize = 32;
-        let mut lo = vec![NO_SOLID; w * h];
-        lo.par_chunks_mut(BAND_ROWS * w)
+        // Each ball lowers the cells it covers; only a minimum is kept, so
+        // the order balls arrive in does not matter and bands of rows fill
+        // in parallel.
+        let mut lowest = vec![EMPTY; width * height];
+        lowest
+            .par_chunks_mut(ROWS_PER_JOB * width)
             .enumerate()
-            .for_each(|(band, cells)| {
-                let r0 = (band * BAND_ROWS) as i64;
-                let r1 = r0 + (cells.len() / w) as i64; // exclusive
-                let first = (r0 - rc).max(0) as usize;
-                let last = ((r1 - 1 + rc).min(h as i64 - 1)) as usize;
-                for &i in &by_row[row_starts[first]..row_starts[last + 1]] {
-                    let v = world[i as usize];
-                    let (vx, vy, vz) = (v.x, v.y, v.z);
-                    let ix = ((vx - ox) / cell_mm).floor() as i64;
-                    let iy = ((vy - oy) / cell_mm).floor() as i64;
-                    let ny_end = js_min((h - 1) as f64, (iy + rc) as f64) as i64;
-                    let nx_end = js_min((w - 1) as f64, (ix + rc) as f64) as i64;
-                    for ny in (0.max(iy - rc)).max(r0)..=ny_end.min(r1 - 1) {
-                        let dy = oy + ny as f64 * cell_mm - vy;
-                        for nx in (0.max(ix - rc))..=nx_end {
-                            let dx = ox + nx as f64 * cell_mm - vx;
-                            let lat2 = dx * dx + dy * dy;
-                            if lat2 >= r2 {
+            .for_each(|(job, cells)| {
+                let first_row = (job * ROWS_PER_JOB) as i64;
+                let end_row = first_row + (cells.len() / width) as i64;
+                let from = (first_row - reach).max(0) as usize;
+                let to = ((end_row - 1 + reach).min(height as i64 - 1)) as usize;
+                for &i in &sorted[starts[from]..starts[to + 1]] {
+                    let p = points[i as usize];
+                    let cx = ((p.x - origin.0) / cell_mm).floor() as i64;
+                    let cy = ((p.y - origin.1) / cell_mm).floor() as i64;
+                    let last_y = js_min((height - 1) as f64, (cy + reach) as f64) as i64;
+                    let last_x = js_min((width - 1) as f64, (cx + reach) as f64) as i64;
+                    for y in (cy - reach).max(0).max(first_row)..=last_y.min(end_row - 1) {
+                        let dy = origin.1 + y as f64 * cell_mm - p.y;
+                        for x in (cx - reach).max(0)..=last_x {
+                            let dx = origin.0 + x as f64 * cell_mm - p.x;
+                            let across2 = dx * dx + dy * dy;
+                            if across2 >= r2 {
                                 continue;
                             }
-                            let candidate = vz - (r2 - lat2).sqrt();
-                            let at = (ny - r0) as usize * w + nx as usize;
-                            // The store is a Float32Array; the compare reads the stored value.
-                            if candidate < f64::from(cells[at]) {
-                                cells[at] = candidate as f32;
+                            let low = p.z - (r2 - across2).sqrt();
+                            let at = (y - first_row) as usize * width + x as usize;
+                            if low < f64::from(cells[at]) {
+                                cells[at] = low as f32;
                             }
                         }
                     }
@@ -186,54 +164,47 @@ impl ColumnClearanceMap {
         Some(ColumnClearanceMap {
             stats: ColumnClearanceMapStats {
                 cell_mm,
-                width: w,
-                height: h,
-                cells: w * h,
+                width,
+                height,
+                cells: width * height,
                 radius_mm: radius,
                 vertex_count: positions.len(),
-                bytes: lo.len() * 4,
+                bytes: lowest.len() * 4,
             },
             cell: cell_mm,
-            ox,
-            oy,
-            w,
-            h,
-            lo,
+            origin,
+            width,
+            height,
+            lowest,
         })
     }
 
-    fn cell_of(&self, x: f64, y: f64) -> Option<usize> {
-        let ix = ((x - self.ox) / self.cell).floor();
-        let iy = ((y - self.oy) / self.cell).floor();
-        if ix < 0.0
-            || ix >= self.w as f64
-            || iy < 0.0
-            || iy >= self.h as f64
-            || ix.is_nan()
-            || iy.is_nan()
-        {
-            return None;
-        }
-        Some(iy as usize * self.w + ix as usize)
+    /// The cell holding (`x`, `y`), if inside the map.
+    fn cell_at(&self, x: f64, y: f64) -> Option<usize> {
+        let cx = ((x - self.origin.0) / self.cell).floor();
+        let cy = ((y - self.origin.1) / self.cell).floor();
+        let inside = cx >= 0.0 && cx < self.width as f64 && cy >= 0.0 && cy < self.height as f64;
+        inside.then(|| cy as usize * self.width + cx as usize)
     }
 
-    /// `Blocked` when a real blocked Z lies inside the column, else `Unknown`.
-    /// Callers may treat `Blocked` as the march's answer.
+    /// [`ColumnVerdict::Blocked`] when a blocked height lies in the column at
+    /// (`x`, `y`) between `z_top` and `z_bot` (either order), else
+    /// [`ColumnVerdict::Unknown`].
     pub fn column_verdict(&self, x: f64, y: f64, z_top: f64, z_bot: f64) -> ColumnVerdict {
-        let Some(c) = self.cell_of(x, y) else {
+        let Some(at) = self.cell_at(x, y) else {
             return ColumnVerdict::Unknown;
         };
-        let lo = self.lo[c];
-        if lo == NO_SOLID {
+        let low = self.lowest[at];
+        if low == EMPTY {
             return ColumnVerdict::Unknown;
         }
-        let lo = f64::from(lo);
-        let bottom = if z_top < z_bot { z_top } else { z_bot };
-        let top = if z_top < z_bot { z_bot } else { z_top };
-        // `lo` is a point of the blocked set, so it settles the column only if
-        // it lies inside it. Below the bottom it is outside the column; above
-        // the top it is a different Z and says nothing.
-        if lo >= bottom && lo <= top {
+        let low = f64::from(low);
+        let (bottom, top) = if z_top < z_bot {
+            (z_top, z_bot)
+        } else {
+            (z_bot, z_top)
+        };
+        if low >= bottom && low <= top {
             ColumnVerdict::Blocked
         } else {
             ColumnVerdict::Unknown
