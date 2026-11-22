@@ -171,6 +171,50 @@ impl Notes {
                 "The file carries project settings from {}; only the models were loaded.",
                 crate::scene_loader::dialect_name(*dialect)
             ),
+            ReadProjectWarning::LeftOutForNow { supports, hollowed } => {
+                let detail = describe_project_warning(warning);
+                if *supports > 0 {
+                    self.add(
+                        ctr!(
+                            "ImportNotes",
+                            "The scene's {n} support is not brought in yet: it comes in a later version.",
+                            "The scene's {n} supports are not brought in yet: they come in a later version.",
+                            *supports
+                        ),
+                        detail.clone(),
+                    );
+                }
+                if *hollowed > 0 {
+                    self.add(
+                        ctr!(
+                            "ImportNotes",
+                            "The scene's hollowing ({n} model) is not brought in yet: it comes in a later version.",
+                            "The scene's hollowing ({n} models) is not brought in yet: it comes in a later version.",
+                            *hollowed
+                        ),
+                        detail,
+                    );
+                }
+                return;
+            }
+            ReadProjectWarning::ProfileNotFound { printer, resin } => match (printer, resin) {
+                (Some(p), None) => ctr!(
+                    "ImportNotes",
+                    "None of our printers is called {}; the current printer stays.",
+                    p
+                ),
+                (None, Some(r)) => ctr!(
+                    "ImportNotes",
+                    "None of our resins is called {}; the current resin stays.",
+                    r
+                ),
+                (Some(p), Some(r)) => ctr!(
+                    "ImportNotes",
+                    "None of our printers and resins is called {}; the current ones stay.",
+                    format!("{p} / {r}")
+                ),
+                (None, None) => SharedString::default(),
+            },
         };
         self.add(line, describe_project_warning(warning));
     }

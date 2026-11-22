@@ -504,3 +504,46 @@ fn a_missing_file_is_an_io_error() {
     let err = open(&path).expect_err("the file does not exist");
     assert!(matches!(err, LoadSceneError::Io(_)));
 }
+
+/// A Lychee scene (#698) opens as a project: its model in place on its
+/// plate's frame, its plates and their names, and what the app settles (the
+/// printer and resin by name, the model's plate), with a note of what it
+/// leaves out for now.
+#[test]
+fn a_lychee_scene_opens_as_a_project_of_its_models_on_their_plates() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("scene.LYS");
+    std::fs::write(&path, sc_lys::fixture::box_on_second_plate()).unwrap();
+    assert!(is_supported_scene_file_extension(&path));
+    let opened = open(&path).expect("the scene opens");
+    let LoadedContent::Project(project) = &opened.content else {
+        panic!("a Lychee scene opens as a project");
+    };
+    assert_eq!(project.scene.roots().len(), 1);
+    let leaf = project.scene.roots()[0];
+    let node = project.scene.node(leaf).unwrap();
+    assert_eq!(
+        node.meta.as_ref().and_then(|m| m.name.as_deref()),
+        Some("Box")
+    );
+    assert_eq!(project.payload.plates, 2);
+    assert_eq!(project.payload.plate_names, ["Plate 1", "Second"]);
+    let foreign = project.foreign.as_ref().expect("what the app settles");
+    assert_eq!(foreign.printer.as_deref(), Some("Creality Halot One"));
+    assert_eq!(foreign.plates, [1]);
+    assert_eq!(
+        opened.project_warnings,
+        [crate::ReadProjectWarning::LeftOutForNow {
+            supports: 3,
+            hollowed: 1,
+        }]
+    );
+}
+
+#[test]
+fn a_broken_lychee_scene_opens_nothing() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("broken.lys");
+    std::fs::write(&path, b"not a scene").unwrap();
+    assert!(matches!(open(&path), Err(LoadSceneError::Lys(_))));
+}

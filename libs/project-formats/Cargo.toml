@@ -15,6 +15,7 @@ workspace = true
 [dependencies]
 sc-3mf.workspace = true
 bread-format.workspace = true
+sc-lys.workspace = true
 sc-mesh-core.workspace = true
 sc-mesh-formats.workspace = true
 sc-print-primitives = { workspace = true, features = ["serde"] }
@@ -26,6 +27,7 @@ serde.workspace = true
 toml_edit.workspace = true
 
 [dev-dependencies]
+sc-lys = { workspace = true, features = ["fixture"] }
 sc-mesh-fixtures.workspace = true
 sc-scene-fixtures.workspace = true
 serde_json.workspace = true

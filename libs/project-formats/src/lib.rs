@@ -27,6 +27,7 @@ mod bread_file;
 pub mod error;
 pub mod filetypes;
 pub mod loader;
+mod lys;
 pub mod messages;
 pub mod payload;
 mod progress_reader;
@@ -62,6 +63,7 @@ pub use loader::{
     LoadProgress, LoadSceneError, LoadedContent, LoadedScene, PersistedSlices, ProjectContent,
     SUPPORTED_SCENE_FILE_EXTENSIONS, is_supported_scene_file_extension, load_scene,
 };
+pub use lys::{ForeignScene, is_lys};
 pub use messages::{ForeignDialect, ProfileRefWarning, ReadProjectWarning};
 pub use payload::{EmbedProfiles, EmbeddedProfile, FileMetadata, ProjectPayload, ReviewDecision};
 pub use read::{LoadedProject, read_project, read_project_with_progress};

@@ -442,7 +442,14 @@ fn display_project_warnings(warnings: &[ReadProjectWarning], out: &mut dyn Write
             ReadProjectWarning::ProjectVersionUnsupported { .. }
             | ReadProjectWarning::UnrecognizedProfilePart { .. }
             | ReadProjectWarning::ForeignProjectData { .. }
-            | ReadProjectWarning::SurfacePaintDropped { .. } => {}
+            | ReadProjectWarning::SurfacePaintDropped { .. }
+            | ReadProjectWarning::ProfileNotFound { .. } => {}
+            ReadProjectWarning::LeftOutForNow { supports, hollowed } => {
+                let _ = writeln!(
+                    out,
+                    "warning: the scene's {supports} support(s) and {hollowed} hollowed model(s) are not brought in yet"
+                );
+            }
         }
     }
 }
