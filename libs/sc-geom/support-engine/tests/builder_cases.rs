@@ -1,8 +1,5 @@
-//! DragonFruit's own tests for the block 5 builders, ported:
-//! `manualBridgeCant.test.ts`, `twigVerticality.test.ts`, `twigSizing.test.ts`
-//! and `Kickstand/__tests__/kickstandColumnShape.test.ts`. (`stickSizing`
-//! needs the auto-support sizing band and comes with the Auto;
-//! `kickstandCollision` is covered by the parity fixture's mesh cases.)
+//! The bridge, twig and kickstand builders on known cases: how far a hand
+//! bridge may cant, a twig's lean and size, a kickstand column's shape.
 
 use support_engine::supports::settings::types::SupportSettings;
 use support_engine::supports::support_kinds::SupportTypeId;
@@ -154,7 +151,7 @@ fn kickstand(
 
 #[test]
 fn kickstand_column_shape() {
-    // The grid-snapped placement from DragonFruit's bug report: the chain
+    // A grid-snapped placement: the chain
     // overshoots a low host and the terminal run doubles back down to it.
     assert_eq!(
         kickstand(
