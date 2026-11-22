@@ -1,34 +1,33 @@
-//! DragonFruit `src/supports/SupportTypes/Trunk/trunkConstructionJoints.ts`.
+//! The joint a straight trunk gets partway up its shaft.
 
-use crate::supports::types::Vec3;
 use crate::geom::math_utils::{js_max, js_min};
+use crate::supports::types::Vec3;
 
-const MIN_INSERTED_BASE_SEGMENT_MM: f64 = 1.0;
-const MIN_INSERTED_TRANSITION_SEGMENT_MM: f64 = 0.5;
+/// The shortest segment left below the joint, in mm.
+const MIN_LOWER_SEGMENT_MM: f64 = 1.0;
+/// The shortest segment left above the joint, in mm.
+const MIN_UPPER_SEGMENT_MM: f64 = 0.5;
+/// How far up the rise the joint goes, when it fits.
+const JOINT_HEIGHT_SHARE: f64 = 0.65;
 
-/// The joint a straight support gets 65% of the way up its rise, if it has room.
-fn central_joint(base_pos: Vec3, root_top_z: f64, socket_pos: Vec3) -> Vec<Vec3> {
-    let available_rise = socket_pos.z - root_top_z;
-    if available_rise <= MIN_INSERTED_TRANSITION_SEGMENT_MM + MIN_INSERTED_BASE_SEGMENT_MM {
+/// The joint 65% of the way from the root's top to the socket, above the
+/// base; none when the rise leaves no room for both segments around it.
+fn mid_shaft_joint(base_pos: Vec3, root_top_z: f64, socket_pos: Vec3) -> Vec<Vec3> {
+    let rise = socket_pos.z - root_top_z;
+    if rise <= MIN_UPPER_SEGMENT_MM + MIN_LOWER_SEGMENT_MM {
         return Vec::new();
     }
-
-    let min_joint_z = root_top_z + MIN_INSERTED_BASE_SEGMENT_MM;
-    let max_joint_z = socket_pos.z - MIN_INSERTED_TRANSITION_SEGMENT_MM;
-    let preferred_joint_z = root_top_z + available_rise * 0.65;
-    let joint_z = js_max(min_joint_z, js_min(preferred_joint_z, max_joint_z));
-
-    vec![Vec3::new(base_pos.x, base_pos.y, joint_z)]
+    let lowest = root_top_z + MIN_LOWER_SEGMENT_MM;
+    let highest = socket_pos.z - MIN_UPPER_SEGMENT_MM;
+    let z = js_max(
+        lowest,
+        js_min(root_top_z + rise * JOINT_HEIGHT_SHARE, highest),
+    );
+    vec![Vec3::new(base_pos.x, base_pos.y, z)]
 }
 
-pub fn with_central_straight_support_joint(
-    base_pos: Vec3,
-    root_top_z: f64,
-    socket_pos: Vec3,
-) -> Vec<Vec3> {
-    central_joint(base_pos, root_top_z, socket_pos)
-}
-
+/// The construction joints a trunk is built with: the ones given, or, for a
+/// trunk with no route bends either, the mid-shaft joint.
 pub fn normalize_first_construction_joint(
     base_pos: Vec3,
     root_top_z: f64,
@@ -37,12 +36,10 @@ pub fn normalize_first_construction_joint(
     construction_joints: &[Vec3],
 ) -> Vec<Vec3> {
     if !construction_joints.is_empty() {
-        return construction_joints.to_vec();
+        construction_joints.to_vec()
+    } else if route_joints.is_empty() {
+        mid_shaft_joint(base_pos, root_top_z, socket_pos)
+    } else {
+        Vec::new()
     }
-
-    if !route_joints.is_empty() {
-        return Vec::new();
-    }
-
-    central_joint(base_pos, root_top_z, socket_pos)
 }

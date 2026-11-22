@@ -15,7 +15,7 @@ use super::twig::twig_verticality::is_twig_shaft_vertical_enough;
 use crate::supports::model_mesh::ModelMesh;
 use crate::supports::settings::types::SupportSettings;
 use crate::supports::support_kinds::SupportTypeId;
-use crate::supports::types::{LimitationCode, Stick, Twig, Vec3};
+use crate::supports::types::{LimitationCode, Segment, Stick, Twig, Vec3};
 
 #[derive(Clone, Copy, Debug)]
 pub struct ContactBridgeRequest<'a> {
@@ -40,6 +40,16 @@ pub struct ContactBridgeRequest<'a> {
 pub enum BridgeEntity {
     Twig(Twig),
     Stick(Stick),
+}
+
+impl BridgeEntity {
+    /// The bridge's shaft.
+    pub fn segments(&self) -> &[Segment] {
+        match self {
+            BridgeEntity::Twig(twig) => &twig.segments,
+            BridgeEntity::Stick(stick) => &stick.segments,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
