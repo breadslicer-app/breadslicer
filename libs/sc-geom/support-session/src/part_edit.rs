@@ -35,6 +35,13 @@ const CLEAR_SHARE: f64 = 0.9;
 /// How much higher than the part below it an elbow stays, mm: a shaft only
 /// rises from its foot to its tip.
 const MIN_RISE_MM: f64 = 0.2;
+
+/// A segment of a shaft's route: its id and its two ends, from the bottom
+/// up.
+type Span = (String, Vec3, Vec3);
+
+/// A segment's shaft, that shaft's spans, and the segment's two ends.
+type HostSpan = (String, Vec<Span>, Vec3, Vec3);
 /// A moved trunk leans into its tip no more than this short of the limit,
 /// degrees: an elbow made for it is not on the edge of a refusal.
 const LEAN_MARGIN_DEG: f64 = 2.0;
@@ -333,7 +340,7 @@ impl SupportSession {
 
     /// Segment `segment`'s shaft and route: the shaft's id, the points of
     /// its route from the bottom up, and the segment's two ends.
-    fn host_span(&self, segment: &str) -> Option<(String, Vec<(String, Vec3, Vec3)>, Vec3, Vec3)> {
+    fn host_span(&self, segment: &str) -> Option<HostSpan> {
         let c = &self.state.collections;
         let host = c
             .trunks
@@ -351,7 +358,7 @@ impl SupportSession {
         let mut points = vec![route.anchor];
         points.extend(route.elbows.iter().map(|(_, p)| *p));
         points.push(route.socket);
-        let spans: Vec<(String, Vec3, Vec3)> = segments
+        let spans: Vec<Span> = segments
             .iter()
             .zip(points.windows(2))
             .map(|(s, w)| (s.id.clone(), w[0], w[1]))
