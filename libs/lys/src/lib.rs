@@ -258,7 +258,7 @@ fn mesh_of(bytes: &[u8], name: &str) -> Result<IndexedMesh, String> {
     let field = |i: usize| u32_at(bytes, 4 * i).ok_or("too short");
     let indices = field(2)? as usize;
     let floats = field(3)? as usize;
-    if indices % 3 != 0 || floats % 3 != 0 {
+    if !indices.is_multiple_of(3) || !floats.is_multiple_of(3) {
         return Err("counts that are not triangles".to_owned());
     }
     let vertex_bytes = floats.checked_mul(4).ok_or("too many vertices")?;
@@ -293,7 +293,9 @@ fn mesh_of(bytes: &[u8], name: &str) -> Result<IndexedMesh, String> {
     }
     let start = 20 + index_bytes;
     let vertices = bytes[start..]
-        .chunks_exact(12)
+        .as_chunks::<12>()
+        .0
+        .iter()
         .map(|c| {
             let f = |k: usize| f32::from_le_bytes(c[k..k + 4].try_into().unwrap_or_default());
             Vertex::new([f(0), f(4), f(8)])
@@ -336,7 +338,7 @@ fn text(value: &Value, key: &str) -> Option<String> {
 }
 
 /// The entries of a `{byId, allIds}` table, in `allIds`' order when it has one.
-fn table<'a>(value: Option<&'a Value>) -> Vec<(&'a str, &'a Value)> {
+fn table(value: Option<&Value>) -> Vec<(&str, &Value)> {
     let Some(by_id) = value.and_then(|v| v.get("byId")) else {
         return Vec::new();
     };
