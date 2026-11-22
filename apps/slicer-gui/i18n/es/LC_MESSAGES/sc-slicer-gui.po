@@ -10871,18 +10871,26 @@ msgstr[1] "El archivo no se podía importar como vino: {n} triángulos no tienen
 #: src/import_notes.rs
 #, rust-format
 msgctxt "ImportNotes"
-msgid "The scene's {n} support is not brought in yet: it comes in a later version."
-msgid_plural "The scene's {n} supports are not brought in yet: they come in a later version."
-msgstr[0] "El soporte de la escena todavía no se trae: llega en una próxima versión."
-msgstr[1] "Los {n} soportes de la escena todavía no se traen: llegan en una próxima versión."
+msgid "{n} support of the scene found no way to be placed and was left out."
+msgid_plural "{n} supports of the scene found no way to be placed and were left out."
+msgstr[0] "{n} soporte de la escena no encontró cómo colocarse y quedó afuera."
+msgstr[1] "{n} soportes de la escena no encontraron cómo colocarse y quedaron afuera."
 
 #: src/import_notes.rs
 #, rust-format
 msgctxt "ImportNotes"
-msgid "The scene's hollowing ({n} model) is not brought in yet: it comes in a later version."
-msgid_plural "The scene's hollowing ({n} models) is not brought in yet: it comes in a later version."
-msgstr[0] "El ahuecado de la escena ({n} modelo) todavía no se trae: llega en una próxima versión."
-msgstr[1] "El ahuecado de la escena ({n} modelos) todavía no se trae: llega en una próxima versión."
+msgid "{n} drain of the scene reaches no cavity and was left out."
+msgid_plural "{n} drains of the scene reach no cavity and were left out."
+msgstr[0] "{n} drenaje de la escena no llega a ningún hueco y quedó afuera."
+msgstr[1] "{n} drenajes de la escena no llegan a ningún hueco y quedaron afuera."
+
+#: src/import_notes.rs
+#, rust-format
+msgctxt "ImportNotes"
+msgid "{n} hollowed model of the scene could not be hollowed again and opened solid."
+msgid_plural "{n} hollowed models of the scene could not be hollowed again and opened solid."
+msgstr[0] "{n} modelo ahuecado de la escena no se pudo ahuecar de nuevo y abrió macizo."
+msgstr[1] "{n} modelos ahuecados de la escena no se pudieron ahuecar de nuevo y abrieron macizos."
 
 #: src/import_notes.rs
 msgctxt "ImportNotes"

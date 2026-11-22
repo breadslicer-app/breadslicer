@@ -29,6 +29,9 @@ pub struct LassoRegion {
     pub w: [f32; 3],
     /// The drawn curve, closed (the last point joins the first).
     pub polygon: Vec<[f32; 2]>,
+    /// How far along `w` the region reaches, `c` from the first to the
+    /// second: a box kept solid (#700). `None` all the way through.
+    pub depth: Option<[f32; 2]>,
 }
 
 impl LassoRegion {
@@ -54,7 +57,12 @@ impl LassoRegion {
                 hi[k] = hi[k].max(p[k]);
             }
         }
+        let depth = self
+            .depth
+            .filter(|d| d[0].is_finite() && d[1].is_finite() && d[0] < d[1])
+            .map(|d| (d, 1.0 / rows[2].length().max(1e-30)));
         Some(PreparedLasso {
+            depth,
             perspective: self.perspective,
             origin: Vec3::new(self.origin[0], self.origin[1], self.origin[2]),
             rows,
@@ -69,6 +77,9 @@ impl LassoRegion {
 /// A [`LassoRegion`] with its frame inverted, for asking about many points.
 #[derive(Debug, Clone)]
 pub struct PreparedLasso {
+    /// The range of `c` it reaches over, and the millimetres one unit of `c`
+    /// spans across it.
+    depth: Option<([f32; 2], f32)>,
     perspective: bool,
     origin: Vec3,
     rows: [Vec3; 3],
@@ -82,21 +93,31 @@ pub struct PreparedLasso {
 impl PreparedLasso {
     /// Where `p` projects in the polygon's plane, and how many millimetres
     /// one unit of that plane spans at `p`; `None` behind a cone's eye.
-    fn project(&self, p: Vec3) -> Option<([f32; 2], f32)> {
+    fn project(&self, p: Vec3) -> Option<([f32; 2], f32, f32)> {
         let q = p.sub(self.origin);
         let [a, b, c] = self.rows.map(|r| r.dot(q));
         if self.perspective {
-            (c > 1e-9).then(|| ([a / c, b / c], self.scale * c))
+            (c > 1e-9).then(|| ([a / c, b / c], self.scale * c, c))
         } else {
-            Some(([a, b], self.scale))
+            Some(([a, b], self.scale, c))
         }
+    }
+
+    /// How far inside its depth `c` is, in millimetres: negative outside;
+    /// unbounded for a region that goes all the way through.
+    fn depth_inside_mm(&self, c: f32) -> f32 {
+        self.depth
+            .map_or(f32::MAX, |([lo, hi], mm)| (c - lo).min(hi - c) * mm)
     }
 
     /// Whether the region holds `p`.
     pub fn contains(&self, p: Vec3) -> bool {
-        let Some((x, _)) = self.project(p) else {
+        let Some((x, _, c)) = self.project(p) else {
             return false;
         };
+        if self.depth_inside_mm(c) < 0.0 {
+            return false;
+        }
         if x[0] < self.lo[0] || x[0] > self.hi[0] || x[1] < self.lo[1] || x[1] > self.hi[1] {
             return false;
         }
@@ -107,11 +128,19 @@ impl PreparedLasso {
     /// positive inside: exact on the surface itself, and to first order near
     /// it (a cone's sides spread with depth).
     pub fn signed_distance_mm(&self, p: Vec3) -> f32 {
-        let Some((x, mm)) = self.project(p) else {
+        let Some((x, mm, c)) = self.project(p) else {
             return -f32::MAX;
         };
         let d = distance_to_outline(&self.polygon, x) * mm;
-        if inside(&self.polygon, x) { d } else { -d }
+        let across = if inside(&self.polygon, x) { d } else { -d };
+        let along = self.depth_inside_mm(c);
+        if across >= 0.0 && along >= 0.0 {
+            across.min(along)
+        } else if across < 0.0 && along < 0.0 {
+            -(across * across + along * along).sqrt()
+        } else {
+            across.min(along)
+        }
     }
 }
 
@@ -165,7 +194,29 @@ mod tests {
             v: [0.0, 1.0, 0.0],
             w: [0.0, 0.0, 1.0],
             polygon: vec![[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]],
+            depth: None,
         }
+    }
+
+    #[test]
+    fn a_region_with_a_depth_is_a_box() {
+        // The square from z = -10 + 5 to -10 + 8.
+        let r = LassoRegion {
+            depth: Some([5.0, 8.0]),
+            ..square(false)
+        }
+        .prepared()
+        .expect("prepared");
+        assert!(r.contains(Vec3::new(0.5, 0.5, -4.0)));
+        assert!(!r.contains(Vec3::new(0.5, 0.5, -6.0)));
+        assert!(!r.contains(Vec3::new(0.5, 0.5, 0.0)));
+        // Nearer a cap than a side: the cap's distance.
+        assert!((r.signed_distance_mm(Vec3::new(0.0, 0.0, -4.5)) - 0.5).abs() < 1e-5);
+        // Past a cap: negative.
+        assert!((r.signed_distance_mm(Vec3::new(0.0, 0.0, -1.0)) + 1.0).abs() < 1e-5);
+        // Past a side and a cap: the corner's distance.
+        let d = r.signed_distance_mm(Vec3::new(4.0, 0.0, 2.0));
+        assert!((d + (9.0f32 + 16.0).sqrt()).abs() < 1e-4, "{d}");
     }
 
     #[test]

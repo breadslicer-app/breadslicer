@@ -85,6 +85,11 @@
 //! drains were drilled into the model as it came", whose `original` is that
 //! model before them, and the min width is always there (0 for none). Only
 //! such a hollow is written as version 6.
+//!
+//! Version 7 lets an area reach only so deep (#700, a box kept solid in a
+//! scene from another slicer): as version 6, then per area a `u8` (1: it
+//! has a depth) and, when set, 2 `f32`, the range along `w` it reaches. Only
+//! a hollow with such an area is written as version 7.
 
 use std::sync::Arc;
 
@@ -106,7 +111,7 @@ pub(crate) const HOLLOWER: &str = "breadslicer";
 const EARLIER_HOLLOWER: &str = "df";
 
 /// The newest document version this build writes and reads.
-pub(crate) const HOLLOW_DOCUMENT_VERSION: u32 = 6;
+pub(crate) const HOLLOW_DOCUMENT_VERSION: u32 = 7;
 
 /// The hollows to save with the scene of `spatial`: each hollow made here
 /// that a leaf still shows, once, with the first leaf that shows it. Copies
@@ -276,7 +281,8 @@ fn needs_shapes(hollowed: &Hollowed) -> bool {
 /// The document of `hollowed`, and its version.
 fn encode(hollowed: &Hollowed) -> (u32, Vec<u8>) {
     let drilled = hollowed.drilled;
-    let width = drilled || hollowed.options.min_width_mm > 0.0;
+    let depths = hollowed.solids.iter().any(|s| s.depth.is_some());
+    let width = depths || drilled || hollowed.options.min_width_mm > 0.0;
     let record = width || hollowed.engine.is_some() || hollowed.stretch.is_some();
     let solids = record || !hollowed.solids.is_empty();
     let shapes = solids || needs_shapes(hollowed);
@@ -369,7 +375,17 @@ fn encode(hollowed: &Hollowed) -> (u32, Vec<u8>) {
     if width {
         out.extend_from_slice(&hollowed.options.min_width_mm.to_le_bytes());
     }
-    let version = if drilled {
+    if depths {
+        for area in &hollowed.solids {
+            out.push(u8::from(area.depth.is_some()));
+            if let Some(depth) = area.depth {
+                f32s(&mut out, &depth);
+            }
+        }
+    }
+    let version = if depths {
+        7
+    } else if drilled {
         6
     } else if width {
         5
@@ -449,14 +465,14 @@ struct Decoded {
     drilled: bool,
 }
 
-/// Reads a document of `version` (1 to 6).
+/// Reads a document of `version` (1 to 7).
 fn decode(bytes: &[u8], version: u32) -> Option<Decoded> {
     let (shapes, solids, record, width) = match version {
         0 | 1 => (false, false, false, false),
         2 => (true, false, false, false),
         3 => (true, true, false, false),
         4 => (true, true, true, false),
-        5 | 6 => (true, true, true, true),
+        5..=7 => (true, true, true, true),
         _ => return None,
     };
     let mut input = Reader(bytes);
@@ -529,7 +545,7 @@ fn decode(bytes: &[u8], version: u32) -> Option<Decoded> {
     } else {
         Vec::new()
     };
-    let solids = if solids {
+    let mut solids = if solids {
         let count = input.u32()? as usize;
         // Each area takes at least 57 bytes and 3 points.
         if count > input.0.len() / 81 {
@@ -558,6 +574,7 @@ fn decode(bytes: &[u8], version: u32) -> Option<Decoded> {
                     v,
                     w,
                     polygon,
+                    depth: None,
                 })
             })
             .collect::<Option<Vec<_>>>()?
@@ -595,6 +612,18 @@ fn decode(bytes: &[u8], version: u32) -> Option<Decoded> {
             return None;
         }
         options.min_width_mm = w;
+    }
+    if version >= 7 {
+        for area in &mut solids {
+            area.depth = match input.u8()? {
+                0 => None,
+                1 => {
+                    let d: [f32; 2] = input.f32s()?;
+                    Some((d.iter().all(|v| v.is_finite()) && d[0] < d[1]).then_some(d)?)
+                }
+                _ => return None,
+            };
+        }
     }
     input.0.is_empty().then_some(Decoded {
         options,
@@ -806,6 +835,32 @@ mod hollow_persist_tests {
         assert!(decode(&bytes, 3).is_none());
     }
 
+    /// #700: an area that reaches only so deep (a box kept solid) is
+    /// written as version 7 and read back as it was.
+    #[test]
+    fn a_solid_box_reads_back_as_version_7() {
+        let square = |depth: Option<[f32; 2]>| LassoRegion {
+            perspective: false,
+            origin: [1.0, -2.0, 3.0],
+            u: [2.0, 0.0, 0.0],
+            v: [0.0, 1.0, 0.0],
+            w: [0.0, 0.0, 4.0],
+            polygon: vec![[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]],
+            depth,
+        };
+        let h = Hollowed {
+            solids: vec![square(Some([-0.5, 0.5])), square(None)],
+            ..hollowed()
+        };
+        let (version, bytes) = encode(&h);
+        assert_eq!(version, 7);
+        let decoded = decode(&bytes, version).expect("it decodes");
+        assert_eq!(decoded.solids, h.solids);
+        assert!(decode(&bytes[..bytes.len() - 1], version).is_none());
+        // Read as version 6, the depths are left over: malformed.
+        assert!(decode(&bytes, 6).is_none());
+    }
+
     /// #179: the areas kept solid are written as version 3 and read back as
     /// they were; without them a hollow stays version 1 or 2.
     #[test]
@@ -822,6 +877,7 @@ mod hollow_persist_tests {
                     [a.cos() * 0.3, a.sin() * 0.2]
                 })
                 .collect(),
+            depth: None,
         };
         for base in [hollowed(), shaped()] {
             let h = Hollowed {

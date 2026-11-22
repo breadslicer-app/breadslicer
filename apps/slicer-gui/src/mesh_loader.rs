@@ -296,6 +296,18 @@ pub(crate) fn opened_scene(
                 {
                     project_warnings.push(note);
                 }
+                // Its hollowing and supports, made again by our engines
+                // (#699, #700) once each model stands where it prints.
+                if foreign.has_work() {
+                    let request = sc_geom::supports::SupportRequest {
+                        options: crate::support_run::load_saved_options(),
+                        ..Default::default()
+                    };
+                    let built = crate::foreign_build::build_foreign(&mut scene, &foreign, &request);
+                    restored_supports = built.supports;
+                    restored_hollows = built.hollows;
+                    project_warnings.extend(built.note);
+                }
             }
             // Supports kept as data (a `.bread`) are redrawn into their empty
             // leaves before the scene is checked, primed and uploaded.
@@ -325,6 +337,20 @@ pub(crate) fn opened_scene(
         restored_supports,
         restored_hollows,
     })
+}
+
+#[cfg(test)]
+impl OpenedScene {
+    /// What the scene's supports and hollows came back as, and its notes.
+    pub(crate) fn built_for_tests(
+        &self,
+    ) -> (&RestoredSupports, &RestoredHollows, &[ReadProjectWarning]) {
+        (
+            &self.restored_supports,
+            &self.restored_hollows,
+            &self.project_warnings,
+        )
+    }
 }
 
 /// A name as the catalogues compare it: lower case, its words one space apart.
@@ -616,6 +642,7 @@ mod settle_foreign_tests {
             printer: Some("creality  HALOT one".into()),
             resin: Some(("Creality".into(), "Standard Rigid Plus".into())),
             plates: vec![0, 1],
+            models: Vec::new(),
         };
         let other = sc_print_primitives::BuildVolume::new(300.0, 200.0, 300.0).unwrap();
         let note = settle_foreign(&mut scene, &mut payload, &foreign, &catalog(), other);
@@ -646,6 +673,7 @@ mod settle_foreign_tests {
             printer: Some("Someone Else".into()),
             resin: Some(("Default".into(), "Default".into())),
             plates: vec![0, 0],
+            models: Vec::new(),
         };
         let volume = sc_print_primitives::BuildVolume::new(100.0, 60.0, 80.0).unwrap();
         let note = settle_foreign(&mut scene, &mut payload, &foreign, &catalog(), volume);
@@ -676,6 +704,8 @@ mod lys_corpus_tests {
         let volume = sc_print_primitives::BuildVolume::new(128.0, 81.0, 160.0).unwrap();
         let mut took_printer = 0;
         let mut total = 0;
+        let mut all_asked = 0;
+        let mut all_landed = 0;
         for path in std::fs::read_to_string(list)
             .unwrap()
             .lines()
@@ -685,20 +715,64 @@ mod lys_corpus_tests {
             total += 1;
             let loaded = load_scene(path, Some(DEFAULT_MAX_MESH_FILE_SIZE_BYTES), |_| {})
                 .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            let foreign = match &loaded.content {
+                LoadedContent::Project(p) => p.foreign.clone().unwrap_or_default(),
+                LoadedContent::Mesh(_) => Default::default(),
+            };
+            let models = foreign.models.len();
+            let started = std::time::Instant::now();
             let opened = opened_scene(loaded, path, volume)
                 .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            let took = started.elapsed().as_secs_f64();
             let payload = opened.project_payload.as_ref().expect("a project");
             took_printer += usize::from(payload.printer.is_some());
+            // Each contact of the file, in the world, against the tips of
+            // its model's set: how many a tip touches within 0.01 mm.
+            let mut asked = 0;
+            let mut landed = 0;
+            for (row, model) in foreign.models.iter().enumerate() {
+                let leaf = opened.scene.roots()[row];
+                let world = opened.scene.node(leaf).unwrap().local_transform;
+                let tips: Vec<[f64; 3]> = opened
+                    .restored_supports
+                    .sets
+                    .iter()
+                    .filter(|s| s.model == leaf)
+                    .flat_map(|s| {
+                        s.session
+                            .pieces()
+                            .into_iter()
+                            .flat_map(|p| p.contacts)
+                            .map(|c| c.surface)
+                    })
+                    .collect();
+                for c in &model.contacts {
+                    asked += 1;
+                    let at = world
+                        .apply_to_vertex(sc_mesh_core::Vertex::new(c.point.map(|v| v as f32)))
+                        .coords()
+                        .map(f64::from);
+                    if tips
+                        .iter()
+                        .any(|t| (0..3).map(|k| (t[k] - at[k]).powi(2)).sum::<f64>().sqrt() <= 0.01)
+                    {
+                        landed += 1;
+                    }
+                }
+            }
+            all_asked += asked;
+            all_landed += landed;
             println!(
-                "{} models, {} plates, printer {:?}, resin {:?}, notes {:?}  {}",
-                opened.scene.roots().len(),
-                payload.plates,
-                payload.printer.as_ref().map(|p| p.as_str().to_owned()),
-                payload.resin.as_ref().map(|r| r.as_str().to_owned()),
+                "{took:>7.2} s  {models} models, {} sets, {asked} contacts, {landed} land within 0.01 mm, {} hollows, notes {:?}, failures {:?}  {}",
+                opened.restored_supports.sets.len(),
+                opened.restored_hollows.hollows.len(),
                 opened.project_warnings,
+                opened.restored_supports.failures,
                 path.display()
             );
         }
-        println!("{total} scenes, {took_printer} took one of our printers");
+        println!(
+            "{total} scenes, {took_printer} took one of our printers, {all_landed} of {all_asked} contacts land within 0.01 mm"
+        );
     }
 }

@@ -631,6 +631,7 @@ fn a_drawn_region_stays_solid_where_it_was_drawn() {
         v: [0.0, -1.0, 0.0],
         w: [0.0, 0.0, -1.0],
         polygon: vec![[0.025, -1.0], [1.0, -1.0], [1.0, 1.0], [0.025, 1.0]],
+        depth: None,
     };
     let prepared = region.prepared().expect("a region");
     let turn = 0.4f64;
@@ -737,6 +738,7 @@ fn a_drawn_region_on_a_real_model() {
         v: [0.0, 0.0, 1.0],
         w: [0.0, 1.0, 0.0],
         polygon: vec![[-1.0, top], [1.0, top], [1.0, 1.0], [-1.0, 1.0]],
+        depth: None,
     };
     let (scene, leaf) = scene_with(mesh, Transform3D::Identity);
     let started = std::time::Instant::now();
@@ -869,6 +871,7 @@ fn drawn_regions_leave_the_cavity_closed() {
             v: up,
             w: forward,
             polygon,
+            depth: None,
         };
         let drawn = run(
             &scene,

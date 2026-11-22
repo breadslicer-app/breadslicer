@@ -118,16 +118,9 @@ pub fn scene(objects: Vec<(&'static str, Mp)>, plates: Mp) -> Mp {
             )]),
         ),
         ("plates", plates),
-        (
-            "supports",
-            Mp::Map(vec![(
-                "present",
-                Mp::Map(vec![(
-                    "byId",
-                    Mp::Map(vec![("s1", Mp::Nil), ("s2", Mp::Nil), ("s3", Mp::Nil)]),
-                )]),
-            )]),
-        ),
+        ("supports", present(supports())),
+        ("holes", present(holes())),
+        ("hollowBlockers", present(blockers())),
         (
             "printers",
             Mp::Map(vec![
@@ -174,8 +167,96 @@ pub fn object(
         ("rotation", rotation),
         ("scale", scale),
         ("properties", Mp::Map(vec![("hash", Mp::Str("abc"))])),
-        ("hollowing", Mp::Map(vec![("enabled", Mp::Bool(true))])),
+        (
+            "hollowing",
+            Mp::Map(vec![("enabled", Mp::Bool(true)), ("outer", Mp::Num(0.5))]),
+        ),
     ])
+}
+
+/// A `{present: {byId}}` table of `rows`.
+pub fn present(rows: Mp) -> Mp {
+    Mp::Map(vec![("present", Mp::Map(vec![("byId", rows)]))])
+}
+
+/// The supports of the box `o1`: one touching the middle of its bottom
+/// (`z = -3` in its mesh's frame), sized; a branch and a brace whose tips end
+/// on it.
+pub fn supports() -> Mp {
+    let settings = Mp::Map(vec![
+        (
+            "tip",
+            Mp::Map(vec![
+                ("pointDiameter", Mp::Num(0.4)),
+                ("length", Mp::Num(2.5)),
+                ("diameter", Mp::Num(1.2)),
+                ("penetration", Mp::Num(0.0)),
+                ("breakPoint", Mp::Num(0.0)),
+            ]),
+        ),
+        (
+            "base",
+            Mp::Map(vec![
+                ("diameter", Mp::Num(6.0)),
+                ("length", Mp::Num(0.5)),
+                ("joinCone", Mp::Num(0.3)),
+            ]),
+        ),
+    ]);
+    let on = |id: &'static str, parent: Mp, kind: f64, settings: Mp| {
+        Mp::Map(vec![
+            ("id", Mp::Str(id)),
+            ("type", Mp::Num(kind)),
+            ("objectIdTip", Mp::Str("o1")),
+            ("parentTipId", parent),
+            ("tip", v3(0.0, 0.0, -3.0)),
+            ("tipNormal", v3(0.0, 0.0, -2.0)),
+            ("settings", settings),
+        ])
+    };
+    Mp::Map(vec![
+        ("s1", on("s1", Mp::Nil, 1.0, settings)),
+        ("s2", on("s2", Mp::Str("s1"), 0.0, Mp::Nil)),
+        ("s3", on("s3", Mp::Str("s1"), 2.0, Mp::Nil)),
+    ])
+}
+
+/// A drain into the box's `+X` side.
+pub fn holes() -> Mp {
+    Mp::Map(vec![(
+        "h1",
+        Mp::Map(vec![
+            ("objectId", Mp::Str("o1")),
+            ("tip", v3(1.0, 0.0, 0.0)),
+            ("tipNormal", v3(1.0, 0.0, 0.0)),
+            (
+                "settings",
+                Mp::Map(vec![
+                    ("type", Mp::Str("cylinder")),
+                    ("diameter", Mp::Num(1.0)),
+                    ("depth", Mp::Num(2.0)),
+                ]),
+            ),
+        ]),
+    )])
+}
+
+/// A cube half a millimetre across at the box's centre, kept solid.
+pub fn blockers() -> Mp {
+    let m = [
+        0.5, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 1.0, 1.0,
+    ];
+    Mp::Map(vec![(
+        "hb1",
+        Mp::Map(vec![
+            ("objectId", Mp::Str("o1")),
+            ("type", Mp::Str("cube")),
+            (
+                "stlMatrix",
+                Mp::Arr(m.iter().map(|v| Mp::Num(*v)).collect()),
+            ),
+        ]),
+    )])
 }
 
 pub fn two_plates() -> Mp {
@@ -222,8 +303,8 @@ pub fn file(version: &str, scene: &Mp, mesh: &[u8]) -> Vec<u8> {
 
 /// A scene of one box 2 × 4 × 6 mm on the second of two plates (the second
 /// named "Second", 178 mm right of the first), 10 mm right of that plate's
-/// centre and lifted 3 mm, for a Creality Halot One, with three supports
-/// and its hollowing on.
+/// centre and lifted 3 mm, for a Creality Halot One, with one support touching it (and a
+/// branch and a brace), a drain, a solid zone and its hollowing on.
 pub fn box_on_second_plate() -> Vec<u8> {
     let scene = scene(
         vec![(

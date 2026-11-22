@@ -531,13 +531,15 @@ fn a_lychee_scene_opens_as_a_project_of_its_models_on_their_plates() {
     let foreign = project.foreign.as_ref().expect("what the app settles");
     assert_eq!(foreign.printer.as_deref(), Some("Creality Halot One"));
     assert_eq!(foreign.plates, [1]);
-    assert_eq!(
-        opened.project_warnings,
-        [crate::ReadProjectWarning::LeftOutForNow {
-            supports: 3,
-            hollowed: 1,
-        }]
-    );
+    // The support touching the box, its hollowing, drain and solid zone go
+    // to the app's engines; nothing is left out at reading.
+    assert_eq!(foreign.models.len(), 1);
+    assert_eq!(foreign.models[0].contacts.len(), 1);
+    assert!(foreign.models[0].hollow.is_some());
+    assert_eq!(foreign.models[0].drains.len(), 1);
+    assert_eq!(foreign.models[0].solid_zones.len(), 1);
+    assert!(foreign.has_work());
+    assert!(opened.project_warnings.is_empty());
 }
 
 #[test]

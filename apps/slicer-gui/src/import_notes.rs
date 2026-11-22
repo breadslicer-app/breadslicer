@@ -171,26 +171,41 @@ impl Notes {
                 "The file carries project settings from {}; only the models were loaded.",
                 crate::scene_loader::dialect_name(*dialect)
             ),
-            ReadProjectWarning::LeftOutForNow { supports, hollowed } => {
+            ReadProjectWarning::NotBroughtIn {
+                supports,
+                drains,
+                hollows,
+            } => {
                 let detail = describe_project_warning(warning);
                 if *supports > 0 {
                     self.add(
                         ctr!(
                             "ImportNotes",
-                            "The scene's {n} support is not brought in yet: it comes in a later version.",
-                            "The scene's {n} supports are not brought in yet: they come in a later version.",
+                            "{n} support of the scene found no way to be placed and was left out.",
+                            "{n} supports of the scene found no way to be placed and were left out.",
                             *supports
                         ),
                         detail.clone(),
                     );
                 }
-                if *hollowed > 0 {
+                if *drains > 0 {
                     self.add(
                         ctr!(
                             "ImportNotes",
-                            "The scene's hollowing ({n} model) is not brought in yet: it comes in a later version.",
-                            "The scene's hollowing ({n} models) is not brought in yet: it comes in a later version.",
-                            *hollowed
+                            "{n} drain of the scene reaches no cavity and was left out.",
+                            "{n} drains of the scene reach no cavity and were left out.",
+                            *drains
+                        ),
+                        detail.clone(),
+                    );
+                }
+                if *hollows > 0 {
+                    self.add(
+                        ctr!(
+                            "ImportNotes",
+                            "{n} hollowed model of the scene could not be hollowed again and opened solid.",
+                            "{n} hollowed models of the scene could not be hollowed again and opened solid.",
+                            *hollows
                         ),
                         detail,
                     );

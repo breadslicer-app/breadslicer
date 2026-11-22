@@ -35,9 +35,14 @@ pub enum ReadProjectWarning {
     /// scene opens without it, and a re-save will not carry it. The text
     /// says why, in English.
     SurfacePaintDropped { reason: String },
-    /// A scene from another slicer holds supports or hollowing that this
-    /// build does not bring in yet (#698): the models open without them.
-    LeftOutForNow { supports: usize, hollowed: usize },
+    /// Some of what a scene from another slicer holds could not be made
+    /// again (#699, #700): supports the engine found no way to place, drains
+    /// that reach no cavity, models it could not hollow. The rest opened.
+    NotBroughtIn {
+        supports: usize,
+        drains: usize,
+        hollows: usize,
+    },
     /// The printer or resin a scene from another slicer names matches none of
     /// ours by name (#698), so the current one stays.
     ProfileNotFound {

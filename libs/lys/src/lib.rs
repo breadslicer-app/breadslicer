@@ -23,6 +23,14 @@
 //! A model stands scaled, rotated (degrees, about X, then Y, then Z of the
 //! world), the centre of its mesh's box at `position.x, position.y` of its
 //! plate and its lowest point at `position.z`: the height Lychee lifts it by.
+//!
+//! Supports, drains and the boxes a hollowing keeps solid are in a model's
+//! mesh frame. A support whose tip names no parent tip touches its model:
+//! its `tip` lies on the model's surface, `tipNormal` out of it, and its
+//! `settings` give its sizes. The others (branches, braces) end on another
+//! support. A hollowing gives its wall (`outer`); a drain (`holes`) its
+//! point, normal, diameter and depth; a solid box (`hollowBlockers`) the
+//! matrix that maps the unit cube onto it, column by column.
 
 use std::collections::BTreeMap;
 
@@ -51,14 +59,11 @@ pub struct LysScene {
     pub printer: Option<String>,
     /// The resin the scene was saved with.
     pub resin: Option<LysResin>,
-    /// How many supports the scene holds. Breadslicer leaves them out for now.
-    pub supports: usize,
-    /// How many models are hollowed. Breadslicer leaves the hollowing out for
-    /// now.
-    pub hollowed: usize,
 }
 
-/// A model of the scene, in place on its plate.
+/// A model of the scene, in place on its plate. Its supports, drains and
+/// solid zones are in its mesh's frame: [`LysModel::transform`] puts them in
+/// place with it.
 #[derive(Clone, Debug)]
 pub struct LysModel {
     pub name: String,
@@ -69,6 +74,71 @@ pub struct LysModel {
     /// Its plate, an index into [`LysScene::plates`].
     pub plate: usize,
     pub hidden: bool,
+    /// Where its supports touch it (#699). What joins them below (shafts,
+    /// branches, braces, bases) is the support engine's to make again.
+    pub contacts: Vec<LysContact>,
+    /// Its hollowing, when it is hollowed (#700).
+    pub hollow: Option<LysHollow>,
+    /// Its drains (#700), hollowed or not.
+    pub drains: Vec<LysDrain>,
+    /// The zones its hollowing keeps solid (#700).
+    pub solid_zones: Vec<LysSolidZone>,
+}
+
+/// Where a support touches its model, and the shape it was made with.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LysContact {
+    /// On the model's surface.
+    pub point: [f64; 3],
+    /// The surface's normal there, out of the model.
+    pub normal: [f64; 3],
+    pub shape: LysSupportShape,
+}
+
+/// The sizes of a support, in mm.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LysSupportShape {
+    /// Across the tip where it touches the model.
+    pub tip_diameter: f64,
+    /// The tip's cone, from the surface to the shaft.
+    pub tip_length: f64,
+    /// How far the tip sinks into the model.
+    pub penetration: f64,
+    /// A neck of the tip's diameter before the cone; 0 for none.
+    pub break_point: f64,
+    /// Across the shaft, where the tip's cone ends.
+    pub shaft_diameter: f64,
+    /// The disk it stands on.
+    pub base_diameter: f64,
+    pub base_thickness: f64,
+    /// The cone from the base up to the shaft.
+    pub join_cone: f64,
+    /// The tip below, for a support that stands on the model: its length and
+    /// its diameter where it touches.
+    pub base_tip: Option<(f64, f64)>,
+}
+
+/// A model's hollowing.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LysHollow {
+    pub wall_mm: f64,
+}
+
+/// A drain: a round hole into the model from `point`, against `normal`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LysDrain {
+    pub point: [f64; 3],
+    /// Out of the model.
+    pub normal: [f64; 3],
+    pub diameter: f64,
+    pub depth: f64,
+}
+
+/// A box the hollowing keeps solid: the unit cube centred on the origin
+/// under `matrix` (rows; the last column the translation).
+#[derive(Clone, Debug, PartialEq)]
+pub struct LysSolidZone {
+    pub matrix: [[f64; 4]; 3],
 }
 
 /// A plate of the scene.
@@ -391,8 +461,87 @@ pub fn read_lys(bytes: &[u8]) -> Result<LysScene, LysError> {
         plate_origin.push([0.0; 3]);
     }
 
+    // What each model holds, by its id.
+    let present = |key: &str| table(scene.get(key).and_then(|t| t.get("present")));
+    let mut contacts: BTreeMap<String, Vec<LysContact>> = BTreeMap::new();
+    for (_, support) in present("supports") {
+        // A support whose tip ends on another support (a branch, a brace)
+        // touches no model: the engine makes those again.
+        let on_support = support
+            .get("parentTipId")
+            .and_then(Value::as_str)
+            .is_some_and(|p| !p.is_empty());
+        let (Some(model), Some(point), false) = (
+            support.get("objectIdTip").and_then(Value::as_str),
+            point_of(support, "tip"),
+            on_support,
+        ) else {
+            continue;
+        };
+        let Some(normal) = direction_of(support, "tipNormal") else {
+            continue;
+        };
+        contacts
+            .entry(model.to_owned())
+            .or_default()
+            .push(LysContact {
+                point,
+                normal,
+                shape: shape_of(support.get("settings")),
+            });
+    }
+    let mut drains: BTreeMap<String, Vec<LysDrain>> = BTreeMap::new();
+    for (_, hole) in present("holes") {
+        let (Some(model), Some(point), Some(normal)) = (
+            hole.get("objectId").and_then(Value::as_str),
+            point_of(hole, "tip"),
+            direction_of(hole, "tipNormal"),
+        ) else {
+            continue;
+        };
+        let settings = hole.get("settings");
+        let size = |key: &str, or: f64| {
+            settings
+                .and_then(|s| num(s, key))
+                .filter(|v| v.is_finite() && *v > 0.0)
+                .unwrap_or(or)
+        };
+        drains.entry(model.to_owned()).or_default().push(LysDrain {
+            point,
+            normal,
+            diameter: size("diameter", 3.0),
+            depth: size("depth", 3.0),
+        });
+    }
+    let mut zones: BTreeMap<String, Vec<LysSolidZone>> = BTreeMap::new();
+    for (_, blocker) in present("hollowBlockers") {
+        let Some(model) = blocker.get("objectId").and_then(Value::as_str) else {
+            continue;
+        };
+        if blocker
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("cube")
+            != "cube"
+        {
+            continue;
+        }
+        let Some(Value::Array(m)) = blocker.get("stlMatrix") else {
+            continue;
+        };
+        let m: Vec<f64> = m.iter().filter_map(Value::as_f64).collect();
+        if m.len() != 16 || m.iter().any(|v| !v.is_finite()) {
+            continue;
+        }
+        // Column-major, as the file holds it.
+        let matrix = std::array::from_fn(|row| std::array::from_fn(|col| m[col * 4 + row]));
+        zones
+            .entry(model.to_owned())
+            .or_default()
+            .push(LysSolidZone { matrix });
+    }
+
     let mut models = Vec::new();
-    let mut hollowed = 0;
     for (id, object) in table(objects) {
         if object.get("isOnScene").and_then(Value::as_bool) == Some(false) {
             continue;
@@ -434,31 +583,30 @@ pub fn read_lys(bytes: &[u8]) -> Result<LysScene, LysError> {
             xyz(object, "rotation", 0.0),
             xyz(object, "scale", 1.0),
         );
-        if object
-            .get("hollowing")
+        let hollowing = object.get("hollowing");
+        let hollow = (hollowing
             .and_then(|h| h.get("enabled"))
             .and_then(Value::as_bool)
-            == Some(true)
-        {
-            hollowed += 1;
-        }
+            == Some(true))
+        .then(|| LysHollow {
+            wall_mm: hollowing
+                .and_then(|h| num(h, "outer"))
+                .filter(|w| w.is_finite() && *w > 0.0)
+                .unwrap_or(2.0),
+        });
         models.push(LysModel {
             name,
             mesh,
             transform,
             plate,
             hidden: object.get("visible").and_then(Value::as_bool) == Some(false),
+            contacts: contacts.remove(id).unwrap_or_default(),
+            hollow,
+            drains: drains.remove(id).unwrap_or_default(),
+            solid_zones: zones.remove(id).unwrap_or_default(),
         });
     }
 
-    let supports = match scene
-        .get("supports")
-        .and_then(|s| s.get("present"))
-        .and_then(|p| p.get("byId"))
-    {
-        Some(Value::Map(map)) => map.len(),
-        _ => 0,
-    };
     let printer = selected(scene.get("printers")).and_then(|p| text(p, "name"));
     let resin = selected(scene.get("resins")).and_then(|r| {
         let name = text(r, "name")?;
@@ -474,9 +622,52 @@ pub fn read_lys(bytes: &[u8]) -> Result<LysScene, LysError> {
         plates,
         printer,
         resin,
-        supports,
-        hollowed,
     })
+}
+
+/// The point at `key`, when all three of its numbers are there.
+fn point_of(value: &Value, key: &str) -> Option<[f64; 3]> {
+    let v = value.get(key)?;
+    let p = [num(v, "x")?, num(v, "y")?, num(v, "z")?];
+    p.iter().all(|c| c.is_finite()).then_some(p)
+}
+
+/// The unit direction at `key`.
+fn direction_of(value: &Value, key: &str) -> Option<[f64; 3]> {
+    let d = point_of(value, key)?;
+    let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+    (len > 1e-9).then(|| d.map(|c| c / len))
+}
+
+/// A support's sizes from its `settings`, each part's own where it gives
+/// one, Breadslicer's usual size where it does not.
+fn shape_of(settings: Option<&Value>) -> LysSupportShape {
+    let part = |name: &str| settings.and_then(|s| s.get(name));
+    let size = |name: &str, key: &str, or: f64| {
+        part(name)
+            .and_then(|p| num(p, key))
+            .filter(|v| v.is_finite() && *v >= 0.0)
+            .unwrap_or(or)
+    };
+    let tip_diameter = size("tip", "pointDiameter", 0.3).max(0.05);
+    let shaft_diameter = size("tip", "diameter", 1.1).max(tip_diameter + 0.05);
+    let base_tip = part("baseTip").map(|_| {
+        (
+            size("baseTip", "length", 2.0),
+            size("baseTip", "pointDiameter", tip_diameter).max(0.05),
+        )
+    });
+    LysSupportShape {
+        tip_diameter,
+        tip_length: size("tip", "length", 2.3).max(0.1),
+        penetration: size("tip", "penetration", 0.0),
+        break_point: size("tip", "breakPoint", 0.0),
+        shaft_diameter,
+        base_diameter: size("base", "diameter", 5.0).max(shaft_diameter),
+        base_thickness: size("base", "length", 0.25),
+        join_cone: size("base", "joinCone", 0.4),
+        base_tip,
+    }
 }
 
 #[cfg(any(test, feature = "fixture"))]

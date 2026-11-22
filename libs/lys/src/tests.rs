@@ -77,8 +77,41 @@ fn a_model_stands_turned_scaled_and_lifted_on_its_plate() {
             name: "Standard Rigid Plus".to_owned(),
         })
     );
-    assert_eq!(read.supports, 3);
-    assert_eq!(read.hollowed, 1);
+    // One support touches the model; the branch and the brace end on it.
+    assert_eq!(model.contacts.len(), 1);
+    let contact = &model.contacts[0];
+    assert_eq!(contact.point, [0.0, 0.0, -3.0]);
+    assert_eq!(contact.normal, [0.0, 0.0, -1.0]);
+    assert_eq!(contact.shape.tip_diameter, 0.4);
+    assert_eq!(contact.shape.tip_length, 2.5);
+    assert_eq!(contact.shape.shaft_diameter, 1.2);
+    assert_eq!(contact.shape.base_diameter, 6.0);
+    assert_eq!(contact.shape.base_thickness, 0.5);
+    assert_eq!(contact.shape.join_cone, 0.3);
+    assert_eq!(contact.shape.base_tip, None);
+    // In place, the contact is under the box's middle, on its bottom.
+    let at = model
+        .transform
+        .apply_to_vertex(Vertex::new(contact.point.map(|c| c as f32)))
+        .coords();
+    assert!(
+        close(f64::from(at[0]), 10.0)
+            && close(f64::from(at[1]), 5.0)
+            && close(f64::from(at[2]), 3.0),
+        "{at:?}"
+    );
+    assert_eq!(model.hollow, Some(LysHollow { wall_mm: 0.5 }));
+    assert_eq!(
+        model.drains,
+        vec![LysDrain {
+            point: [1.0, 0.0, 0.0],
+            normal: [1.0, 0.0, 0.0],
+            diameter: 1.0,
+            depth: 2.0,
+        }]
+    );
+    assert_eq!(model.solid_zones.len(), 1);
+    assert_eq!(model.solid_zones[0].matrix[2], [0.0, 0.0, 0.5, 1.0]);
 }
 
 #[test]
@@ -191,11 +224,12 @@ fn the_scenes_of_a_corpus_open() {
                 opened += 1;
                 let triangles: usize = scene.models.iter().map(|m| m.mesh.faces().len()).sum();
                 println!(
-                    "{:>6} ms  {} models, {} plates, {triangles} triangles, {} supports, printer {:?}, resin {:?}  {path}",
+                    "{:>6} ms  {} models, {} plates, {triangles} triangles, {} contacts, {} hollowed, printer {:?}, resin {:?}  {path}",
                     started.elapsed().as_millis(),
                     scene.models.len(),
                     scene.plates.len(),
-                    scene.supports,
+                    scene.models.iter().map(|m| m.contacts.len()).sum::<usize>(),
+                    scene.models.iter().filter(|m| m.hollow.is_some()).count(),
                     scene.printer,
                     scene
                         .resin

@@ -5,22 +5,23 @@
 
 //! Opening a Lychee scene (`.lys`, #698) as a project: its models in place on
 //! their plates, its plate names, and what the application resolves itself
-//! (the printer and resin by name, where each plate stands).
+//! (the printer and resin by name, where each plate stands, the supports its
+//! engine routes again from where they touch each model (#699), and the
+//! hollowing its engine makes again (#700)).
 
 use std::path::Path;
 use std::sync::Arc;
 
-use sc_lys::{LysError, LysScene};
+use sc_lys::{LysContact, LysDrain, LysError, LysHollow, LysScene, LysSolidZone};
 use sc_mesh_core::IndexedMesh;
 use sc_scene::{LeafPayload, Scene, SceneMetadata};
 
 use crate::loader::{LoadProgress, LoadSceneError, LoadedContent, LoadedScene, ProjectContent};
-use crate::messages::ReadProjectWarning;
 use crate::payload::ProjectPayload;
 
 /// What a scene from another slicer says that the application settles: the
 /// profiles it names, and the plate each model stands on.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ForeignScene {
     /// The printer, by its name (brand and model).
     pub printer: Option<String>,
@@ -30,6 +31,31 @@ pub struct ForeignScene {
     /// model's transform is in its plate's frame: the plate's centre is the
     /// origin, as on the first plate.
     pub plates: Vec<u32>,
+    /// What each model holds that the application's engines make again, by
+    /// its row as [`ForeignScene::plates`]; in the frame of the model's mesh.
+    pub models: Vec<ForeignModel>,
+}
+
+/// What a model of a scene from another slicer holds that Breadslicer's
+/// engines make again, in the frame of the model's mesh: its leaf's
+/// transform puts it in place.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ForeignModel {
+    /// Where its supports touch it (#699).
+    pub contacts: Vec<LysContact>,
+    /// Its hollowing (#700).
+    pub hollow: Option<LysHollow>,
+    pub drains: Vec<LysDrain>,
+    pub solid_zones: Vec<LysSolidZone>,
+}
+
+impl ForeignScene {
+    /// Whether any model holds supports, hollowing or drains to make again.
+    pub fn has_work(&self) -> bool {
+        self.models
+            .iter()
+            .any(|m| !m.contacts.is_empty() || m.hollow.is_some() || !m.drains.is_empty())
+    }
 }
 
 /// Whether `path` names a Lychee scene.
@@ -71,6 +97,7 @@ pub(crate) fn open_lys<F: FnMut(LoadProgress)>(
 pub(crate) fn loaded_scene(lys: LysScene) -> Result<LoadedScene, LysError> {
     let mut scene = Scene::new();
     let mut plates = Vec::new();
+    let mut extras = Vec::new();
     let mut hidden = Vec::new();
     for (row, model) in lys.models.into_iter().enumerate() {
         let name = model.name.clone();
@@ -91,6 +118,12 @@ pub(crate) fn loaded_scene(lys: LysScene) -> Result<LoadedScene, LysError> {
                 why: e.to_string(),
             })?;
         plates.push(model.plate as u32);
+        extras.push(ForeignModel {
+            contacts: model.contacts,
+            hollow: model.hollow,
+            drains: model.drains,
+            solid_zones: model.solid_zones,
+        });
         if model.hidden {
             hidden.push(row as u32);
         }
@@ -118,13 +151,6 @@ pub(crate) fn loaded_scene(lys: LysScene) -> Result<LoadedScene, LysError> {
         hidden,
         ..ProjectPayload::default()
     };
-    let mut project_warnings = Vec::new();
-    if lys.supports > 0 || lys.hollowed > 0 {
-        project_warnings.push(ReadProjectWarning::LeftOutForNow {
-            supports: lys.supports,
-            hollowed: lys.hollowed,
-        });
-    }
     Ok(LoadedScene {
         content: LoadedContent::Project(ProjectContent {
             scene,
@@ -136,9 +162,10 @@ pub(crate) fn loaded_scene(lys: LysScene) -> Result<LoadedScene, LysError> {
                 printer: lys.printer,
                 resin: lys.resin.map(|r| (r.brand, r.name)),
                 plates,
+                models: extras,
             }),
         }),
         mesh_warnings: Vec::new(),
-        project_warnings,
+        project_warnings: Vec::new(),
     })
 }

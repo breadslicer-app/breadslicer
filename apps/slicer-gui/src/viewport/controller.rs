@@ -6792,6 +6792,7 @@ pub(crate) fn lasso_region(
         v: up.into(),
         w: forward.into(),
         polygon,
+        depth: None,
     })
 }
 

@@ -214,7 +214,7 @@ impl HollowOptions {
         }
     }
 
-    fn settings(&self) -> HollowSettings {
+    pub(crate) fn settings(&self) -> HollowSettings {
         let fill = match self.fill {
             0 => HollowFill::Cavity,
             n => HollowFill::Infill {
@@ -351,7 +351,7 @@ impl LocalDrain {
         self.inner_radius_mm.unwrap_or(self.radius_mm)
     }
 
-    fn to_world(self, world: &Transform3D) -> WorldDrain {
+    pub(crate) fn to_world(self, world: &Transform3D) -> WorldDrain {
         let at = |p: [f32; 3]| world.apply_to_vertex(Vertex::new(p)).coords();
         let center = at(self.center);
         let ahead = at(std::array::from_fn(|i| self.center[i] + self.direction[i]));
@@ -3408,7 +3408,7 @@ fn region_to_local(region: &LassoRegion, world: &Transform3D) -> Option<LassoReg
 }
 
 /// The world solid areas `solids` (local frame) make at the pose `world`.
-fn solid_areas(solids: &[LassoRegion], world: &Transform3D) -> Vec<WorldSolidArea> {
+pub(crate) fn solid_areas(solids: &[LassoRegion], world: &Transform3D) -> Vec<WorldSolidArea> {
     solids
         .iter()
         .map(|r| WorldSolidArea::Lasso(mapped_region(r, world)))
@@ -4466,6 +4466,7 @@ mod tests {
                 v: [0.0, 1.0, 0.0],
                 w: [0.0, 0.0, -1.0],
                 polygon: vec![[56.0, 0.0], [100.0, 0.0], [100.0, 100.0], [56.0, 100.0]],
+                depth: None,
             };
             let ready = |run: &HollowRun| {
                 run.preview
@@ -4701,6 +4702,7 @@ mod tests {
                 v: [0.0, 1.0, 0.0],
                 w: [0.0, 0.0, -1.0],
                 polygon: vec![[56.0, 0.0], [100.0, 0.0], [100.0, 100.0], [56.0, 100.0]],
+                depth: None,
             });
             assert_eq!(counts(), (2, 1));
             assert!(!document.is_dirty(), "marks are not in the file");

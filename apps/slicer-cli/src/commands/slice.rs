@@ -226,8 +226,16 @@ pub(crate) fn load_and_slice(
         LoadedContent::Project(ProjectContent {
             mut scene,
             supports,
+            foreign,
             ..
         }) => {
+            // A scene from another slicer: its supports and hollowing are
+            // made again by the app when it opens there, not here.
+            if foreign.as_ref().is_some_and(|f| f.has_work()) {
+                eprintln!(
+                    "warning: the scene's supports and hollowing are made again when it opens in Breadslicer; here only its models are sliced"
+                );
+            }
             sets = restore_support_sets(&mut scene, supports, &mut std::io::stderr());
             if options.repair {
                 repair_scene(&mut scene, &mut std::io::stderr());
@@ -444,10 +452,14 @@ fn display_project_warnings(warnings: &[ReadProjectWarning], out: &mut dyn Write
             | ReadProjectWarning::ForeignProjectData { .. }
             | ReadProjectWarning::SurfacePaintDropped { .. }
             | ReadProjectWarning::ProfileNotFound { .. } => {}
-            ReadProjectWarning::LeftOutForNow { supports, hollowed } => {
+            ReadProjectWarning::NotBroughtIn {
+                supports,
+                drains,
+                hollows,
+            } => {
                 let _ = writeln!(
                     out,
-                    "warning: the scene's {supports} support(s) and {hollowed} hollowed model(s) are not brought in yet"
+                    "warning: {supports} support(s), {drains} drain(s) and {hollows} hollowing(s) of the scene could not be made again"
                 );
             }
         }

@@ -1900,7 +1900,7 @@ fn support_data_dir() -> Option<std::path::PathBuf> {
 /// The options the Supports tab starts with: the ones it was left with,
 /// when they carry a zone preset; else Miniatures 20~65 mm (#490), the first of
 /// the presets that ship.
-fn load_saved_options() -> SupportOptions {
+pub(crate) fn load_saved_options() -> SupportOptions {
     support_data_dir()
         .and_then(|d| std::fs::read_to_string(d.join("options.toml")).ok())
         .and_then(|text| toml::from_str::<SupportOptions>(&text).ok())
