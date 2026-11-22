@@ -1,11 +1,10 @@
-//! DragonFruit `src/supports/SupportTypes/Stick/stickBuilder.ts`.
-//!
-//! Settings are passed in (`getSettings()`), ids come from `new_id`
-//! (`uuidv4()`), and the mesh is the model's [`ModelMesh`]: rays for the cone
-//! gap probe, the distance field for the shaft (`isShaftBlocked`).
+//! A stick: a straight shaft between two model contacts, with a disk and a
+//! cone at each end. The cones run along the shaft and the disks stay square
+//! to their surfaces.
 
 use serde::Serialize;
 
+use crate::geom::math_utils::{js_hypot, js_max, js_min};
 use crate::supports::constants::get_joint_diameter;
 use crate::supports::model_mesh::ModelMesh;
 use crate::supports::placement_logic::collision_avoidance::is_shaft_blocked;
@@ -14,18 +13,17 @@ use crate::supports::placement_logic::cone_axis_policy::{
     MAX_CONE_AXIS_DEVIATION_FROM_SURFACE_NORMAL_DEG, clamp_cone_axis_deviation_from_surface_normal,
 };
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::tips::get_socket_position;
 use crate::supports::tips::{
-    ContactCone, SupportTipProfile, TipPrimitive,
+    ContactCone, ContactDiskProfile, SupportTipProfile, TipPrimitive, get_socket_position,
+    nib_length,
 };
-use crate::supports::tips::nib_length;
 use crate::supports::types::{Joint, LimitationCode, Segment, Stick, SupportEntity, Vec3};
-use crate::geom::math_utils::{js_hypot, js_max, js_min};
 
 #[derive(Clone, Copy, Debug)]
 pub struct StickBuildInput<'a> {
     pub model_id: &'a str,
-    /// Auto-support tier overrides — absent for manual placement.
+    /// Sizes of the auto-support tier; manual placement leaves them unset and
+    /// takes the settings'.
     pub shaft_diameter_mm: Option<f64>,
     pub tip_contact_diameter_mm: Option<f64>,
     pub a_pos: Vec3,
@@ -42,20 +40,20 @@ pub struct StickBuildResult {
     pub error: Option<LimitationCode>,
 }
 
-const GEOMETRY_EPSILON: f64 = 0.000001;
-
-/// Clearance kept between a shortened cone and the surface it stops short of.
+/// Lengths (and squared lengths) below this count as zero.
+const EPSILON: f64 = 0.000001;
+/// Air kept between a shortened cone's end and the surface it stops at.
 const CONE_GAP_CLEARANCE_MM: f64 = 0.1;
-/// A cone never shortens away to nothing; the disk stands it off the surface.
+/// The shortest a cone gets; the disk keeps it off the surface below that.
 const MIN_CONE_LENGTH_MM: f64 = 0.1;
 
-/// How far this end's cone may run before it leaves the free gap.
+/// The cone length that still fits in the free gap ahead of `start`.
 ///
-/// A stick's cone axis runs along the span, so on a short span the stock cone
-/// length carries both sockets past each other and into the model, and the
-/// shaft then starts inside material. Cast along the axis and keep the cone
-/// inside the room the gap actually has; a span with room keeps the full cone.
-fn clamp_cone_length_to_free_gap(
+/// The cones point along the span, so across a short gap stock-length cones
+/// would carry both sockets past each other and start the shaft inside the
+/// model. A ray along the axis finds how much room there is; a gap with room
+/// keeps the full length.
+fn cone_length_within_gap(
     start: Vec3,
     axis: Vec3,
     length_mm: f64,
@@ -67,23 +65,47 @@ fn clamp_cone_length_to_free_gap(
     if length_mm <= MIN_CONE_LENGTH_MM {
         return length_mm;
     }
-    let end = start.add_scaled_vector(axis, length_mm);
-    let hit = check_shaft_collision(start, end, 0.0, mesh.rays);
-    match (hit.hit, hit.distance) {
-        (true, Some(distance)) => js_max(
+    let probe = check_shaft_collision(
+        start,
+        start.add_scaled_vector(axis, length_mm),
+        0.0,
+        mesh.rays,
+    );
+    match probe.distance.filter(|_| probe.hit) {
+        Some(distance) => js_max(
             MIN_CONE_LENGTH_MM,
             js_min(length_mm, distance - CONE_GAP_CLEARANCE_MM),
         ),
-        _ => length_mm,
+        None => length_mm,
     }
 }
 
-fn clamp_axis(surface_normal: Vec3, axis: Vec3) -> Vec3 {
+fn limit_to_surface(surface_normal: Vec3, axis: Vec3) -> Vec3 {
     clamp_cone_axis_deviation_from_surface_normal(
         surface_normal,
         axis,
         MAX_CONE_AXIS_DEVIATION_FROM_SURFACE_NORMAL_DEG,
     )
+}
+
+/// Where a cone starts on top of its disk, and how thick that disk is.
+#[derive(Clone, Copy)]
+struct Seat {
+    disk_thickness: f64,
+    cone_start: Vec3,
+}
+
+fn seat(pos: Vec3, surface_normal: Vec3, axis: Vec3, disk: &ContactDiskProfile) -> Seat {
+    let disk_thickness = nib_length(surface_normal, axis, Some(disk));
+    Seat {
+        disk_thickness,
+        cone_start: pos.add_scaled_vector(surface_normal, disk_thickness),
+    }
+}
+
+/// Whether `a` sorts after `b` bottom to top (then by y, then by x).
+fn sorts_after(a: Vec3, b: Vec3) -> bool {
+    a.z > b.z || (a.z == b.z && (a.y > b.y || (a.y == b.y && a.x > b.x)))
 }
 
 pub fn build_stick(
@@ -92,95 +114,79 @@ pub fn build_stick(
     new_id: &mut dyn FnMut() -> String,
 ) -> StickBuildResult {
     let StickBuildInput {
-        model_id,
-        a_pos,
-        a_normal,
-        b_pos,
-        b_normal,
-        mesh,
-        ..
+        a_pos, b_pos, mesh, ..
     } = *input;
+    let tip = &settings.tip;
 
-    // Auto-support tier overrides (absent for manual placement). The tier band
-    // sizes the stick; the active Support Studio preset must not.
-    let tip_contact_diameter_mm = input
-        .tip_contact_diameter_mm
-        .unwrap_or(settings.tip.contact_diameter_mm);
+    // The tier sizes an auto stick, never the active preset.
     let shaft_diameter = input
         .shaft_diameter_mm
         .unwrap_or(settings.shaft.diameter_mm);
-
     let tip_profile = SupportTipProfile {
         kind: Some(TipPrimitive::Disk),
-        contact_diameter_mm: tip_contact_diameter_mm,
-        body_diameter_mm: settings.tip.body_diameter_mm,
-        length_mm: settings.tip.length_mm,
-        penetration_mm: settings.tip.penetration_mm,
-        disk_thickness_mm: Some(settings.tip.disk_thickness_mm.unwrap_or(0.1)),
-        max_standoff_mm: Some(settings.tip.max_standoff_mm.unwrap_or(1.5)),
+        contact_diameter_mm: input
+            .tip_contact_diameter_mm
+            .unwrap_or(tip.contact_diameter_mm),
+        body_diameter_mm: tip.body_diameter_mm,
+        length_mm: tip.length_mm,
+        penetration_mm: tip.penetration_mm,
+        disk_thickness_mm: Some(tip.disk_thickness_mm.unwrap_or(0.1)),
+        max_standoff_mm: Some(tip.max_standoff_mm.unwrap_or(1.5)),
         standoff_angle_threshold: Some(
-            settings
-                .tip
-                .standoff_angle_threshold
-                .unwrap_or(std::f64::consts::PI / 4.0),
+            tip.standoff_angle_threshold
+                .unwrap_or(std::f64::consts::FRAC_PI_4),
         ),
-        break_point_mm: settings.tip.breakpoint_mm.filter(|b| *b > 0.0),
+        break_point_mm: tip.breakpoint_mm.filter(|b| *b > 0.0),
     };
-
+    let disk = tip_profile.as_disk_profile();
     let joint_diameter = get_joint_diameter(shaft_diameter);
 
     let unit_or_up = |v: Vec3| {
-        if v.length_sq() < GEOMETRY_EPSILON {
-            Vec3::new(0.0, 0.0, 1.0).normalize()
+        if v.length_sq() < EPSILON {
+            Vec3::new(0.0, 0.0, 1.0)
         } else {
             v.normalize()
         }
     };
-    let surface_normal_a = unit_or_up(a_normal);
-    let surface_normal_b = unit_or_up(b_normal);
+    let normal_a = unit_or_up(input.a_normal);
+    let normal_b = unit_or_up(input.b_normal);
 
-    let mut cone_axis_a = Vec3::new(b_pos.x - a_pos.x, b_pos.y - a_pos.y, b_pos.z - a_pos.z);
-    if cone_axis_a.length_sq() < GEOMETRY_EPSILON {
-        cone_axis_a = surface_normal_a;
+    let mut span = b_pos.sub(a_pos);
+    if span.length_sq() < EPSILON {
+        span = normal_a;
     }
-    cone_axis_a = cone_axis_a.normalize();
+    let mut axis_a = span.normalize();
+    let mut axis_b = axis_a.multiply_scalar(-1.0);
 
-    let mut cone_axis_b = cone_axis_a.multiply_scalar(-1.0);
-    let mut cone_start_a = Vec3::ZERO;
-    let mut cone_start_b = Vec3::ZERO;
-    let mut disk_thickness_a = 0.0;
-    let mut disk_thickness_b = 0.0;
-    let disk_profile = tip_profile.as_disk_profile();
-
-    // Match trunk behavior more closely: the disk stays glued to the local
-    // surface normal, but the cone body is allowed to cant toward the bridge.
-    for _pass in 0..2 {
-        cone_axis_a = clamp_axis(surface_normal_a, cone_axis_a);
-        cone_axis_b = clamp_axis(surface_normal_b, cone_axis_b);
-
-        disk_thickness_a =
-            nib_length(surface_normal_a, cone_axis_a, Some(&disk_profile));
-        disk_thickness_b =
-            nib_length(surface_normal_b, cone_axis_b, Some(&disk_profile));
-
-        cone_start_a = a_pos.add_scaled_vector(surface_normal_a, disk_thickness_a);
-        cone_start_b = b_pos.add_scaled_vector(surface_normal_b, disk_thickness_b);
-
-        let bridge_axis = cone_start_b.sub(cone_start_a);
-        if bridge_axis.length_sq() < GEOMETRY_EPSILON {
+    // The disks stay on their surfaces, but each cone leans toward the line
+    // between the two cone starts. Moving the axes moves the disks' stand-off,
+    // and so the starts, which is why this settles over two passes.
+    let mut seats;
+    let mut passes = 0;
+    loop {
+        axis_a = limit_to_surface(normal_a, axis_a);
+        axis_b = limit_to_surface(normal_b, axis_b);
+        seats = (
+            seat(a_pos, normal_a, axis_a, &disk),
+            seat(b_pos, normal_b, axis_b, &disk),
+        );
+        passes += 1;
+        let between = seats.1.cone_start.sub(seats.0.cone_start);
+        if between.length_sq() < EPSILON {
             break;
         }
-
-        let bridge_axis = bridge_axis.normalize();
-        cone_axis_a = bridge_axis;
-        cone_axis_b = bridge_axis.multiply_scalar(-1.0);
+        axis_a = between.normalize();
+        axis_b = axis_a.multiply_scalar(-1.0);
+        if passes == 2 {
+            break;
+        }
     }
+    let axis_a = limit_to_surface(normal_a, axis_a);
+    let axis_b = limit_to_surface(normal_b, axis_b);
+    let (seat_a, seat_b) = seats;
 
-    let cone_axis_a = clamp_axis(surface_normal_a, cone_axis_a);
-    let cone_axis_b = clamp_axis(surface_normal_b, cone_axis_b);
-
-    // SoulCrafted (#360): the lower end may take a tip of its own.
-    let end_tip = |lower: bool| match settings.mesh_to_mesh.base_tip {
+    // The lower end may carry a tip of its own (#360).
+    let tip_for = |lower: bool| match settings.mesh_to_mesh.base_tip {
         Some(base) if lower => SupportTipProfile {
             contact_diameter_mm: base.diameter_mm,
             length_mm: base.length_mm,
@@ -189,118 +195,98 @@ pub fn build_stick(
         _ => tip_profile,
     };
     let a_is_lower = a_pos.z <= b_pos.z;
-    let (tip_a, tip_b) = (end_tip(a_is_lower), end_tip(!a_is_lower));
-    let cone_length_a =
-        clamp_cone_length_to_free_gap(cone_start_a, cone_axis_a, tip_a.length_mm, mesh);
-    let cone_length_b =
-        clamp_cone_length_to_free_gap(cone_start_b, cone_axis_b, tip_b.length_mm, mesh);
-    let profile_a = SupportTipProfile {
-        length_mm: cone_length_a,
-        ..tip_a
+    let fit = |seat: Seat, axis: Vec3, tip: SupportTipProfile| SupportTipProfile {
+        length_mm: cone_length_within_gap(seat.cone_start, axis, tip.length_mm, mesh),
+        ..tip
     };
-    let profile_b = SupportTipProfile {
-        length_mm: cone_length_b,
-        ..tip_b
-    };
+    let profile_a = fit(seat_a, axis_a, tip_for(a_is_lower));
+    let profile_b = fit(seat_b, axis_b, tip_for(!a_is_lower));
+    let socket_a = get_socket_position(seat_a.cone_start, axis_a, Some(&profile_a));
+    let socket_b = get_socket_position(seat_b.cone_start, axis_b, Some(&profile_b));
 
-    let socket_a = get_socket_position(cone_start_a, cone_axis_a, Some(&profile_a));
-    let socket_b = get_socket_position(cone_start_b, cone_axis_b, Some(&profile_b));
-
-    let socket_joint_a = Joint {
+    let joint_a = Joint {
         id: new_id(),
         pos: socket_a,
         diameter: joint_diameter,
     };
-    let socket_joint_b = Joint {
+    let joint_b = Joint {
         id: new_id(),
         pos: socket_b,
         diameter: joint_diameter,
     };
-
-    let segment = Segment {
-        bottom_joint: Some(socket_joint_a.clone()),
-        top_joint: Some(socket_joint_b.clone()),
+    let shaft = Segment {
+        bottom_joint: Some(joint_a.clone()),
+        top_joint: Some(joint_b.clone()),
         ..Segment::straight(new_id(), shaft_diameter)
     };
+    let mut cone =
+        |pos: Vec3, normal: Vec3, axis: Vec3, seat: Seat, profile, joint: &Joint| ContactCone {
+            id: new_id(),
+            pos,
+            normal: axis,
+            surface_normal: Some(normal),
+            disk_length_override: Some(seat.disk_thickness),
+            placement_surface: None,
+            profile,
+            socket_joint_id: Some(joint.id.clone()),
+        };
+    let cone_a = cone(a_pos, normal_a, axis_a, seat_a, profile_a, &joint_a);
+    let cone_b = cone(b_pos, normal_b, axis_b, seat_b, profile_b, &joint_b);
 
-    let contact_cone_a = ContactCone {
-        id: new_id(),
-        pos: a_pos,
-        normal: cone_axis_a,
-        surface_normal: Some(surface_normal_a),
-        disk_length_override: Some(disk_thickness_a),
-        placement_surface: None,
-        profile: profile_a,
-        socket_joint_id: Some(socket_joint_a.id.clone()),
-    };
-    let contact_cone_b = ContactCone {
-        id: new_id(),
-        pos: b_pos,
-        normal: cone_axis_b,
-        surface_normal: Some(surface_normal_b),
-        disk_length_override: Some(disk_thickness_b),
-        placement_surface: None,
-        profile: profile_b,
-        socket_joint_id: Some(socket_joint_b.id.clone()),
-    };
-
-    // Normalize ordering so the ID/joint ordering is deterministic across
-    // equivalent inputs.
-    let (a, b) = (a_pos, b_pos);
-    let swap = a.z > b.z || (a.z == b.z && (a.y > b.y || (a.y == b.y && a.x > b.x)));
-    let (contact_cone_a, contact_cone_b) = if swap {
-        (contact_cone_b, contact_cone_a)
+    // The cones are stored in a fixed order whichever end was given first.
+    let (contact_cone_a, contact_cone_b) = if sorts_after(a_pos, b_pos) {
+        (cone_b, cone_a)
     } else {
-        (contact_cone_a, contact_cone_b)
+        (cone_a, cone_b)
     };
 
     let stick = Stick {
         base: SupportEntity {
             id: new_id(),
-            model_id: model_id.to_owned(),
+            model_id: input.model_id.to_owned(),
             ..SupportEntity::default()
         },
-        segments: vec![segment],
+        segments: vec![shaft],
         contact_cone_a,
         contact_cone_b,
     };
 
-    let mut error = None;
-    if let Some(mesh) = mesh {
-        let shaft_radius = shaft_diameter / 2.0;
-        // A stick is anchored on the two surfaces it bridges, so the shaft's
-        // own ends always sit within a shaft radius of material, by
-        // construction. Test the free span instead, the part that can foul.
-        // The tip cones are left out, as every other type leaves its own.
-        let span = js_hypot(&[
-            socket_b.x - socket_a.x,
-            socket_b.y - socket_a.y,
-            socket_b.z - socket_a.z,
-        ]);
-        if span > GEOMETRY_EPSILON {
-            let inset = js_min(shaft_radius + 0.15, span * 0.4);
-            let ux = (socket_b.x - socket_a.x) / span;
-            let uy = (socket_b.y - socket_a.y) / span;
-            let uz = (socket_b.z - socket_a.z) / span;
-            let blocked = is_shaft_blocked(
-                Vec3::new(
-                    socket_a.x + ux * inset,
-                    socket_a.y + uy * inset,
-                    socket_a.z + uz * inset,
-                ),
-                Vec3::new(
-                    socket_b.x - ux * inset,
-                    socket_b.y - uy * inset,
-                    socket_b.z - uz * inset,
-                ),
-                shaft_radius,
-                mesh.field,
-            );
-            if blocked {
-                error = Some(LimitationCode::CollisionWithModel);
-            }
-        }
-    }
+    let error = mesh
+        .filter(|mesh| free_span_blocked(socket_a, socket_b, shaft_diameter / 2.0, mesh))
+        .map(|_| LimitationCode::CollisionWithModel);
 
     StickBuildResult { stick, error }
+}
+
+/// Whether the shaft's free span runs into the model.
+///
+/// Both shaft ends sit on the surfaces the stick bridges, within a radius of
+/// material by construction, so only the span between them is tested, inset
+/// from each socket. The cones are left out, as for every other type.
+fn free_span_blocked(socket_a: Vec3, socket_b: Vec3, radius: f64, mesh: &ModelMesh<'_>) -> bool {
+    let (dx, dy, dz) = (
+        socket_b.x - socket_a.x,
+        socket_b.y - socket_a.y,
+        socket_b.z - socket_a.z,
+    );
+    let span = js_hypot(&[dx, dy, dz]);
+    if span.is_nan() || span <= EPSILON {
+        return false;
+    }
+    let inset = js_min(radius + 0.15, span * 0.4);
+    let (ux, uy, uz) = (dx / span, dy / span, dz / span);
+    is_shaft_blocked(
+        Vec3::new(
+            socket_a.x + ux * inset,
+            socket_a.y + uy * inset,
+            socket_a.z + uz * inset,
+        ),
+        Vec3::new(
+            socket_b.x - ux * inset,
+            socket_b.y - uy * inset,
+            socket_b.z - uz * inset,
+        ),
+        radius,
+        mesh.field,
+    )
 }

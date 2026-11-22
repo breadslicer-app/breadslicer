@@ -1,27 +1,33 @@
-//! DragonFruit `src/supports/SupportTypes/shaftVerticality.ts`.
-//!
-//! Shaft-axis geometry shared by the types that gate on it (sticks, twigs).
-//! The RULES live with their types, because the cant a 12mm column tolerates is
-//! not the cant a 1mm strut tolerates. This is only the measurement they share.
+//! How far a shaft leans off plumb. Sticks and twigs hold their shafts to
+//! limits of their own (a thick column and a thin strut tolerate different
+//! cants); this is the measurement those limits read.
 
+use crate::geom::math_utils::{js_cos, js_hypot};
 use crate::supports::types::Segment;
-use crate::geom::math_utils::js_hypot;
 
-/// |cos| of the first segment's deviation from vertical, 1 = perfectly vertical.
+/// The unsigned cosine between the first segment and the Z axis: 1 for a
+/// plumb shaft, 0 for a level one. A shaft with no first segment, a missing
+/// end or no length counts as plumb.
 pub fn shaft_vertical_cos(segments: &[Segment]) -> f64 {
-    let Some(seg) = segments.first() else {
+    let ends = segments.first().and_then(|segment| {
+        Some((
+            segment.bottom_joint.as_ref()?.pos,
+            segment.top_joint.as_ref()?.pos,
+        ))
+    });
+    let Some((bottom, top)) = ends else {
         return 1.0;
     };
-    let (Some(a), Some(b)) = (&seg.bottom_joint, &seg.top_joint) else {
-        return 1.0;
-    };
-    let (a, b) = (a.pos, b.pos);
-    let vx = b.x - a.x;
-    let vy = b.y - a.y;
-    let vz = b.z - a.z;
-    let len = js_hypot(&[vx, vy, vz]);
-    if len < 1e-6 {
-        return 1.0;
+    let (dx, dy, dz) = (top.x - bottom.x, top.y - bottom.y, top.z - bottom.z);
+    let length = js_hypot(&[dx, dy, dz]);
+    if length < 1e-6 {
+        1.0
+    } else {
+        dz.abs() / length
     }
-    vz.abs() / len
+}
+
+/// Whether the shaft leans no more than `max_lean_deg` off plumb.
+pub(crate) fn leans_at_most(segments: &[Segment], max_lean_deg: f64) -> bool {
+    shaft_vertical_cos(segments) >= js_cos((max_lean_deg * std::f64::consts::PI) / 180.0)
 }

@@ -1,3 +1,3 @@
-//! DragonFruit `src/supports/SupportTypes/Leaf/`.
+//! Leaves: bare contact cones hung off a knot of another support.
 
 pub mod leaf_builder;

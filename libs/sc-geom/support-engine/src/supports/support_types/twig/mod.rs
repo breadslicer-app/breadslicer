@@ -1,7 +1,5 @@
-//! DragonFruit `src/supports/SupportTypes/Twig/`: the builder and the rules it
-//! carries (taper, joint standoff, verticality). Renderer, proxy geometry,
-//! marquee shape and drag preview are the GUI's; the export group goes with the
-//! exporter.
+//! Twigs: thin cylinders between two model contacts, with the sizing,
+//! stand-off and lean rules they follow.
 
 pub mod twig_builder;
 pub mod twig_joint_standoff;

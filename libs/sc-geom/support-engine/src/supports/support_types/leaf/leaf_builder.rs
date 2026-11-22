@@ -1,14 +1,13 @@
-//! DragonFruit `src/supports/SupportTypes/Leaf/leafBuilder.ts`.
-//!
-//! Settings are passed in (DragonFruit's `getSettings()`), ids come from
-//! `new_id` (`uuidv4()`), and the mesh is its collision field.
+//! A leaf: a bare contact cone that hangs off a knot of another support, with
+//! no shaft of its own. The cone runs from the model contact to the knot.
 
 use crate::supports::placement_logic::collision_avoidance::CollisionField;
 use crate::supports::rendering::support_builder::SupportData;
 use crate::supports::settings::types::SupportSettings;
 use crate::supports::support_kinds::SupportTypeId;
-use crate::supports::tips::recompute_contact_cone_for_moved_disk;
-use crate::supports::tips::{ContactCone, SupportTipProfile, TipPrimitive};
+use crate::supports::tips::{
+    ContactCone, SupportTipProfile, TipPrimitive, recompute_contact_cone_for_moved_disk,
+};
 use crate::supports::types::{Knot, Leaf, SupportEntity, Vec3};
 
 #[derive(Clone, Copy, Debug)]
@@ -18,7 +17,8 @@ pub struct LeafBuildInput<'a> {
     pub model_id: &'a str,
     pub parent_knot: &'a Knot,
     pub host_diameter_mm: f64,
-    /// Auto-support tier tip contact — absent for manual placement.
+    /// Contact diameter of the auto-support tier; manual placement leaves it
+    /// unset and takes the settings' tip.
     pub tip_contact_diameter_mm: Option<f64>,
     pub mesh: Option<&'a dyn CollisionField>,
 }
@@ -30,37 +30,28 @@ pub struct LeafBuildResult {
     pub support_data: SupportData,
 }
 
-struct LeafConeShape {
+/// A cone on the contact, aimed along `axis`, solved so its socket meets the
+/// knot.
+fn cone_onto_knot(
+    input: &LeafBuildInput<'_>,
     axis: Vec3,
-    length_mm: f64,
-}
-
-fn compute_leaf_cone_axis_and_length(
-    tip_pos: Vec3,
-    surface_normal: Vec3,
-    knot_pos: Vec3,
-    base_profile: SupportTipProfile,
-    mesh: Option<&dyn CollisionField>,
-) -> LeafConeShape {
-    let cone = recompute_contact_cone_for_moved_disk(
-        &ContactCone {
-            id: "preview-leaf-cone".to_owned(),
-            pos: tip_pos,
-            normal: surface_normal,
-            surface_normal: Some(surface_normal),
-            profile: base_profile,
-            ..ContactCone::default()
-        },
-        tip_pos,
-        surface_normal,
-        Some(knot_pos),
-        mesh,
-    );
-
-    LeafConeShape {
-        axis: cone.normal,
-        length_mm: cone.profile.length_mm,
-    }
+    profile: SupportTipProfile,
+) -> ContactCone {
+    let draft = ContactCone {
+        id: "leaf-draft".to_owned(),
+        pos: input.tip_pos,
+        normal: axis,
+        surface_normal: Some(input.surface_normal),
+        profile,
+        ..ContactCone::default()
+    };
+    recompute_contact_cone_for_moved_disk(
+        &draft,
+        input.tip_pos,
+        input.surface_normal,
+        Some(input.parent_knot.pos),
+        input.mesh,
+    )
 }
 
 pub fn build_leaf_data(
@@ -68,86 +59,59 @@ pub fn build_leaf_data(
     settings: &SupportSettings,
     new_id: &mut dyn FnMut() -> String,
 ) -> LeafBuildResult {
-    let LeafBuildInput {
-        tip_pos,
-        surface_normal,
-        model_id,
-        parent_knot,
-        host_diameter_mm,
-        mesh,
-        ..
-    } = *input;
-    // SoulCrafted (#360): a zone size's leaf is narrower than its host where
-    // it meets it, or its tilted base would stick out of the host.
-    let host_diameter_mm = host_diameter_mm * settings.auto_support.member_host_shaft_ratio;
-    // Auto-support tier override — absent for manual placement (global band).
-    let tip_contact_diameter_mm = input
-        .tip_contact_diameter_mm
-        .unwrap_or(settings.tip.contact_diameter_mm);
+    let knot = input.parent_knot;
+    // The cone's base is narrower than the host where they meet (#360): a
+    // tilted base as wide as the host would show past its sides.
+    let base_diameter = input.host_diameter_mm * settings.auto_support.member_host_shaft_ratio;
 
-    let base_profile = SupportTipProfile {
+    let first_profile = SupportTipProfile {
         kind: Some(TipPrimitive::Disk),
-        contact_diameter_mm: tip_contact_diameter_mm,
-        body_diameter_mm: host_diameter_mm,
+        contact_diameter_mm: input
+            .tip_contact_diameter_mm
+            .unwrap_or(settings.tip.contact_diameter_mm),
+        body_diameter_mm: base_diameter,
         length_mm: settings.tip.length_mm,
         penetration_mm: settings.tip.penetration_mm,
         disk_thickness_mm: Some(0.1),
         max_standoff_mm: Some(1.5),
-        standoff_angle_threshold: Some(std::f64::consts::PI / 4.0),
+        standoff_angle_threshold: Some(std::f64::consts::FRAC_PI_4),
         break_point_mm: settings.tip.breakpoint_mm.filter(|b| *b > 0.0),
     };
 
-    let LeafConeShape { axis, length_mm } = compute_leaf_cone_axis_and_length(
-        tip_pos,
-        surface_normal,
-        parent_knot.pos,
-        base_profile,
-        mesh,
+    // Solve twice: once from the surface normal to find the axis and length
+    // that reach the knot, then again from that axis with that length.
+    let probe = cone_onto_knot(input, input.surface_normal, first_profile);
+    let settled = cone_onto_knot(
+        input,
+        probe.normal,
+        SupportTipProfile {
+            length_mm: probe.profile.length_mm,
+            ..first_profile
+        },
     );
-
-    let profile = SupportTipProfile {
-        length_mm,
-        body_diameter_mm: host_diameter_mm,
-        ..base_profile
-    };
-
     let contact_cone = ContactCone {
         id: new_id(),
-        ..recompute_contact_cone_for_moved_disk(
-            &ContactCone {
-                id: "leaf-cone".to_owned(),
-                pos: tip_pos,
-                normal: axis,
-                surface_normal: Some(surface_normal),
-                profile,
-                ..ContactCone::default()
+        ..settled
+    };
+
+    let id = new_id();
+    LeafBuildResult {
+        leaf: Leaf {
+            base: SupportEntity {
+                id: id.clone(),
+                model_id: input.model_id.to_owned(),
+                type_id: Some(SupportTypeId::Leaf),
+                ..SupportEntity::default()
             },
-            tip_pos,
-            surface_normal,
-            Some(parent_knot.pos),
-            mesh,
-        )
-    };
-
-    let leaf_id = new_id();
-    let leaf = Leaf {
-        base: SupportEntity {
-            id: leaf_id.clone(),
-            model_id: model_id.to_owned(),
-            type_id: Some(SupportTypeId::Leaf),
-            ..SupportEntity::default()
+            parent_knot_id: knot.id.clone(),
+            contact_cone: contact_cone.clone(),
         },
-        parent_knot_id: parent_knot.id.clone(),
-        contact_cone: contact_cone.clone(),
-    };
-
-    let support_data = SupportData {
-        id: leaf_id,
-        segments: Vec::new(),
-        knot: Some(parent_knot.clone()),
-        contact_cone: Some(contact_cone),
-        ..SupportData::default()
-    };
-
-    LeafBuildResult { leaf, support_data }
+        support_data: SupportData {
+            id,
+            segments: Vec::new(),
+            knot: Some(knot.clone()),
+            contact_cone: Some(contact_cone),
+            ..SupportData::default()
+        },
+    }
 }

@@ -1,23 +1,17 @@
-//! DragonFruit `src/supports/SupportTypes/Trunk/trunkBuilder.ts`.
+//! A trunk: a support from its own root on the plate up to a model contact.
 //!
-//! Trunk Builder
-//!
-//! Defines what a trunk is made of and builds the data structure.
-//! Used for both preview and placement (same function, no duplication).
-//!
-//! `build_trunk_data` takes the mesh-free path (`calculateStandardPlacement`);
-//! with a mesh DragonFruit routes through `calculateSmartPlacementV3`, which is
-//! [`build_trunk_data_routed`]; both feed [`build_trunk_data_from_placement`]. Settings are passed in (DragonFruit's
-//! `getSettings()`), ids come from `new_id` (`uuidv4()`), and the mesh is its
-//! collision field.
+//! A placement (the straight one without a mesh, the router with one) says
+//! where the base, the socket and any bends go; this turns it into the root,
+//! the shaft's joints and segments, and the contact cone. Preview and
+//! placement build the same way.
 
-use super::trunk_construction_joints::{
-    normalize_first_construction_joint, with_central_straight_support_joint,
-};
+use super::trunk_construction_joints::normalize_first_construction_joint;
 use super::trunk_route_types::{
     SnappedRoute, SnappedRouteValidity, TrunkRoute, TrunkRouteKind, TrunkRouteResult,
     TrunkRouteValidity,
 };
+use crate::geom::Matrix4;
+use crate::geom::math_utils::{js_max, js_min};
 use crate::supports::constants::get_joint_diameter;
 use crate::supports::placement_logic::collision_avoidance::CollisionField;
 use crate::supports::placement_logic::grid::grid_math::grid_snapped_xy_from_key;
@@ -30,116 +24,25 @@ use crate::supports::placement_logic_v3::smart_placement_v3::{
 };
 use crate::supports::rendering::support_builder::SupportData;
 use crate::supports::settings::types::SupportSettings;
-use crate::supports::tips::{
-    get_contact_cone_lowest_z, get_final_socket_position, get_socket_position,
-};
-use crate::supports::tips::{
-    ContactCone, SupportTipProfile, TipPrimitive,
-};
-use crate::supports::tips::recompute_contact_cone_for_moved_disk;
-use crate::supports::tips::nib_length;
 use crate::supports::support_kinds::SupportTypeId;
+use crate::supports::tips::{
+    ContactCone, SupportTipProfile, TipPrimitive, get_contact_cone_lowest_z,
+    get_final_socket_position, get_socket_position, nib_length,
+    recompute_contact_cone_for_moved_disk,
+};
 use crate::supports::types::{
     Joint, LimitationCode, Quaternion, Roots, Segment, SupportEntity, Transform, Trunk, Vec3,
     WarningCode,
 };
-use crate::geom::Matrix4;
-use crate::geom::math_utils::{js_max, js_min};
 
-const JOINT_CHAIN_Z_EPSILON: f64 = 0.0001;
-const BUILD_PLATE_Z_EPSILON_MM: f64 = 1e-6;
+/// How much higher each joint must be than the one below it, in mm.
+const RISE_EPSILON_MM: f64 = 0.0001;
+/// How far below the plate a part of the trunk may reach before it is out of
+/// bounds, in mm.
+const PLATE_EPSILON_MM: f64 = 1e-6;
 
-fn get_ascending_joint_penalty(joints: &[Vec3], lower_bound_z: f64, upper_bound_z: f64) -> f64 {
-    let mut penalty = 0.0;
-    let mut previous_z = lower_bound_z;
-
-    for joint in joints {
-        if joint.z <= previous_z + JOINT_CHAIN_Z_EPSILON {
-            penalty += (previous_z + JOINT_CHAIN_Z_EPSILON) - joint.z + 1.0;
-        }
-        if joint.z >= upper_bound_z - JOINT_CHAIN_Z_EPSILON {
-            penalty += joint.z - (upper_bound_z - JOINT_CHAIN_Z_EPSILON) + 1.0;
-        }
-        previous_z = js_max(previous_z, joint.z);
-    }
-
-    penalty
-}
-
-fn orient_joints_base_to_socket(
-    joints: &[Vec3],
-    lower_bound_z: f64,
-    upper_bound_z: f64,
-) -> Vec<Vec3> {
-    if joints.len() < 2 {
-        return joints.to_vec();
-    }
-
-    let forward = joints.to_vec();
-    let mut reversed = joints.to_vec();
-    reversed.reverse();
-    let forward_penalty = get_ascending_joint_penalty(&forward, lower_bound_z, upper_bound_z);
-    let reversed_penalty = get_ascending_joint_penalty(&reversed, lower_bound_z, upper_bound_z);
-
-    if reversed_penalty < forward_penalty {
-        reversed
-    } else {
-        forward
-    }
-}
-
-fn filter_strictly_ascending_joints(
-    joints: &[Vec3],
-    lower_bound_z: f64,
-    upper_bound_z: f64,
-) -> Vec<Vec3> {
-    let mut result = Vec::new();
-    let mut previous_z = lower_bound_z;
-
-    for joint in joints {
-        if joint.z <= previous_z + JOINT_CHAIN_Z_EPSILON {
-            continue;
-        }
-        if joint.z >= upper_bound_z - JOINT_CHAIN_Z_EPSILON {
-            continue;
-        }
-
-        result.push(*joint);
-        previous_z = joint.z;
-    }
-
-    result
-}
-
-struct JointChains {
-    route_joints: Vec<Vec3>,
-    construction_joints: Vec<Vec3>,
-}
-
-fn normalize_trunk_joint_chain(
-    root_top_z: f64,
-    socket_pos: Vec3,
-    route_joints: &[Vec3],
-    construction_joints: &[Vec3],
-) -> JointChains {
-    let oriented_construction =
-        orient_joints_base_to_socket(construction_joints, root_top_z, socket_pos.z);
-    let normalized_construction =
-        filter_strictly_ascending_joints(&oriented_construction, root_top_z, socket_pos.z);
-
-    let route_lower_bound_z = normalized_construction.last().map_or(root_top_z, |j| j.z);
-    let oriented_route =
-        orient_joints_base_to_socket(route_joints, route_lower_bound_z, socket_pos.z);
-    let normalized_route =
-        filter_strictly_ascending_joints(&oriented_route, route_lower_bound_z, socket_pos.z);
-
-    JointChains {
-        construction_joints: normalized_construction,
-        route_joints: normalized_route,
-    }
-}
-
-/// `TrunkBuildInput.overrides`.
+/// Sizes to build with instead of the settings', as the auto-support tiers
+/// give them.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct TrunkOverrides {
     pub roots_diameter_mm: Option<f64>,
@@ -150,38 +53,9 @@ pub struct TrunkOverrides {
     pub tip_body_diameter_mm: Option<f64>,
     pub tip_length_mm: Option<f64>,
     pub tip_disk_length_override_mm: Option<f64>,
-    /// Not in DragonFruit's declared type, but the auto pass hands the whole
-    /// `sizeParameters` object over and the settings hex reads it; the tip
-    /// profile does not.
+    /// Carried with the tier's sizes and recorded with them; the tip profile
+    /// itself takes its penetration from the settings.
     pub tip_penetration_mm: Option<f64>,
-}
-
-fn build_tip_profile(
-    settings: &SupportSettings,
-    overrides: Option<&TrunkOverrides>,
-) -> SupportTipProfile {
-    SupportTipProfile {
-        kind: Some(TipPrimitive::Disk),
-        contact_diameter_mm: overrides
-            .and_then(|o| o.tip_contact_diameter_mm)
-            .unwrap_or(settings.tip.contact_diameter_mm),
-        body_diameter_mm: overrides
-            .and_then(|o| o.tip_body_diameter_mm)
-            .unwrap_or(settings.tip.body_diameter_mm),
-        length_mm: overrides
-            .and_then(|o| o.tip_length_mm)
-            .unwrap_or(settings.tip.length_mm),
-        penetration_mm: settings.tip.penetration_mm,
-        disk_thickness_mm: Some(settings.tip.disk_thickness_mm.unwrap_or(0.1)),
-        max_standoff_mm: Some(settings.tip.max_standoff_mm.unwrap_or(1.5)),
-        standoff_angle_threshold: Some(
-            settings
-                .tip
-                .standoff_angle_threshold
-                .unwrap_or(std::f64::consts::PI / 4.0),
-        ),
-        break_point_mm: settings.tip.breakpoint_mm.filter(|b| *b > 0.0),
-    }
 }
 
 #[derive(Clone, Copy, Default, Debug)]
@@ -190,14 +64,15 @@ pub struct TrunkBuildInput<'a> {
     pub tip_normal: Vec3,
     pub model_id: &'a str,
     pub mesh: Option<&'a dyn CollisionField>,
-    /// When true, uses a fast first-pass preview search and then parity-checks
-    /// collision outcomes against click-time tolerances before surfacing errors.
+    /// A preview: the router searches quickly first, and checks a collision
+    /// against the tolerances of a real placement before reporting it.
     pub is_preview: Option<bool>,
     pub overrides: Option<TrunkOverrides>,
-    /// Small islands (voxel/minima <5mm² or z<15) bypass SDF — true straight, no central joint
+    /// A small island (by voxel area or height): the router's construction
+    /// joints are dropped and the distance field is not consulted.
     pub is_small_island: Option<bool>,
-    /// Build as if grid mode were off: the base is routed to wherever the model
-    /// allows instead of snapping to a lattice node.
+    /// Build as if the grid were off: the base goes wherever the model
+    /// allows instead of to a grid node.
     pub ignore_grid: Option<bool>,
 }
 
@@ -206,29 +81,92 @@ pub struct TrunkBuildInput<'a> {
 pub struct TrunkBuildResult {
     pub root: Roots,
     pub trunk: Trunk,
-    /// For SupportBuilder (generic format)
+    /// The same support in the generic form the preview draws.
     pub support_data: SupportData,
     pub route: TrunkRoute,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<LimitationCode>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub warning: Option<WarningCode>,
-    /// True if the pathfinder stagnated (trapped in a cavity).
+    /// The router stalled, boxed in by a cavity.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stagnated: Option<bool>,
-    /// True if V2 exhausted its expansion budget without reaching the goal.
+    /// The router ran out of search budget before reaching the plate.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exhausted_budget: Option<bool>,
 }
 
-/// Build trunk data from a tip position and normal, without a mesh
-/// (`calculateStandardPlacement`). A trunk consists of:
-/// - Roots (disk + cone + sphere at base)
-/// - Route-driven shaft segments and joints
-/// - ContactCone at the tip
-///
-/// Returns `None` when a mesh is given: DragonFruit then routes with
-/// `calculateSmartPlacementV3`, which is [`build_trunk_data_routed`].
+/// The router's share of a trunk built against the model: the model's pooled
+/// distance field, its world matrix, and the run's router counters.
+#[derive(Debug)]
+pub struct TrunkRouter<'a> {
+    pub sdf: &'a mut SdfCache,
+    pub matrix_world: Matrix4,
+    pub stats: &'a mut RouterStats,
+}
+
+/// The sizes a trunk is built with: the overrides where given, the settings
+/// elsewhere.
+struct Sizes {
+    tip: SupportTipProfile,
+    tip_disk_override: Option<f64>,
+    shaft_diameter: f64,
+    root_diameter: f64,
+    root_disk_height: f64,
+    root_cone_height: f64,
+}
+
+impl Sizes {
+    fn of(settings: &SupportSettings, overrides: Option<&TrunkOverrides>) -> Self {
+        let pick = |get: fn(&TrunkOverrides) -> Option<f64>, fallback: f64| {
+            overrides.and_then(get).unwrap_or(fallback)
+        };
+        let tip = &settings.tip;
+        let roots = &settings.roots;
+        Sizes {
+            tip: SupportTipProfile {
+                kind: Some(TipPrimitive::Disk),
+                contact_diameter_mm: pick(|o| o.tip_contact_diameter_mm, tip.contact_diameter_mm),
+                body_diameter_mm: pick(|o| o.tip_body_diameter_mm, tip.body_diameter_mm),
+                length_mm: pick(|o| o.tip_length_mm, tip.length_mm),
+                penetration_mm: tip.penetration_mm,
+                disk_thickness_mm: Some(tip.disk_thickness_mm.unwrap_or(0.1)),
+                max_standoff_mm: Some(tip.max_standoff_mm.unwrap_or(1.5)),
+                standoff_angle_threshold: Some(
+                    tip.standoff_angle_threshold
+                        .unwrap_or(std::f64::consts::FRAC_PI_4),
+                ),
+                break_point_mm: tip.breakpoint_mm.filter(|b| *b > 0.0),
+            },
+            tip_disk_override: overrides.and_then(|o| o.tip_disk_length_override_mm),
+            shaft_diameter: pick(|o| o.shaft_diameter_mm, settings.shaft.diameter_mm),
+            root_diameter: pick(|o| o.roots_diameter_mm, roots.diameter_mm),
+            root_disk_height: pick(|o| o.roots_disk_height_mm, roots.disk_height_mm),
+            root_cone_height: pick(|o| o.roots_cone_height_mm, roots.cone_height_mm),
+        }
+    }
+
+    /// Height of the root's top, where the shaft starts.
+    fn root_top_z(&self) -> f64 {
+        self.root_disk_height + self.root_cone_height
+    }
+}
+
+/// What a placement is asked: the contact, its tip, and the root's top.
+fn placement_input(input: &TrunkBuildInput<'_>, settings: &SupportSettings) -> TrunkPlacementInput {
+    let sizes = Sizes::of(settings, input.overrides.as_ref());
+    TrunkPlacementInput {
+        tip_pos: input.tip_pos,
+        tip_normal: input.tip_normal,
+        tip_profile: sizes.tip,
+        roots_top_z: sizes.root_top_z(),
+        is_small_island: input.is_small_island,
+    }
+}
+
+/// A trunk placed without the model: straight down from the contact.
+/// `None` when the input carries a mesh; such a trunk is built with
+/// [`build_trunk_data_routed`].
 pub fn build_trunk_data(
     input: &TrunkBuildInput<'_>,
     settings: &SupportSettings,
@@ -243,18 +181,8 @@ pub fn build_trunk_data(
     ))
 }
 
-/// The router's half of `buildTrunkData` with a mesh: the model's pooled
-/// distance field, the mesh's world matrix, and the run's router counters.
-#[derive(Debug)]
-pub struct TrunkRouter<'a> {
-    pub sdf: &'a mut SdfCache,
-    pub matrix_world: Matrix4,
-    pub stats: &'a mut RouterStats,
-}
-
-/// Build trunk data with the model mesh: the V3 router (SDF-backed, bounded)
-/// places it, with the same collision checks for preview and click, and the
-/// placement is built against that same field.
+/// A trunk placed by the router around the model, built and checked against
+/// the same distance field the router used, preview or not.
 pub fn build_trunk_data_routed(
     input: &TrunkBuildInput<'_>,
     router: &mut TrunkRouter<'_>,
@@ -278,34 +206,121 @@ pub fn build_trunk_data_routed(
         },
     );
     let field: &dyn CollisionField = &*router.sdf;
-    let routed = TrunkBuildInput {
+    let with_field = TrunkBuildInput {
         mesh: Some(field),
         ..*input
     };
-    build_trunk_data_from_placement(&routed, &placement, settings, new_id)
+    build_trunk_data_from_placement(&with_field, &placement, settings, new_id)
 }
 
-/// What both placements are asked: the tip, its profile and the roots' top.
-fn placement_input(input: &TrunkBuildInput<'_>, settings: &SupportSettings) -> TrunkPlacementInput {
-    let overrides = input.overrides.as_ref();
-    let tip_profile = build_tip_profile(settings, overrides);
-    let disk_height = overrides
-        .and_then(|o| o.roots_disk_height_mm)
-        .unwrap_or(settings.roots.disk_height_mm);
-    let cone_height = overrides
-        .and_then(|o| o.roots_cone_height_mm)
-        .unwrap_or(settings.roots.cone_height_mm);
+/// How badly a joint chain fails to climb strictly between `floor_z` and
+/// `ceiling_z`: each joint at or below the highest one before it, or at or
+/// above the ceiling, costs its overshoot plus one.
+fn climb_penalty(joints: &[Vec3], floor_z: f64, ceiling_z: f64) -> f64 {
+    let mut penalty = 0.0;
+    let mut highest = floor_z;
+    for joint in joints {
+        if joint.z <= highest + RISE_EPSILON_MM {
+            penalty += (highest + RISE_EPSILON_MM) - joint.z + 1.0;
+        }
+        if joint.z >= ceiling_z - RISE_EPSILON_MM {
+            penalty += joint.z - (ceiling_z - RISE_EPSILON_MM) + 1.0;
+        }
+        highest = js_max(highest, joint.z);
+    }
+    penalty
+}
 
-    TrunkPlacementInput {
-        tip_pos: input.tip_pos,
-        tip_normal: input.tip_normal,
-        tip_profile,
-        // Roots dimensions: where the Roots sphere center is
-        roots_top_z: disk_height + cone_height,
-        is_small_island: input.is_small_island,
+/// The joints ordered bottom to top: as given, or reversed when that climbs
+/// better.
+fn bottom_to_top(joints: &[Vec3], floor_z: f64, ceiling_z: f64) -> Vec<Vec3> {
+    let mut ordered = joints.to_vec();
+    if joints.len() >= 2 {
+        let reversed: Vec<Vec3> = joints.iter().rev().copied().collect();
+        if climb_penalty(&reversed, floor_z, ceiling_z) < climb_penalty(joints, floor_z, ceiling_z)
+        {
+            ordered = reversed;
+        }
+    }
+    ordered
+}
+
+/// The joints that climb strictly, each above the last one kept and below
+/// the ceiling.
+fn strictly_climbing(joints: &[Vec3], floor_z: f64, ceiling_z: f64) -> Vec<Vec3> {
+    let mut kept = Vec::new();
+    let mut last_z = floor_z;
+    for joint in joints {
+        if joint.z <= last_z + RISE_EPSILON_MM || joint.z >= ceiling_z - RISE_EPSILON_MM {
+            continue;
+        }
+        kept.push(*joint);
+        last_z = joint.z;
+    }
+    kept
+}
+
+/// The construction joints, then the route bends above them, each ordered
+/// bottom to top and cut to a strict climb from the root's top to the socket.
+fn climbing_chains(
+    root_top_z: f64,
+    socket_z: f64,
+    route: &[Vec3],
+    construction: &[Vec3],
+) -> (Vec<Vec3>, Vec<Vec3>) {
+    let chain = |joints: &[Vec3], floor_z: f64| {
+        strictly_climbing(&bottom_to_top(joints, floor_z, socket_z), floor_z, socket_z)
+    };
+    let construction = chain(construction, root_top_z);
+    let route_floor = construction.last().map_or(root_top_z, |j| j.z);
+    (chain(route, route_floor), construction)
+}
+
+/// The route's grid snap, when the placement snapped to a node.
+fn snapped_route(
+    route: TrunkRouteResult,
+    node_key: Option<&str>,
+    settings: &SupportSettings,
+) -> TrunkRoute {
+    let Some(key) = node_key.filter(|key| !key.is_empty()) else {
+        return TrunkRoute {
+            route,
+            snapped: None,
+        };
+    };
+    let unsnapped = route.unsnapped_bottom_pos;
+    let on_node = unsnapped.x == route.base_pos.x && unsnapped.y == route.base_pos.y;
+    let snapped_root_pos = if settings.grid.enabled {
+        let (x, y) = grid_snapped_xy_from_key(key, settings.grid.spacing_mm);
+        Vec3::new(x, y, route.base_pos.z)
+    } else {
+        route.base_pos
+    };
+    let failed = route.error.is_some();
+    let (validity, snapped_validity) = if failed {
+        (
+            TrunkRouteValidity::HardInvalid,
+            SnappedRouteValidity::HardInvalid,
+        )
+    } else if on_node {
+        (TrunkRouteValidity::Valid, SnappedRouteValidity::Valid)
+    } else {
+        (
+            TrunkRouteValidity::RouteInvalid,
+            SnappedRouteValidity::InvalidAssisted,
+        )
+    };
+    TrunkRoute {
+        route: TrunkRouteResult { validity, ..route },
+        snapped: Some(SnappedRoute {
+            snapped_root_pos,
+            snapped_node_key: Some(key.to_owned()),
+            snapped_validity,
+        }),
     }
 }
 
+/// Build the trunk a placement describes.
 pub fn build_trunk_data_from_placement(
     input: &TrunkBuildInput<'_>,
     placement: &TrunkPlacementResult,
@@ -319,326 +334,202 @@ pub fn build_trunk_data_from_placement(
         mesh,
         ..
     } = *input;
-    let overrides = input.overrides.as_ref();
-    // Hex must describe the geometry actually built — tier overrides applied
-    // (auto supports) — or Support Studio loads the global parameters instead
-    // of the support's own.
-    let tip_profile = build_tip_profile(settings, overrides);
-    let tip_disk_length_override_mm = overrides.and_then(|o| o.tip_disk_length_override_mm);
-    let shaft_diameter = overrides
-        .and_then(|o| o.shaft_diameter_mm)
-        .unwrap_or(settings.shaft.diameter_mm);
-    let roots_diameter = overrides
-        .and_then(|o| o.roots_diameter_mm)
-        .unwrap_or(settings.roots.diameter_mm);
-    let disk_height = overrides
-        .and_then(|o| o.roots_disk_height_mm)
-        .unwrap_or(settings.roots.disk_height_mm);
-    let cone_height = overrides
-        .and_then(|o| o.roots_cone_height_mm)
-        .unwrap_or(settings.roots.cone_height_mm);
-    let effective_cone_axis = placement.cone_axis.unwrap_or(tip_normal);
-    let disk_thickness = if tip_profile.is_disk() {
-        tip_disk_length_override_mm.unwrap_or_else(|| {
-            nib_length(
-                tip_normal,
-                effective_cone_axis,
-                Some(&tip_profile.as_disk_profile()),
-            )
-        })
+    // The sizes recorded are the ones built with, overrides included, so an
+    // auto support reopens with its own sizes rather than the global ones.
+    let sizes = Sizes::of(settings, input.overrides.as_ref());
+    let tip = sizes.tip;
+    let root_top_z = sizes.root_top_z();
+
+    // Where the stock cone would put the socket.
+    let stock_axis = placement.cone_axis.unwrap_or(tip_normal);
+    let disk = if tip.is_disk() {
+        sizes
+            .tip_disk_override
+            .unwrap_or_else(|| nib_length(tip_normal, stock_axis, Some(&tip.as_disk_profile())))
     } else {
         0.0
     };
-
-    let cone_start_pos = Vec3::new(
-        tip_pos.x + tip_normal.x * disk_thickness,
-        tip_pos.y + tip_normal.y * disk_thickness,
-        tip_pos.z + tip_normal.z * disk_thickness,
+    let cone_start = Vec3::new(
+        tip_pos.x + tip_normal.x * disk,
+        tip_pos.y + tip_normal.y * disk,
+        tip_pos.z + tip_normal.z * disk,
     );
+    let stock_socket = get_socket_position(cone_start, stock_axis, Some(&tip));
 
-    let live_socket_pos =
-        get_socket_position(cone_start_pos, effective_cone_axis, Some(&tip_profile));
-    let solver_socket_pos = placement.socket_pos;
-    let solver_socket_delta_sq = (solver_socket_pos.x - live_socket_pos.x)
-        * (solver_socket_pos.x - live_socket_pos.x)
-        + (solver_socket_pos.y - live_socket_pos.y) * (solver_socket_pos.y - live_socket_pos.y)
-        + (solver_socket_pos.z - live_socket_pos.z) * (solver_socket_pos.z - live_socket_pos.z);
-
-    // When the solver shifted the socket (cone-clear seed, A* routing), the
-    // actual cone axis is the direction from coneStartPos to solverSocketPos —
-    // NOT the surface-normal-derived axis.  Use the actual geometric direction
-    // so the cone renderer orients the cone body to match the real geometry.
-    let mut actual_cone_axis = effective_cone_axis;
-    if solver_socket_delta_sq > 0.000001 {
-        let delta_x = solver_socket_pos.x - cone_start_pos.x;
-        let delta_y = solver_socket_pos.y - cone_start_pos.y;
-        let delta_z = solver_socket_pos.z - cone_start_pos.z;
-        let delta_len = (delta_x * delta_x + delta_y * delta_y + delta_z * delta_z).sqrt();
-        if delta_len > 0.001 {
-            actual_cone_axis = Vec3::new(
-                delta_x / delta_len,
-                delta_y / delta_len,
-                delta_z / delta_len,
-            );
+    // When the placement moved the socket, the cone points from its start to
+    // where the socket really is, so it is drawn along the real geometry.
+    let socket_target = placement.socket_pos;
+    let (mx, my, mz) = (
+        socket_target.x - stock_socket.x,
+        socket_target.y - stock_socket.y,
+        socket_target.z - stock_socket.z,
+    );
+    let mut cone_axis = stock_axis;
+    if mx * mx + my * my + mz * mz > 0.000001 {
+        let (dx, dy, dz) = (
+            socket_target.x - cone_start.x,
+            socket_target.y - cone_start.y,
+            socket_target.z - cone_start.z,
+        );
+        let length = (dx * dx + dy * dy + dz * dz).sqrt();
+        if length > 0.001 {
+            cone_axis = Vec3::new(dx / length, dy / length, dz / length);
         }
     }
-
-    let contact_cone_template = recompute_contact_cone_for_moved_disk(
+    let cone = recompute_contact_cone_for_moved_disk(
         &ContactCone {
-            id: "__solver-authored-socket__".to_owned(),
+            id: "trunk-draft".to_owned(),
             pos: tip_pos,
-            normal: actual_cone_axis,
+            normal: cone_axis,
             surface_normal: Some(tip_normal),
-            disk_length_override: tip_disk_length_override_mm,
+            disk_length_override: sizes.tip_disk_override,
             placement_surface: None,
-            profile: tip_profile,
+            profile: tip,
             socket_joint_id: None,
         },
         tip_pos,
         tip_normal,
-        Some(solver_socket_pos),
+        Some(socket_target),
         mesh,
     );
-    let resolved_socket_pos = get_final_socket_position(&contact_cone_template);
-    let joint_diameter = get_joint_diameter(shaft_diameter);
-    let lowest_contact_z = js_min(
-        get_contact_cone_lowest_z(&contact_cone_template),
-        resolved_socket_pos.z - joint_diameter / 2.0,
+    let socket = get_final_socket_position(&cone);
+    let joint_diameter = get_joint_diameter(sizes.shaft_diameter);
+
+    // Nothing of the cone or the socket joint may reach below the plate.
+    let lowest_z = js_min(
+        get_contact_cone_lowest_z(&cone),
+        socket.z - joint_diameter / 2.0,
     );
-    let build_error = placement.error.or_else(|| {
-        (lowest_contact_z < -BUILD_PLATE_Z_EPSILON_MM).then_some(LimitationCode::OutOfBounds)
-    });
-    let roots_top_z = disk_height + cone_height;
-    let authored_route_joints = placement.joints.clone().unwrap_or_default();
-    let authored_construction_joints = placement.construction_joints.clone().unwrap_or_default();
-    let normalized_authored_chains = normalize_trunk_joint_chain(
-        roots_top_z,
-        resolved_socket_pos,
-        &authored_route_joints,
-        &authored_construction_joints,
+    let error = placement
+        .error
+        .or_else(|| (lowest_z < -PLATE_EPSILON_MM).then_some(LimitationCode::OutOfBounds));
+
+    // The shaft's joints: construction joints below the route bends, both
+    // climbing strictly. A small island drops the placement's construction
+    // joints; any trunk with no bends gets the mid-shaft joint instead.
+    let (bends, construction) = climbing_chains(
+        root_top_z,
+        socket.z,
+        placement.joints.as_deref().unwrap_or_default(),
+        placement.construction_joints.as_deref().unwrap_or_default(),
     );
-    let route_joints = normalized_authored_chains.route_joints;
-    let is_straight_support = route_joints.is_empty();
-    let small_island = input.is_small_island == Some(true);
-    // Small islands: no central joint at all — true straight 1 segment even if grid offset 1mm is slanted slightly
-    let initial_construction_joints = if small_island {
+    let construction = if input.is_small_island == Some(true) {
         Vec::new()
     } else {
-        normalized_authored_chains.construction_joints
+        construction
     };
-    let fallback_construction_joints = if is_straight_support && !small_island {
-        with_central_straight_support_joint(placement.base_pos, roots_top_z, resolved_socket_pos)
-    } else {
-        initial_construction_joints.clone()
-    };
-    let normalized_construction_joints = normalize_first_construction_joint(
+    let construction = normalize_first_construction_joint(
         placement.base_pos,
-        roots_top_z,
-        resolved_socket_pos,
-        &route_joints,
-        if initial_construction_joints.is_empty() {
-            &fallback_construction_joints
-        } else {
-            &initial_construction_joints
-        },
+        root_top_z,
+        socket,
+        &bends,
+        &construction,
     );
-    let normalized_joint_chains = normalize_trunk_joint_chain(
-        roots_top_z,
-        resolved_socket_pos,
-        &route_joints,
-        &normalized_construction_joints,
-    );
-    let final_route_joints = normalized_joint_chains.route_joints;
-    let final_construction_joints = normalized_joint_chains.construction_joints;
-    let final_is_straight_support = final_route_joints.is_empty();
+    let (bends, construction) = climbing_chains(root_top_z, socket.z, &bends, &construction);
 
-    let route_base = TrunkRouteResult {
-        kind: if final_is_straight_support {
-            TrunkRouteKind::Straight
-        } else {
-            TrunkRouteKind::Routed
-        },
-        base_pos: placement.base_pos,
-        socket_pos: resolved_socket_pos,
-        unsnapped_bottom_pos: placement.unsnapped_bottom_pos.unwrap_or(placement.base_pos),
-        joints: final_route_joints,
-        construction_joints: final_construction_joints,
-        validity: if build_error.is_some() {
-            TrunkRouteValidity::HardInvalid
-        } else {
-            TrunkRouteValidity::Valid
-        },
-        error: build_error,
-        warning: placement.warning,
-        angle: placement.angle,
-        cone_axis: Some(effective_cone_axis),
-        grid_ignored: placement.grid_ignored,
-    };
-    let route = match placement
-        .snapped_node_key
-        .as_deref()
-        .filter(|key| !key.is_empty())
-    {
-        Some(snapped_node_key) => {
-            let unsnapped = route_base.unsnapped_bottom_pos;
-            let same_xy =
-                unsnapped.x == route_base.base_pos.x && unsnapped.y == route_base.base_pos.y;
-            let snapped_root_pos = if settings.grid.enabled {
-                let (x, y) = grid_snapped_xy_from_key(snapped_node_key, settings.grid.spacing_mm);
-                Vec3::new(x, y, route_base.base_pos.z)
+    let route = snapped_route(
+        TrunkRouteResult {
+            kind: if bends.is_empty() {
+                TrunkRouteKind::Straight
             } else {
-                route_base.base_pos
-            };
-            let snapped_validity = if build_error.is_some() {
-                SnappedRouteValidity::HardInvalid
-            } else if same_xy {
-                SnappedRouteValidity::Valid
-            } else {
-                SnappedRouteValidity::InvalidAssisted
-            };
-            let validity = if build_error.is_some() {
+                TrunkRouteKind::Routed
+            },
+            base_pos: placement.base_pos,
+            socket_pos: socket,
+            unsnapped_bottom_pos: placement.unsnapped_bottom_pos.unwrap_or(placement.base_pos),
+            joints: bends,
+            construction_joints: construction,
+            validity: if error.is_some() {
                 TrunkRouteValidity::HardInvalid
-            } else if same_xy {
-                TrunkRouteValidity::Valid
             } else {
-                TrunkRouteValidity::RouteInvalid
-            };
-            TrunkRoute {
-                route: TrunkRouteResult {
-                    validity,
-                    ..route_base
-                },
-                snapped: Some(SnappedRoute {
-                    snapped_root_pos,
-                    snapped_node_key: Some(snapped_node_key.to_owned()),
-                    snapped_validity,
-                }),
-            }
-        }
-        None => TrunkRoute {
-            route: route_base,
-            snapped: None,
+                TrunkRouteValidity::Valid
+            },
+            error,
+            warning: placement.warning,
+            angle: placement.angle,
+            cone_axis: Some(stock_axis),
+            grid_ignored: placement.grid_ignored,
         },
-    };
+        placement.snapped_node_key.as_deref(),
+        settings,
+    );
+    let r = &route.route;
 
-    let TrunkRouteResult {
-        base_pos,
-        socket_pos,
-        joints,
-        construction_joints,
-        error,
-        warning,
-        angle,
-        ..
-    } = &route.route;
-    let joint_positions: Vec<Vec3> = construction_joints
-        .iter()
-        .chain(joints.iter())
-        .copied()
-        .collect();
-
-    // Generate IDs
     let root_id = new_id();
     let trunk_id = new_id();
-    let contact_cone_id = new_id();
-    // NEW: Generate a dedicated ID for the socket joint to ensure it is distinct from the knee.
+    let cone_id = new_id();
     let socket_joint_id = new_id();
-
-    // Build Joints and Segments
-    // We need N joints and N+1 segments.
-    let created_joints: Vec<Joint> = joint_positions
+    let joints: Vec<Joint> = r
+        .construction_joints
         .iter()
+        .chain(&r.joints)
         .map(|pos| Joint {
             id: new_id(),
             pos: *pos,
             diameter: joint_diameter,
         })
         .collect();
-    let mut created_segments: Vec<Segment> = Vec::new();
-
-    // NEW: Calculate Socket Joint Position and Create it
     let socket_joint = Joint {
         id: socket_joint_id.clone(),
-        pos: *socket_pos,
+        pos: r.socket_pos,
         diameter: joint_diameter,
     };
-
-    let segment = |id: String, bottom: Option<&Joint>, top: &Joint| {
-        let mut seg = Segment::straight(id, shaft_diameter);
-        seg.bottom_joint = bottom.cloned();
-        seg.top_joint = Some(top.clone());
-        seg
-    };
-
-    // 2. Create Segments
-    if final_is_straight_support && created_joints.len() == 1 {
-        created_segments.push(segment(new_id(), None, &created_joints[0]));
-        created_segments.push(segment(new_id(), Some(&created_joints[0]), &socket_joint));
-    } else {
-        for (index, joint) in created_joints.iter().enumerate() {
-            let bottom = if index > 0 {
-                Some(&created_joints[index - 1])
-            } else {
-                None
-            };
-            created_segments.push(segment(new_id(), bottom, joint));
-        }
-        created_segments.push(segment(new_id(), created_joints.last(), &socket_joint));
+    // One segment up to each joint, the first from the root, and a last one
+    // up to the socket.
+    let mut segments = Vec::with_capacity(joints.len() + 1);
+    let mut below: Option<&Joint> = None;
+    for top in joints.iter().chain([&socket_joint]) {
+        let mut segment = Segment::straight(new_id(), sizes.shaft_diameter);
+        segment.bottom_joint = below.cloned();
+        segment.top_joint = Some(top.clone());
+        segments.push(segment);
+        below = Some(top);
     }
 
-    // Build Root
+    let entity = |id: String, type_id: Option<SupportTypeId>| SupportEntity {
+        id,
+        model_id: model_id.to_owned(),
+        type_id,
+        ..SupportEntity::default()
+    };
     let root = Roots {
-        base: SupportEntity {
-            id: root_id.clone(),
-            model_id: model_id.to_owned(),
-            ..SupportEntity::default()
-        },
+        base: entity(root_id.clone(), None),
         transform: Transform {
-            pos: *base_pos,
-            rot: Quaternion::new(0.0, 0.0, 0.0, 1.0),
+            pos: r.base_pos,
+            rot: Quaternion::IDENTITY,
             scale: None,
         },
-        diameter: roots_diameter,
-        disk_height,
-        cone_height,
+        diameter: sizes.root_diameter,
+        disk_height: sizes.root_disk_height,
+        cone_height: sizes.root_cone_height,
         height: None,
         join_cone_mm: settings.roots.join_cone_mm.filter(|j| *j > 0.0),
     };
-
-    // Build ContactCone
     let contact_cone = ContactCone {
-        id: contact_cone_id,
+        id: cone_id,
         socket_joint_id: Some(socket_joint_id),
-        ..contact_cone_template
+        ..cone
     };
-
-    // Build Trunk
     let trunk = Trunk {
-        base: SupportEntity {
-            id: trunk_id.clone(),
-            model_id: model_id.to_owned(),
-            type_id: Some(SupportTypeId::Trunk),
-            ..SupportEntity::default()
-        },
+        base: entity(trunk_id.clone(), Some(SupportTypeId::Trunk)),
         root_id,
-        base_diameter_mm: Some(shaft_diameter),
-        segments: created_segments.clone(),
+        base_diameter_mm: Some(sizes.shaft_diameter),
+        segments: segments.clone(),
         contact_cone: Some(contact_cone.clone()),
     };
-
-    // Build generic SupportData for SupportBuilder
+    let (error, warning, angle) = (r.error, r.warning, r.angle);
     let support_data = SupportData {
         id: trunk_id,
         roots: Some(root.clone()),
-        segments: created_segments,
+        segments,
         contact_cone: Some(contact_cone),
-        error: *error,
-        warning: *warning,
-        angle: *angle, // Required for gradient color
+        error,
+        warning,
+        // The preview colours the trunk by its angle.
+        angle,
         ..SupportData::default()
     };
 
-    let (error, warning) = (*error, *warning);
     TrunkBuildResult {
         root,
         trunk,

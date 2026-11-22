@@ -1,25 +1,22 @@
-//! DragonFruit `src/supports/SupportTypes/Kickstand/kickstandRules.ts`.
+//! Where a kickstand may attach.
 
-use crate::supports::support_kinds::{
-    KICKSTAND_HOST_TYPES, SupportTypeId, is_kickstand_host_type,
-};
 use crate::geom::math_utils::clamp;
+use crate::supports::support_kinds::{KICKSTAND_HOST_TYPES, SupportTypeId, is_kickstand_host_type};
 
-/// DragonFruit's default `min_t` is 0.
+/// The host position `t` along its segment, kept between `min_t` and the top.
 pub fn clamp_kickstand_host_t(t: f64, min_t: f64) -> f64 {
     clamp(t, min_t, 1.0)
 }
 
-/// Errs unless `kind` names a type a kickstand's host knot may ride
-/// (DragonFruit throws).
+/// The type named `kind`, when a kickstand may attach to that type; an error
+/// naming the types it may attach to otherwise.
 pub fn assert_kickstand_host_kind(kind: &str) -> Result<SupportTypeId, String> {
     if is_kickstand_host_type(kind) {
-        // A host type parses by construction.
         return SupportTypeId::parse(kind).ok_or_else(|| kind.to_owned());
     }
-    let names: Vec<&str> = KICKSTAND_HOST_TYPES.iter().map(|t| t.as_str()).collect();
+    let hosts: Vec<&str> = KICKSTAND_HOST_TYPES.iter().map(|t| t.as_str()).collect();
     Err(format!(
         "Kickstand host must be {}. Received: {kind}",
-        names.join(" or ")
+        hosts.join(" or ")
     ))
 }
