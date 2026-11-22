@@ -548,7 +548,7 @@ impl TrialContext<'_, '_, '_> {
     /// swings square to and along the reference direction.
     fn attempt(&self, attempt: usize) -> (f64, f64) {
         let mut angle = self.aim
-            + if attempt % 2 == 0 {
+            + if attempt.is_multiple_of(2) {
                 0.0
             } else {
                 std::f64::consts::PI
