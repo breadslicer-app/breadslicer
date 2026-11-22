@@ -1,58 +1,27 @@
-//! DragonFruit `src/supports/SupportTypes/Kickstand/kickstandSettings.ts`.
-//!
-//! Settings are passed in (`getSettings()`).
+//! The layout of a kickstand's column, and the sizes it takes from the
+//! support settings.
 
 use serde::{Deserialize, Serialize};
 
 use super::types::KickstandPlacementLayout;
-use crate::supports::constants::JOINT_DIAMETER_OFFSET_MM;
-use crate::supports::settings::types::SupportSettings;
 use crate::geom::math_utils::{clamp, js_max, js_min};
+use crate::supports::constants::JOINT_DIAMETER_OFFSET_MM;
+use crate::supports::numeric_constraint::NumericConstraint;
+use crate::supports::settings::types::SupportSettings;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct NumericConstraint {
-    pub min: f64,
-    pub max: f64,
-    pub step: f64,
-    pub default_value: f64,
-}
+/// Height of the first column joint, as a share of the rise to the host.
+pub const FIRST_JOINT_HEIGHT_RATIO: NumericConstraint =
+    NumericConstraint::new(0.1, 0.75, 0.01, 0.35);
+/// Height of the second column joint, as a share of the rise to the host.
+pub const SECOND_JOINT_HEIGHT_RATIO: NumericConstraint =
+    NumericConstraint::new(0.3, 0.95, 0.01, 0.72);
+/// The least distance between two column joints, in mm.
+pub const MIN_JOINT_SPACING_MM: NumericConstraint = NumericConstraint::new(0.1, 5.0, 0.1, 0.6);
+/// The least distance kept between the top column joint and the host, in mm.
+pub const MIN_TERMINAL_CLEARANCE_MM: NumericConstraint =
+    NumericConstraint::new(0.1, 5.0, 0.1, 0.25);
 
-#[derive(Debug)]
-pub struct KickstandLayoutConstraints {
-    pub first_joint_height_ratio: NumericConstraint,
-    pub second_joint_height_ratio: NumericConstraint,
-    pub min_joint_spacing_mm: NumericConstraint,
-    pub min_terminal_clearance_mm: NumericConstraint,
-}
-
-pub const KICKSTAND_LAYOUT_CONSTRAINTS: KickstandLayoutConstraints = KickstandLayoutConstraints {
-    first_joint_height_ratio: NumericConstraint {
-        min: 0.1,
-        max: 0.75,
-        step: 0.01,
-        default_value: 0.35,
-    },
-    second_joint_height_ratio: NumericConstraint {
-        min: 0.3,
-        max: 0.95,
-        step: 0.01,
-        default_value: 0.72,
-    },
-    min_joint_spacing_mm: NumericConstraint {
-        min: 0.1,
-        max: 5.0,
-        step: 0.1,
-        default_value: 0.6,
-    },
-    min_terminal_clearance_mm: NumericConstraint {
-        min: 0.1,
-        max: 5.0,
-        step: 0.1,
-        default_value: 0.25,
-    },
-};
-
-/// `Partial<KickstandPlacementLayout>`.
+/// Layout values to use instead of the defaults; each is brought into range.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KickstandLayoutOverrides {
@@ -66,57 +35,44 @@ pub struct KickstandLayoutOverrides {
     pub min_terminal_clearance_mm: Option<f64>,
 }
 
-fn clamp_constraint(value: f64, constraint: NumericConstraint) -> f64 {
-    clamp(value, constraint.min, constraint.max)
+/// `value`, or the default when unset, brought into the range.
+fn within(value: Option<f64>, range: NumericConstraint) -> f64 {
+    clamp(value.unwrap_or(range.default_value), range.min, range.max)
 }
 
+/// The column layout: the defaults with any overrides, each in range, and the
+/// second joint kept at least a step above the first.
 pub fn resolve_kickstand_layout(
     overrides: Option<&KickstandLayoutOverrides>,
 ) -> KickstandPlacementLayout {
-    let c = &KICKSTAND_LAYOUT_CONSTRAINTS;
-    let pick = |value: Option<f64>, constraint: NumericConstraint| {
-        clamp_constraint(value.unwrap_or(constraint.default_value), constraint)
-    };
-    let first_joint_height_ratio = pick(
-        overrides.and_then(|o| o.first_joint_height_ratio),
-        c.first_joint_height_ratio,
+    let o = overrides.copied().unwrap_or_default();
+    let first = within(o.first_joint_height_ratio, FIRST_JOINT_HEIGHT_RATIO);
+    let second = within(o.second_joint_height_ratio, SECOND_JOINT_HEIGHT_RATIO);
+    let lowest_second = js_min(
+        SECOND_JOINT_HEIGHT_RATIO.max,
+        first + SECOND_JOINT_HEIGHT_RATIO.step,
     );
-    let second_joint_height_ratio_raw = pick(
-        overrides.and_then(|o| o.second_joint_height_ratio),
-        c.second_joint_height_ratio,
-    );
-    let min_joint_spacing_mm = pick(
-        overrides.and_then(|o| o.min_joint_spacing_mm),
-        c.min_joint_spacing_mm,
-    );
-    let min_terminal_clearance_mm = pick(
-        overrides.and_then(|o| o.min_terminal_clearance_mm),
-        c.min_terminal_clearance_mm,
-    );
-
-    // Keep second joint above first joint in ratio space.
-    let min_second = js_min(
-        c.second_joint_height_ratio.max,
-        first_joint_height_ratio + c.second_joint_height_ratio.step,
-    );
-
     KickstandPlacementLayout {
-        first_joint_height_ratio,
-        second_joint_height_ratio: js_max(second_joint_height_ratio_raw, min_second),
-        min_joint_spacing_mm,
-        min_terminal_clearance_mm,
+        first_joint_height_ratio: first,
+        second_joint_height_ratio: js_max(second, lowest_second),
+        min_joint_spacing_mm: within(o.min_joint_spacing_mm, MIN_JOINT_SPACING_MM),
+        min_terminal_clearance_mm: within(o.min_terminal_clearance_mm, MIN_TERMINAL_CLEARANCE_MM),
     }
 }
 
-/// `{ diameter, diskHeight, coneHeight }` of a kickstand's plate root.
+/// The plate root a kickstand stands on, as `(diameter, disk height, cone
+/// height)`: the same root a trunk gets.
 pub fn get_kickstand_root_profile(settings: &SupportSettings) -> (f64, f64, f64) {
+    let roots = &settings.roots;
     (
-        settings.roots.diameter_mm,
-        settings.roots.disk_height_mm,
-        settings.roots.cone_height_mm,
+        roots.diameter_mm,
+        roots.disk_height_mm,
+        roots.cone_height_mm,
     )
 }
 
+/// The knot a kickstand makes on its host is a joint's width wider than the
+/// host there.
 pub fn get_kickstand_knot_diameter_mm(host_diameter_mm: f64) -> f64 {
     js_max(0.001, host_diameter_mm) + JOINT_DIAMETER_OFFSET_MM
 }

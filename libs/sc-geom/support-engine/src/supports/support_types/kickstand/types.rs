@@ -1,29 +1,30 @@
-//! DragonFruit `src/supports/SupportTypes/Kickstand/types.ts`.
-//!
-//! `KickstandBuildInput` carries the collision mesh and is ported with the
-//! kickstand builder.
+//! The data a kickstand is placed with and built into.
 
 use serde::{Deserialize, Serialize};
 
 use crate::supports::support_kinds::SupportTypeId;
-// Declared with the other support types; re-exported so this module stays the
-// import site for everything kickstand-shaped.
+/// The kickstand entity lives with the other support types; it is named here
+/// too so everything about kickstands can be imported from one place.
 pub use crate::supports::types::Kickstand;
 use crate::supports::types::{Knot, LimitationCode, Roots, Vec3};
 
+/// The point on another support that a kickstand props up.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KickstandHostTarget {
     pub segment_id: String,
-    /// One of `KICKSTAND_HOST_TYPES`.
+    /// One of the kickstand host types.
     pub support_kind: SupportTypeId,
+    /// How far along the segment, 0 at its bottom and 1 at its top.
     pub t: f64,
     pub pos: Vec3,
     pub diameter_mm: f64,
+    /// The lowest `t` the host point may slide to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_t: Option<f64>,
 }
 
+/// Where the column's joints go, and the gaps kept between them.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KickstandPlacementLayout {
@@ -39,7 +40,8 @@ pub struct KickstandBuildResult {
     pub root: Roots,
     pub host_knot: Knot,
     pub kickstand: Kickstand,
-    /// Why this column is illegal, when it is. Force placement ignores it.
+    /// Why the column may not stand where it is, when it may not. A forced
+    /// placement keeps it anyway.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<LimitationCode>,
 }
