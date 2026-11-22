@@ -35,15 +35,11 @@ members = [
     "libs/sc-geom/engine-base",
     "libs/sc-geom/surface-analysis",
     "libs/sc-geom/islands",
-    "libs/sc-geom/generic-geom-alg-family-dispatch",
     "libs/sc-geom/hollow-engine",
     "libs/sc-geom/hollow-session",
     "libs/sc-geom/sc-geom-transport-inprocess",
-    "libs/sc-geom/support-gen-chalyplex",
     "libs/sc-geom/support-engine",
     "libs/sc-geom/support-session",
-    "libs/sc-geom/support-gen-family-dispatch",
-    "libs/sc-geom/support-gen-trivial",
 ]
 
 exclude = ["libs/vendor/retina"]

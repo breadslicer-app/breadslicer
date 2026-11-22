@@ -2074,54 +2074,6 @@ msgctxt "ErrorDialog"
 msgid "Slicing failed"
 msgstr "El laminado falló"
 
-#: src/support_gen_run.rs
-msgctxt "GenSupportDialog"
-msgid "Support generation failed"
-msgstr "La generación de soportes falló"
-
-#: src/support_gen_run.rs
-msgctxt "GenSupportDialog"
-msgid "Support-structures generation failed"
-msgstr "La generación de estructuras de soporte falló"
-
-#: src/support_gen_run.rs
-msgctxt "GenSupportDialog"
-msgid ""
-"The scene rejected one or more generated support structures; nothing was "
-"changed for those."
-msgstr ""
-"La escena rechazó una o más estructuras de soporte generadas; no se cambió "
-"nada para esas."
-
-#: src/support_gen_run.rs
-msgctxt "GenSupportDialog"
-msgid "Support-structures generated"
-msgstr "Estructuras de soporte generadas"
-
-#: src/support_gen_run.rs
-#, rust-format
-msgctxt "GenSupportDialog"
-msgid ""
-"{} of {n} Support structure added to the scene. Estimated material: {} g."
-msgid_plural ""
-"{} of {n} Support structures added to the scene. Estimated material: {} g."
-msgstr[0] ""
-"{} de {n} estructura de soporte añadida a la escena. Material estimado: {} g."
-msgstr[1] ""
-"{} de {n} estructuras de soporte añadidas a la escena. Material estimado: {} "
-"g."
-
-#: src/support_gen_run.rs
-#, rust-format
-msgctxt "GenSupportDialog"
-msgid "{n} Support structure added to the scene. Estimated material: {} g."
-msgid_plural ""
-"{n} Support structures added to the scene. Estimated material: {} g."
-msgstr[0] ""
-"{n} estructura de soporte añadida a la escena. Material estimado: {} g."
-msgstr[1] ""
-"{n} estructuras de soporte añadidas a la escena. Material estimado: {} g."
-
 #: src/print_format.rs
 msgctxt "SlicePanel"
 msgid "this build cannot write it yet"

@@ -35,7 +35,6 @@ use crate::commands::profiles::{
 };
 use crate::commands::review::{ReviewArgs, review};
 use crate::commands::slice::{SliceArgs, slice};
-use crate::commands::support_gen::{GenSupportArgs, support_gen};
 use crate::config::cmd_options::{CmdOptions, get_cmd_options};
 use crate::config::profile_libraries::resolve_profile_libraries;
 
@@ -134,27 +133,6 @@ fn main() -> Result<()> {
             },
             &libraries,
         ),
-        CmdOptions::GenSupport {
-            source,
-            source_format,
-            target,
-            target_format,
-            radius_mm,
-            gravity,
-            boundary_min,
-            boundary_max,
-            anchors,
-        } => support_gen(GenSupportArgs {
-            source,
-            source_format,
-            target,
-            target_format,
-            radius_mm,
-            gravity,
-            boundary_min,
-            boundary_max,
-            anchors,
-        }),
         CmdOptions::Version => {
             const SLICER_CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
             println!("Version: {SLICER_CLI_VERSION}");

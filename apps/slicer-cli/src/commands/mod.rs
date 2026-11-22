@@ -17,7 +17,6 @@ pub(crate) mod profiles;
 mod repair_report;
 pub(crate) mod review;
 pub(crate) mod slice;
-pub(crate) mod support_gen;
 
 #[cfg(test)]
 mod tests_diagnose;
