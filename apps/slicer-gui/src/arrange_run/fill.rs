@@ -7,7 +7,7 @@
 //! selected models.
 //!
 //! Everything on the plate but the selected models stays where it is, and
-//! the copies keep clear of it ([`sc_arrange::fill`]): with one model
+//! the copies keep clear of it ([`bread_arrange::fill`]): with one model
 //! selected, copies of it; with several, copies of each in turn, so they
 //! get as many each, give or take one. The selected models stay too,
 //! unless moving them lets more copies in (one in the plate's middle splits
@@ -34,7 +34,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use sc_arrange::{Body, Filled, Placement, Plate, Settings};
+use bread_arrange::{Body, Filled, Placement, Plate, Settings};
 use sc_geom::supports::{
     SupportSession, is_imported_supports, model_from_scene_mesh, model_from_world_mesh,
 };
@@ -290,7 +290,7 @@ impl ArrangeRun {
 fn moved_models(
     document: &SceneDocument,
     sources: &[Source],
-    moved: &[sc_arrange::FillCopy],
+    moved: &[bread_arrange::FillCopy],
     sets: Vec<Option<CopiedSet>>,
     drawn: &mut Vec<(NodeId, NodeId, Arc<SupportSession>)>,
 ) -> Option<Vec<SceneEdit>> {
@@ -437,7 +437,7 @@ fn make(
     cancel: &AtomicBool,
 ) -> Option<Made> {
     let of_body: Vec<usize> = sources.iter().map(|s| s.body).collect();
-    let filled = sc_arrange::fill(
+    let filled = bread_arrange::fill(
         bodies,
         &of_body,
         plate,

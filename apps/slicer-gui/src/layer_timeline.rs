@@ -10,7 +10,7 @@
 //! area and perimeter, measured with the estimate's resin and kept with the
 //! slice ([`sc_print_glue::PlateContours::lit_measures`]), its time and lift
 //! speed from the print program, and the suction cups the review found on
-//! it. The force is [`sc_peel`]'s, not calibrated with prints: the card says
+//! it. The force is [`bread_peel`]'s, not calibrated with prints: the card says
 //! so. The chart marks the layers where the force jumps, and a click on it
 //! goes to that layer.
 //!
@@ -21,7 +21,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use sc_peel::{LayerMeasure, PeelCurve, PeelModel};
+use bread_peel::{LayerMeasure, PeelCurve, PeelModel};
 use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::export_print_file::{HeldLayers, held_slice_layers};

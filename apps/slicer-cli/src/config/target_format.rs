@@ -299,7 +299,7 @@ mod target_format_tests {
 
     #[test]
     fn the_formats_ported_from_uvtools_settle_once_installed() {
-        sc_sla_formats_uvtools::install();
+        bread_sla_formats_uvtools::install();
         // The first revision a printer lists is its default: the Halot One
         // lists v2, the dialect of the files it prints from.
         for (listed, first) in [

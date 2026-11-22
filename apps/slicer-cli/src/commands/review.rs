@@ -4,7 +4,7 @@
  */
 
 //! `review`: slices a model exactly as `slice` does, writes no file, and runs
-//! the pre-flight review (`sc_review`) on the contours of the models. The
+//! the pre-flight review (`bread_review`) on the contours of the models. The
 //! supports made here enter as data: where their tips stand, the layers they
 //! stand on and the box they take (#432). Supports that came in the file with
 //! no data are reviewed as a model.
@@ -29,15 +29,15 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
-use sc_geom::supports::{SupportContact, recommended_lift_mm};
-use sc_print_glue::{PlateFrame, SlicedPlate};
-use sc_print_profiles::ProfileLibraries;
-use sc_print_profiles::{EffectiveMaterial, PrinterProfile};
-use sc_review::{
+use bread_review::{
     CavityFill, Finding, Held, IslandStart, Part, PlannedTip, PlateRegions, ReviewContext,
     ReviewInput, ReviewLeaf, ReviewOptions, ReviewReport, Severity, SuggestedFix, TipCone, TipPlan,
     TipPlanOptions, check_regions, erase_stack, fill_stack, plan_all_tips,
 };
+use sc_geom::supports::{SupportContact, recommended_lift_mm};
+use sc_print_glue::{PlateFrame, SlicedPlate};
+use sc_print_profiles::ProfileLibraries;
+use sc_print_profiles::{EffectiveMaterial, PrinterProfile};
 use sc_scene::{NodeId, Scene};
 use sc_sl1cer::contour::{ContourLayer, ContourStack};
 
@@ -452,7 +452,7 @@ impl PlateContext<'_> {
     fn input<'a>(
         &self,
         leaves: Vec<ReviewLeaf<'a>>,
-    ) -> Result<ReviewInput<'a>, sc_review::ReviewInputError> {
+    ) -> Result<ReviewInput<'a>, bread_review::ReviewInputError> {
         Ok(ReviewInput::from_profile(leaves, self.plate.profile())?
             .with_raft_top_mm(self.raft_top_mm)
             .with_support_lift_mm(self.support_lift_mm)
@@ -916,7 +916,7 @@ fn write_json(
 
 #[cfg(test)]
 mod review_output_tests {
-    use sc_review::{CheckKind, PlatePoint, RoleScope};
+    use bread_review::{CheckKind, PlatePoint, RoleScope};
 
     use super::*;
 

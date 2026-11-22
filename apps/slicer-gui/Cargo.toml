@@ -20,29 +20,29 @@ path = "src/main.rs"
 mimalloc.workspace = true
 rayon = { workspace = true }
 sc-app-paths = { workspace = true }
-sc-arrange = { workspace = true }
-sc-cut = { workspace = true }
-sc-orient = { workspace = true }
+bread-arrange = { workspace = true }
+bread-cut = { workspace = true }
+bread-orient = { workspace = true }
 sc-geom = { workspace = true }
 sc-mesh-core = { workspace = true }
 sc-mesh-formats = { workspace = true }
 sc-mesh-spatial = { workspace = true }
 sc-print-glue = { workspace = true }
 sc-print-primitives = { workspace = true, features = ["serde"] }
-sc-printer-link.workspace = true
+bread-printer-link.workspace = true
 serde_json.workspace = true
 sc-print-profiles = { workspace = true }
 sc-project-formats = { workspace = true }
-sc-peel = { workspace = true }
-sc-review = { workspace = true }
+bread-peel = { workspace = true }
+bread-review = { workspace = true }
 sc-scene = { workspace = true }
 sc-scene-edit = { workspace = true }
 sc-sl1cer = { workspace = true }
 sc-sla-formats = { workspace = true }
-sc-sla-formats-uvtools = { workspace = true }
-sc-slicer-gui-base = { workspace = true }
-sc-slicer-gui-render = { workspace = true }
-sc-slicer-gui-ui = { workspace = true }
+bread-sla-formats-uvtools = { workspace = true }
+bread-gui-base = { workspace = true }
+bread-gui-render = { workspace = true }
+bread-gui-ui = { workspace = true }
 
 anyhow = { workspace = true }
 bytemuck = { version = "1.18", features = ["derive"] }
@@ -97,12 +97,12 @@ winresource = "0.1.31"
 [dev-dependencies]
 bread-format = { workspace = true }
 sc-message-catalog = { workspace = true }
-sc-slicer-gui-base = { workspace = true, features = ["test-support"] }
-sc-slicer-gui-render = { workspace = true, features = ["test-support"] }
+bread-gui-base = { workspace = true, features = ["test-support"] }
+bread-gui-render = { workspace = true, features = ["test-support"] }
 sc-mesh-fixtures = { workspace = true }
 sc-print-primitives = { workspace = true }
 sc-scene-fixtures = { workspace = true }
-sc-lys = { workspace = true, features = ["fixture"] }
+bread-lys = { workspace = true, features = ["fixture"] }
 
 float-cmp = { workspace = true }
 # Slint's element queries (positions and sizes of laid-out elements) for

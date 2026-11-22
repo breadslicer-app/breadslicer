@@ -11094,7 +11094,7 @@ mod hand_edit_tests {
                 .iter()
                 .map(|&l| set_of(&document, &run, l).1)
                 .collect();
-            let plate = sc_arrange::Plate {
+            let plate = bread_arrange::Plate {
                 min: [0.0, 0.0],
                 max: [60.0, 40.0],
                 floor: 0.0,
@@ -11164,7 +11164,7 @@ mod hand_edit_tests {
                 .flatten()
                 .unwrap();
             document.set_selection(Selection::One(LeafId(original)));
-            let plate = sc_arrange::Plate {
+            let plate = bread_arrange::Plate {
                 min: [0.0, 0.0],
                 max: [60.0, 40.0],
                 floor: 0.0,
@@ -11307,7 +11307,7 @@ mod hand_edit_tests {
                 t.elapsed().as_secs_f64() * 1e3
             );
             document.set_selection(Selection::One(LeafId(leaf)));
-            let plate = sc_arrange::Plate {
+            let plate = bread_arrange::Plate {
                 min: [0.0, 0.0],
                 max: [223.642, 126.976],
                 floor: 0.0,
@@ -11376,7 +11376,7 @@ mod hand_edit_tests {
                     ]
                 })
                 .map(|half| half * 2.0 + 1.6);
-            let plate = sc_arrange::Plate {
+            let plate = bread_arrange::Plate {
                 min: [20.0 - 2.0 * size[0] - 5.0, 20.0 - size[1] - 5.0],
                 max: [20.0 + 2.0 * size[0] + 5.0, 20.0 + size[1] + 5.0],
                 floor: 0.0,
@@ -11422,7 +11422,7 @@ mod hand_edit_tests {
             let (_, set_mesh) = set_of(&document, &run, leaves[0]);
             document.set_selection(Selection::One(LeafId(leaves[0])));
             // A quarter turn about the model's middle, then 15 mm along X.
-            let placement = sc_arrange::Placement {
+            let placement = bread_arrange::Placement {
                 angle: std::f64::consts::FRAC_PI_2,
                 translation: [55.0, 0.0],
                 on_plate: true,
@@ -11635,7 +11635,7 @@ mod hand_edit_tests {
             let orient =
                 OrientRun::install(&window, document.clone(), ctrl.dialogs(), ctrl, run.clone());
             let tilting = orient
-                .search_now(sc_orient::SearchMode::Quick)
+                .search_now(bread_orient::SearchMode::Quick)
                 .iter()
                 .position(|c| c.tilt_deg >= 1.0)
                 .expect("an option tilts the cube");

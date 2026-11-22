@@ -162,7 +162,7 @@ fn piece_volumes(f: &Fixture) -> Vec<f64> {
                         .iter()
                         .map(|v| v.coords()[2])
                         .fold(f32::INFINITY, f32::min);
-                    Some((f64::from(low), sc_cut::volume(mesh)))
+                    Some((f64::from(low), bread_cut::volume(mesh)))
                 })
                 .collect()
         })

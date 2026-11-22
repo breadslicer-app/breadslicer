@@ -7,7 +7,7 @@
 //! on the film with, and the suction cups sealed against it.
 //!
 //! It reads only the sweep's tables, no pixel: each solid region pulls with
-//! its area ([`sc_peel::PeelModel::region_force_n`]), and with the suction of
+//! its area ([`bread_peel::PeelModel::region_force_n`]), and with the suction of
 //! the cavities it closes. The shape term is left out here: the tables keep
 //! no perimeter per region, and it is 0 until prints measure it.
 //!
@@ -34,17 +34,17 @@
 //! tip belongs to the solid region its end lies in, on the layer of its end.
 //!
 //! The pull of a body's regions on a layer is shared among its tips as on a
-//! rigid body ([`sc_peel::TipGroup`]): the mean, plus the leverage of where
+//! rigid body ([`bread_peel::TipGroup`]): the mean, plus the leverage of where
 //! the pull centres and of its sideways share at the film. What a tip holds
 //! is its contact section times the tips' strength
-//! ([`sc_peel::PeelModel::tip_capacity_n`]); its *utilisation* is the load
+//! ([`bread_peel::PeelModel::tip_capacity_n`]); its *utilisation* is the load
 //! over that. For every tip the review keeps its worst layer, and for every
 //! body held by tips alone (followed up to where it joins the rest) the layer
 //! where its most loaded tip is worst off.
 
 use std::collections::{BTreeSet, HashMap};
 
-use sc_peel::{Band, PeelModel, TipLoadCase, TipSums};
+use bread_peel::{Band, PeelModel, TipLoadCase, TipSums};
 use sc_sl1cer::geom2d::Point2D;
 
 use crate::checks::islands::PLATE_LAYERS;

@@ -9,9 +9,9 @@
 // and the `.po` files of `i18n/`.
 include!(concat!(env!("OUT_DIR"), "/message_catalog.rs"));
 
-/// [`ctr!`](sc_slicer_gui_base::ctr), which looks its messages up in this
+/// [`ctr!`](bread_gui_base::ctr), which looks its messages up in this
 /// crate's catalog above.
-pub(crate) use sc_slicer_gui_base::ctr;
+pub(crate) use bread_gui_base::ctr;
 
 #[cfg(test)]
 mod i18n_tests {

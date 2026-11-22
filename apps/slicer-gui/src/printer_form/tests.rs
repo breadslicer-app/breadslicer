@@ -37,7 +37,7 @@ fn draft() -> PrinterDraft {
 
 #[test]
 fn a_bundled_printer_typed_again_is_the_same_machine() {
-    sc_sla_formats_uvtools::install();
+    bread_sla_formats_uvtools::install();
     // Every field the form shows, read off the M7 Pro and the Saturn... and
     // back: the plate, the panel and the file are the same, so its layers
     // are the same byte for byte.

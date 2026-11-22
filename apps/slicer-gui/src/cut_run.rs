@@ -12,7 +12,7 @@
 //! corner moved on the plane alone (#56: cutting a miniature at the waist
 //! while its long arms reach past it); a drag on the plane moves the shape
 //! along it. The card sets the same by numbers. Where the plane crosses the
-//! model shows as the pieces of the cross-section ([`sc_cut`]): green the
+//! model shows as the pieces of the cross-section ([`bread_cut`]): green the
 //! ones the cut takes, grey the ones it leaves whole, amber the ones the
 //! shape's edge crosses (the cut waits until the shape clears them, since
 //! cutting part of a piece leaves a slit). A click on a piece takes it or
@@ -30,7 +30,7 @@
 //!
 //! **Strokes (#440, #441).** The card's Stroke mode puts the plane aside: a
 //! drag over the model draws a stroke, and the cut follows it, swept along
-//! the view through the model ([`sc_cut::stroke_cut`]). A stroke from one
+//! the view through the model ([`bread_cut::stroke_cut`]). A stroke from one
 //! side of the model to the other cuts it in two along it; a loop drawn
 //! round a part (a head, a hand, a shoulder pad) cuts that part off, flat
 //! at the plane the loop's points on the surface best fit. The stroke shows
@@ -39,7 +39,7 @@
 //!
 //! **Suggestions (#443).** Suggest puts the plane, level, at the narrowest
 //! place of the model's cross-section (a neck, a waist, an ankle:
-//! [`sc_cut::narrowings`]); pressing it again goes to the next one. Nothing
+//! [`bread_cut::narrowings`]); pressing it again goes to the next one. Nothing
 //! is cut until Cut.
 //!
 //! **Joints (#109, #442).** The card can add a pin on the part below the
@@ -55,7 +55,7 @@ use std::rc::{Rc, Weak};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use sc_cut::{
+use bread_cut::{
     Cut, CutError, CutModel, Fit, Joint, MAGNET_PRESETS, Outline, PinShape, Plane, Section,
     add_joints, joint_points,
 };
@@ -837,7 +837,7 @@ fn stroke_frame(rays: &[([f64; 3], [f64; 3])], center: [f64; 3]) -> Option<Strok
     if !along.iter().all(|c| c.is_finite()) || dot(along, along) < 0.5 {
         return None;
     }
-    let (u, v) = sc_cut::Stroke::frame(along);
+    let (u, v) = bread_cut::Stroke::frame(along);
     let points: Vec<[f64; 2]> = rays
         .iter()
         .filter_map(|(o, d)| {
@@ -1222,7 +1222,7 @@ impl CutRun {
                     })
                     .collect();
                 let world = IndexedMesh::new(None, vertices, target.mesh.faces().to_vec());
-                let list: Vec<f64> = sc_cut::narrowings(&world, [0.0, 0.0, 1.0])
+                let list: Vec<f64> = bread_cut::narrowings(&world, [0.0, 0.0, 1.0])
                     .into_iter()
                     .map(|n| n.at)
                     .collect();
@@ -1491,7 +1491,7 @@ impl CutRun {
         // frame's directions, which the map takes along.
         let zero = back.apply([0.0; 3]);
         let vector = |v: [f64; 3]| sub(back.apply(v), zero);
-        let stroke = sc_cut::Stroke {
+        let stroke = bread_cut::Stroke {
             origin: back.apply(world.origin),
             u: vector(world.u),
             v: vector(world.v),
@@ -1516,7 +1516,7 @@ impl CutRun {
                 if stroke.closed {
                     stroke.surface = surface_points(&mesh, &local);
                 }
-                sc_cut::stroke_cut(&mesh, &stroke)
+                bread_cut::stroke_cut(&mesh, &stroke)
             }))
             .unwrap_or_else(|payload| Err(CutError::Failed(panic_message(&payload))));
             *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some((id, Worked::Stroke(cut)));

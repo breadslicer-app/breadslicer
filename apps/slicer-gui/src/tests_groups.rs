@@ -97,7 +97,7 @@ fn a_group_is_picked_as_one_and_arranged_as_one_body() {
 
     // Arranged, the members keep their places to each other.
     let before = [place(&document, leaves[0]), place(&document, leaves[1])];
-    let plate = sc_arrange::Plate {
+    let plate = bread_arrange::Plate {
         min: [-60.0, -60.0],
         max: [60.0, 60.0],
         floor: 0.0,

@@ -1,4 +1,4 @@
-# sc-review
+# bread-review
 
 Pre-flight review of a sliced resin plate: reads the models of one slicing run
 from

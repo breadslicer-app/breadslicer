@@ -570,7 +570,7 @@ fn arrange_selection_moves_every_selected_model_and_nothing_else() {
     let ctrl = models(3, WorkspaceSection::Transform);
     select_rows(&ctrl, &[0, 2]);
     let before: Vec<[f64; 3]> = (0..3).map(|r| translation(&ctrl, r)).collect();
-    let plate = sc_arrange::Plate {
+    let plate = bread_arrange::Plate {
         min: [0.0, 0.0],
         max: [60.0, 40.0],
         floor: 0.0,

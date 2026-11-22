@@ -592,7 +592,7 @@ fn fill_bed_copies_take_the_imported_supports_along() {
         let (model, _) = separate(&opened);
         let doc = &opened.document;
         select(doc, model);
-        let plate = sc_arrange::Plate {
+        let plate = bread_arrange::Plate {
             min: [-25.0, -25.0],
             max: [200.0, 25.0],
             floor: 0.0,

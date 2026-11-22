@@ -9,9 +9,9 @@
 // and the `.po` files of the GUI's `i18n/`.
 include!(concat!(env!("OUT_DIR"), "/message_catalog.rs"));
 
-/// [`ctr!`](sc_slicer_gui_base::ctr), which looks its messages up in this
+/// [`ctr!`](bread_gui_base::ctr), which looks its messages up in this
 /// crate's catalog above.
-pub(crate) use sc_slicer_gui_base::ctr;
+pub(crate) use bread_gui_base::ctr;
 
 #[cfg(test)]
 mod tests {
@@ -39,7 +39,7 @@ mod tests {
     fn the_catalog_has_the_languages_of_slints_bundle_in_their_order() {
         let bundled = std::thread::spawn(|| {
             set_platform(Box::new(HeadlessPlatform)).expect("a new thread has no platform yet");
-            let dialog = sc_slicer_gui_ui::AboutWindow::new().expect("a headless component");
+            let dialog = bread_gui_ui::AboutWindow::new().expect("a headless component");
             let languages = match slint::select_bundled_translation("not-a-language") {
                 Err(SelectBundledTranslationError::LanguageNotFound {
                     available_languages,

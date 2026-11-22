@@ -64,7 +64,7 @@
 //! - **Material**: total support length, and the sliced volume of supports,
 //!   model and resin.
 //! - **Height and peel**: plate height and layers, and the peak peel force
-//!   above the raft (`σ·A + k·P` per layer, the force model of `sc-orient`).
+//!   above the raft (`σ·A + k·P` per layer, the force model of `bread-orient`).
 //! - **Time**: the support run (fastest of the runs) and its stages, slicing,
 //!   review and this measurement.
 //! - **Determinism**: every run must give the same supports (a digest of the
@@ -86,14 +86,14 @@ use sc_mesh_core::indexed_mesh::RepairPasses;
 use sc_mesh_core::transform::Transform3D;
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, Vertex};
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
-use sc_orient::PeelModel;
+use bread_orient::PeelModel;
 use sc_print_glue::{SliceRun, SlicingParams, SupportOwners, slice_plate};
 use sc_print_profiles::{
     EffectiveMaterial, PrinterProfile, load_material_profile_from_path,
     load_printer_profile_from_path,
 };
 use sc_project_formats::{LoadedContent, ProjectContent, load_scene};
-use sc_review::{
+use bread_review::{
     CheckKind, PlateRegions, ReviewContext, ReviewInput, ReviewLeaf, ReviewOptions, Severity,
     SweepOptions, TipCone, check_regions,
 };

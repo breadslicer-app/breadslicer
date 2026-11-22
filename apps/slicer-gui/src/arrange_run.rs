@@ -6,7 +6,7 @@
 //! Arrange all and Arrange selection (#180).
 //!
 //! The Transform tab's Arrange card packs the plate's objects by their real
-//! footprints ([`sc_arrange`]): each model with its supports and raft, kept
+//! footprints ([`bread_arrange`]): each model with its supports and raft, kept
 //! a gap apart at every height (a part may reach over a shorter neighbour),
 //! or by their whole shadow. Arrange selection finds a spot for the selected
 //! model and leaves the others where they are.
@@ -32,7 +32,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use sc_arrange::{Across, Body, Outcome, Part, Placement, Plate, Settings};
+use bread_arrange::{Across, Body, Outcome, Part, Placement, Plate, Settings};
 use sc_geom::supports::is_any_support_mesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_scene::NodeId;
@@ -357,7 +357,7 @@ impl ArrangeRun {
                 {
                     return 0;
                 }
-                sc_arrange::warm(&gathered.bodies, &plate, &settings, &cancel)
+                bread_arrange::warm(&gathered.bodies, &plate, &settings, &cancel)
             }));
             if let Ok(drawn) = drawn
                 && drawn > 0
@@ -496,7 +496,7 @@ impl ArrangeRun {
                         if let Some(ctx) = &forecast {
                             with_forecasts(&mut bodies, &bare, ctx, &cancel)?;
                         }
-                        sc_arrange::arrange(&bodies, &plate, &settings, &cancel).ok()
+                        bread_arrange::arrange(&bodies, &plate, &settings, &cancel).ok()
                     })
                     .collect::<Option<Vec<Outcome>>>()
             }))
@@ -606,7 +606,7 @@ impl ArrangeRun {
                 if let Some(ctx) = &forecast {
                     with_forecasts(&mut bodies, &bare, ctx, &cancel)?;
                 }
-                sc_arrange::arrange_across(&bodies, &stands_on, &plates, &settings, &cancel).ok()
+                bread_arrange::arrange_across(&bodies, &stands_on, &plates, &settings, &cancel).ok()
             }))
             .map_err(|payload| panic_message(&payload));
             *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some((result, Instant::now()));
@@ -680,7 +680,7 @@ impl ArrangeRun {
             "arrange: applied in {:.2} s, {} drawing(s) of supports kept, footprints kept {:.0} MB",
             applying.elapsed().as_secs_f64(),
             self.document.support_sessions().borrow().len(),
-            sc_arrange::kept_bytes() as f64 / 1e6,
+            bread_arrange::kept_bytes() as f64 / 1e6,
         ));
         let applied = match outcome {
             Ok(Some(applied)) => {
@@ -1255,7 +1255,7 @@ pub(crate) fn arrange_across_now(
     keep_by_hand: bool,
 ) -> Option<across::Applied> {
     let job = across::job(document, volume, scope, keep_by_hand)?;
-    let across = sc_arrange::arrange_across(
+    let across = bread_arrange::arrange_across(
         &job.bodies,
         &job.stands_on,
         &job.plates,
@@ -1275,7 +1275,7 @@ pub(crate) fn arrange_again_now(
     options: ArrangeOptions,
 ) -> Option<across::Applied> {
     let job = across::job(document, volume, ArrangeScope::Plates, false)?;
-    let across = sc_arrange::arrange_across(
+    let across = bread_arrange::arrange_across(
         &job.bodies,
         &job.stands_on,
         &job.plates,
@@ -1307,7 +1307,7 @@ pub(crate) fn arrange_now(
     selection: bool,
 ) -> Option<Outcome> {
     let gathered = gather(document, selection, None)?;
-    let outcome = sc_arrange::arrange(
+    let outcome = bread_arrange::arrange(
         &gathered.bodies,
         plate,
         &options.settings(),
@@ -1554,15 +1554,15 @@ mod real_scene {
                     options.raft_top_mm,
                     document.support_sessions().borrow().len(),
                     triangles as f64 / 1e6,
-                    sc_arrange::kept_parts(),
-                    sc_arrange::kept_bytes() as f64 / 1e6,
+                    bread_arrange::kept_parts(),
+                    bread_arrange::kept_bytes() as f64 / 1e6,
                     memory_mb(),
                 );
                 let t = Instant::now();
                 let job =
                     across::job(&document, &volume, ArrangeScope::Plates, false).expect("a job");
                 let gathered = t.elapsed();
-                let across = sc_arrange::arrange_across(
+                let across = bread_arrange::arrange_across(
                     &job.bodies,
                     &job.stands_on,
                     &job.plates,

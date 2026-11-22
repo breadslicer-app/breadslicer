@@ -7,7 +7,7 @@
 //!
 //! The tool (the rail's Orient button, `O`, or Auto-orient on the ROTATE
 //! card) finds the best way up of the selected model for a resin printer
-//! ([`sc_orient`]) and offers three poses with their numbers: support tips,
+//! ([`bread_orient`]) and offers three poses with their numbers: support tips,
 //! peak peel force, height. Quick runs the staged search; Full searches a
 //! denser sphere and judges more finalists. Both run on a worker with
 //! progress and Cancel; the UI never waits.
@@ -20,7 +20,7 @@
 //! The tool holds the protect-detail brush (#184): painting the part of the
 //! model that matters most is an optional first step. Paint is a constraint,
 //! not a weight: the options keep tips off it whenever a pose can
-//! ([`sc_orient`]), each says how many it leaves, and options found before the
+//! ([`bread_orient`]), each says how many it leaves, and options found before the
 //! paint changed are dropped, as they no longer answer what was asked.
 //!
 //! Hovering an option shows it on the model, uncommitted, like a gizmo drag
@@ -44,7 +44,7 @@ use std::time::{Duration, Instant};
 use sc_geom::supports::is_any_support_mesh;
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_orient::{
+use bread_orient::{
     Cancelled, Candidate, Note, OrientAnalysis, OrientContext, Preset, SearchMode, SearchOutcome,
     Stage, kept_on_plate, turned_about_footprint,
 };

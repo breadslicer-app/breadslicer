@@ -1,4 +1,4 @@
-# sc-peel
+# bread-peel
 
 Approximate physics of a bottom-up resin print's peel, for the
 [Breadslicer](https://github.com/breadslicer-app/breadslicer/blob/main/README.md).
