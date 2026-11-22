@@ -1,19 +1,21 @@
-DragonFruit support system, native Rust port
-============================================
+Breadslicer support crates
+==========================
 
-This crate is a file-by-file transliteration of the support system of:
+support-geom, support-model, support-mesh, support-placement, support-bracing
+and support-pipeline (with support-session, which runs them for a scene).
+
+The support system of these crates was first ported to Rust from the support
+system of:
 
   DragonFruit, Open Resin Alliance and contributors
   https://github.com/Open-Resin-Alliance/DragonFruit
   SynrgStudio private downstream revision f331fc555abb31c4bcb28d1a358edb887f0afe07
 
-DragonFruit is licensed AGPL-3.0-or-later (root README and LICENSE of the
-reference checkout). Each module names the DragonFruit file it was ported from
-in its header. Algorithms, constants, names, comments and behaviour are kept;
-TypeScript/React/three.js plumbing is replaced by plain Rust. The port remains a
-derivative work under AGPL-3.0-or-later and is not relicensed by being
-translated. SoulCrafted Slicer is itself AGPL-3.0.
+DragonFruit is licensed AGPL-3.0-or-later. The port has since been rewritten
+module by module as Breadslicer's own code, giving the same supports, and split
+into these crates. They remain under AGPL-3.0-or-later. SoulCrafted Slicer is
+itself AGPL-3.0.
 
-src/three/ (vectors, matrices, rays, triangles, extrusion), the BVH in
-src/three_mesh_bvh/ and the polygon booleans are Breadslicer's own code, on
-glam, earcutr and i_overlay (MIT/Apache-2.0, ISC).
+The geometry (vectors, matrices, rays, triangles, extrusion), the BVH and the
+polygon booleans are Breadslicer's own code, on glam, earcutr and i_overlay
+(MIT/Apache-2.0, ISC).
