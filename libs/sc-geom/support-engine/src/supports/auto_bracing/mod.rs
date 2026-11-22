@@ -1,9 +1,12 @@
-//! DragonFruit `src/supports/autoBracing/`.
+//! Automatic bracing: diagonal braces between neighbouring support shafts,
+//! and kickstands where braces alone cannot hold a shaft both ways.
 
 pub mod auto_brace;
-pub mod brace_diameter;
+mod grouping;
+mod hand;
+mod ladder;
 pub mod mesh_clearance;
-pub mod patterns;
+mod pairing;
+mod samples;
 pub mod settings;
 pub mod two_axis_detection;
-pub mod voronoi_partitioning;
