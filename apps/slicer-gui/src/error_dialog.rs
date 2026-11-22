@@ -163,8 +163,6 @@ pub(crate) enum MessageKey {
     /// A model moved in Z, turned or scaled got new supports in place of
     /// supports edited by hand (#153).
     SupportsRegeneratedHandEdits,
-    /// Tools menu: the summary of the support-structure generator.
-    SupportStructuresGenerated,
     /// Transform tab: the summary of a mesh repair.
     MeshRepairSummary,
     /// A file whose supports are fused into its model (#258).
@@ -179,7 +177,6 @@ impl MessageKey {
             Self::SupportsGenerated => "supports.generated",
             Self::SupportsNotNeeded => "supports.not-needed",
             Self::SupportsRegeneratedHandEdits => "supports.regenerated-hand-edits",
-            Self::SupportStructuresGenerated => "support-structures.generated",
             Self::MeshRepairSummary => "repair.summary",
             Self::FusedSupports => "import.fused-supports",
         }
@@ -1385,7 +1382,6 @@ mod message_policy_tests {
             MessageKey::SupportsGenerated,
             MessageKey::SupportsNotNeeded,
             MessageKey::SupportsRegeneratedHandEdits,
-            MessageKey::SupportStructuresGenerated,
             MessageKey::MeshRepairSummary,
         ];
         let ids: std::collections::BTreeSet<&str> = keys.iter().map(|k| k.id()).collect();

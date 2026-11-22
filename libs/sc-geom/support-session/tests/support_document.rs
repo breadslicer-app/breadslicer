@@ -397,7 +397,7 @@ fn other_settings_edits_or_models_are_other_supports() {
     let outright = start_supports(
         &scene,
         SupportRequest {
-            settings: Some(support_engine::pipeline::PipelineSettings::defaults(0.05)),
+            settings: Some(support_pipeline::PipelineSettings::defaults(0.05)),
             ..Default::default()
         },
     )

@@ -4402,17 +4402,23 @@ impl ViewportController {
         let mut out = Vec::with_capacity(steps + 1);
         out.push(from);
         self.session.document().with_scene(|spatial| {
-            for i in 1..steps {
+            let sample = |i: usize| {
                 let t = i as f32 / steps as f32;
                 let (x, y) = (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t);
                 let ray = picking::ray_from_pixel(&camera, fov, w, h, x, y);
-                if let Some(hit) =
-                    picking::pick_face_where(&ray, spatial, |id| !shows_supports(spatial, id))
-                {
-                    let p = ray.origin + ray.direction * hit.t;
-                    out.push([p.x, p.y, p.z]);
-                }
-            }
+                picking::pick_face_where(&ray, spatial, |id| !shows_supports(spatial, id)).map(
+                    |hit| {
+                        let p = ray.origin + ray.direction * hit.t;
+                        [p.x, p.y, p.z]
+                    },
+                )
+            };
+            // The rays are many and each its own: spread over the cores,
+            // in order, the same points as one after the other.
+            use rayon::prelude::*;
+            let hits: Vec<[f32; 3]> =
+                path_pool().install(|| (1..steps).into_par_iter().filter_map(sample).collect());
+            out.extend(hits);
         });
         out.push(to);
         out
@@ -6615,6 +6621,26 @@ impl ViewportController {
         }
         self.on_paint();
     }
+}
+
+/// The threads the line tool's rays run on (#178): its own, so a hover
+/// never waits behind a long job on the shared pool (a support run).
+fn path_pool() -> &'static rayon::ThreadPool {
+    static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        let threads = std::thread::available_parallelism()
+            .map_or(4, |n| n.get().saturating_sub(1).clamp(2, 12));
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .thread_name(|i| format!("line-path-{i}"))
+            .build()
+            .unwrap_or_else(|_| {
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(1)
+                    .build()
+                    .expect("a pool of one thread")
+            })
+    })
 }
 
 /// Makes the background of a thumbnail transparent, so it sits on Explorer's

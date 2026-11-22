@@ -26,12 +26,12 @@ use std::time::Instant;
 use sc_geom::supports::{SupportRequest, scene_model_leaves, settings_for};
 use sc_project_formats::{LoadedContent, load_scene};
 use serde_json::Value;
-use support_engine::pipeline::world_soup;
-use support_engine::supports::model_mesh::ModelMesh;
-use support_engine::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
-use support_engine::supports::support_types::trunk::cavity_bridge::attempt_cavity_bridge;
-use support_engine::geom::{Matrix4, Vec3};
-use support_engine::bvh::{BvhMesh, MeshBvh, Side};
+use support_pipeline::world_soup;
+use support_model::model_mesh::ModelMesh;
+use support_placement::placement_logic::pathfinding::sdf_cache::SdfCache;
+use support_placement::support_types::trunk::cavity_bridge::attempt_cavity_bridge;
+use support_geom::geom::{Matrix4, Vec3};
+use support_geom::bvh::{BvhMesh, MeshBvh, Side};
 
 /// Parts that start with no pixel of a tip under them and last: what
 /// supports must go under.

@@ -7,12 +7,12 @@
 
 use std::collections::HashSet;
 
-use support_engine::features::slicing::support_world_triangles::{
+use support_geom::geom::Vec3;
+use support_mesh::features::slicing::support_world_triangles::{
     TipDrawing, contact_disk_size, contact_ends, resolve_support_slice_tessellation, tip_sink_mm,
 };
-use support_engine::supports::tips::ContactCone;
-use support_engine::supports::types::{ContactDisk, Segment};
-use support_engine::geom::Vec3;
+use support_model::tips::ContactCone;
+use support_model::types::{ContactDisk, Segment};
 
 use super::SupportSession;
 

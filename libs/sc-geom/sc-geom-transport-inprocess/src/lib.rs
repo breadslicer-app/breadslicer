@@ -6,8 +6,7 @@
 //! In-process transport for sc-geom's handlers: the async job model, a
 //! constraint-to-actual resolution trail, and a reproducibility recipe.
 //! Domain-agnostic: no dependency on `sc-mesh-core` or any
-//! other mesh type. The `support-gen-family-dispatch`, `generic-geom-alg-family-dispatch`,
-//! and any future family-dispatch crate all build their trait/dispatch skeleton on
+//! other mesh type. `support-session` and `hollow-session` run their jobs on
 //! the same primitives instead of each reinventing a job handle.
 //!
 //! A future `sc-geom-flow-outofprocess` sibling crate is meant to

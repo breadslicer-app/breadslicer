@@ -4122,13 +4122,6 @@ impl SupportRun {
         hand.rules.sizes.iter().position(|s| s.id == id)
     }
 
-    /// The hand size the Add tool places, with the person's numbers.
-    fn hand_shape(&self, ui: &MainWindow) -> Option<sc_geom::supports::SupportSize> {
-        hand_tip_size(ui.get_support_tip_size())?;
-        let i = self.hand_size_index(ui)?;
-        Some(self.hand.borrow().rules.sizes[i].clone())
-    }
-
     /// Replaces the hand sizes, saves them and shows them.
     fn set_hand(self: &Rc<Self>, hand: ZonePreset) {
         save_hand_sizes(&hand);
@@ -14022,6 +14015,180 @@ mod hand_edit_tests {
         });
     }
 
+    /// The line tool's hover on a real model (#178), not a gate:
+    /// `SC_LINE_STL=<model.stl> cargo test -- --ignored --nocapture
+    /// line_hover_on_a_real_model`. Times each hover of a cursor crossing
+    /// the model 3 px at a time, after the first click, and what of it is
+    /// the rays, the row, the dots.
+    #[test]
+    #[ignore = "needs SC_LINE_STL"]
+    fn line_hover_on_a_real_model() {
+        use crate::picking;
+        let Ok(path) = std::env::var("SC_LINE_STL") else {
+            return;
+        };
+        let log = on_fresh_slint_thread(move || {
+            let mut log = Vec::new();
+            let bytes = std::fs::read(&path).unwrap();
+            let (loaded, _) =
+                sc_mesh_formats::stl::read_stl(&mut std::io::Cursor::new(bytes)).unwrap();
+            let leaf = loaded
+                .roots()
+                .iter()
+                .copied()
+                .find(|id| loaded.leaf_mesh_arc(*id).is_some())
+                .unwrap();
+            let mesh = loaded.leaf_mesh_arc(leaf).unwrap().clone();
+            let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+            for v in mesh.vertices() {
+                for k in 0..3 {
+                    lo[k] = lo[k].min(v.as_array()[k]);
+                    hi[k] = hi[k].max(v.as_array()[k]);
+                }
+            }
+            let shift = [
+                60.0 - f64::from(lo[0] + hi[0]) / 2.0,
+                40.0 - f64::from(lo[1] + hi[1]) / 2.0,
+                5.0 - f64::from(lo[2]),
+            ];
+            log.push(format!("{} faces", mesh.faces().len()));
+            // How tight the picker's runs of 64 faces are: a mesh whose
+            // faces come in no spatial order makes wide boxes, and slow rays.
+            if let Some(clusters) = sc_mesh_spatial::TriangleClusters::for_mesh(&mesh) {
+                let diagonal = |lo: [f32; 3], hi: [f32; 3]| {
+                    (0..3).map(|k| (hi[k] - lo[k]).powi(2)).sum::<f32>().sqrt()
+                };
+                let mean = clusters
+                    .iter()
+                    .map(|(_, b)| diagonal(b.min().coords(), b.max().coords()))
+                    .sum::<f32>()
+                    / clusters.len() as f32;
+                log.push(format!(
+                    "{} clusters, mean box diagonal {:.2} mm of the model's {:.1} mm",
+                    clusters.len(),
+                    mean,
+                    diagonal(lo, hi)
+                ));
+            }
+            let window = MainWindow::new().unwrap();
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = wired_viewport(&window);
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation(shift)),
+                    LeafPayload::Mesh(mesh),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph.clone(), PathBuf::from("model.stl"));
+            let run =
+                SupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let t = Instant::now();
+            let outcome = start_supports(&graph, SupportRequest::default())
+                .unwrap()
+                .join();
+            *run.started_on.borrow_mut() = Some(document.scene_revision());
+            run.finish(outcome);
+            log.push(format!(
+                "generated in {} ms: {}",
+                t.elapsed().as_millis(),
+                window.get_supports_last_run()
+            ));
+            let (w, h) = (1600.0, 1000.0);
+            let size = (0..3).map(|k| hi[k] - lo[k]).fold(0.0, f32::max);
+            let center = [60.0, 40.0, 5.0 + (hi[2] - lo[2]) / 2.0];
+            let camera = camera_at(center, 0.4, -0.35, size * 1.6);
+            ctrl.set_section(WorkspaceSection::Supports);
+            ctrl.set_viewport_for_test(w, h);
+            ctrl.set_camera_for_test(camera.clone());
+            window.set_support_tool(6);
+            run.on_tool_changed();
+            let fov = crate::mesh_render::default_fov_y();
+            let hit_at = |x: f32, y: f32| -> Option<[f32; 3]> {
+                let ray = picking::ray_from_pixel(&camera, fov, w, h, x, y);
+                document
+                    .with_scene(|spatial| {
+                        let hit = picking::pick_face_where(&ray, spatial, |id| {
+                            !spatial
+                                .graph()
+                                .leaf_mesh_arc(id)
+                                .is_some_and(|m| sc_geom::supports::is_any_support_mesh(m))
+                        })?;
+                        let p = ray.origin + ray.direction * hit.t;
+                        Some([p.x, p.y, p.z])
+                    })
+                    .flatten()
+            };
+            // A diagonal across the screen: the first hit is where the row
+            // starts, every hit after it 3 px on is a hover.
+            let cursor: Vec<(f32, f32)> = (0..)
+                .map(|i| (200.0 + i as f32 * 3.0, 150.0 + i as f32 * 2.1))
+                .take_while(|&(x, y)| x < w - 200.0 && y < h - 150.0)
+                .collect();
+            let hits: Vec<[f32; 3]> = cursor.iter().filter_map(|&(x, y)| hit_at(x, y)).collect();
+            assert!(
+                hits.len() > 20,
+                "the cursor crosses the model: {}",
+                hits.len()
+            );
+            let from = hits[0];
+            run.on_tool_click_with(from, false);
+            let (mut rays, mut row_ms, mut dots_ms, mut hover) = (0.0, 0.0, 0.0, 0.0);
+            let (mut rays_cast, mut one_by_one) = (0usize, 0.0);
+            let mut slowest: Vec<(f64, f64, usize)> = Vec::new();
+            let spacing = run.line_spacing.get();
+            let hovers = &hits[1..];
+            for &p in hovers {
+                let t = Instant::now();
+                let path = ctrl.surface_path(from, p);
+                let a = t.elapsed().as_secs_f64() * 1e3;
+                rays += a;
+                rays_cast += path.len();
+                let t = Instant::now();
+                let before = surface_path_one_by_one(&ctrl, from, p);
+                one_by_one += t.elapsed().as_secs_f64() * 1e3;
+                assert_eq!(path, before, "the same points as one by one");
+                let t = Instant::now();
+                let row = line_points(&path, spacing);
+                row_ms += t.elapsed().as_secs_f64() * 1e3;
+                let t = Instant::now();
+                let dots = line_dots(&row);
+                dots_ms += t.elapsed().as_secs_f64() * 1e3;
+                drop(dots);
+                let t = Instant::now();
+                run.on_tool_hover_with(Some(p), false);
+                let whole = t.elapsed().as_secs_f64() * 1e3;
+                hover += whole;
+                slowest.push((whole, a, path.len()));
+            }
+            let n = hovers.len() as f64;
+            slowest.sort_by(|x, y| y.0.total_cmp(&x.0));
+            log.push(format!(
+                "{} hovers on a {w}x{h} view: whole hover {:.2} ms mean; rays {:.2} ms \
+                 ({:.0} points; {:.2} ms one by one), row {:.3} ms, dots {:.3} ms",
+                hovers.len(),
+                hover / n,
+                rays / n,
+                rays_cast as f64 / n,
+                one_by_one / n,
+                row_ms / n,
+                dots_ms / n,
+            ));
+            for (whole, rays, points) in slowest.iter().take(3) {
+                log.push(format!(
+                    "  slow: hover {whole:.2} ms, its rays {rays:.2} ms, {points} points"
+                ));
+            }
+            log
+        });
+        for line in log {
+            println!("{line}");
+        }
+    }
+
     /// The line tool (#178): dots evenly along each stretch of the path,
     /// a new stretch where the path left the model.
     #[test]
@@ -14038,6 +14205,100 @@ mod hand_edit_tests {
         assert_eq!(row.len(), 6 + 2);
         assert_eq!(*row.last().unwrap(), [32.0, 0.0, 5.0]);
         assert_eq!(line_points(&[[1.0, 2.0, 3.0]], 2.0), vec![[1.0, 2.0, 3.0]]);
+    }
+
+    /// The line tool's path as its rays were cast one after the other, on
+    /// the UI thread, before they ran in parallel (#178): what the row
+    /// placed is measured against.
+    fn surface_path_one_by_one(
+        ctrl: &ViewportController,
+        from: [f32; 3],
+        to: [f32; 3],
+    ) -> Vec<[f32; 3]> {
+        use crate::picking;
+        let (w, h) = ctrl.viewport_for_test().expect("a viewport");
+        let camera = ctrl.camera_for_test().expect("a camera");
+        let fov = crate::mesh_render::default_fov_y();
+        let screen =
+            |p: [f32; 3]| picking::project_world_to_screen(&camera, fov, w, h, glam::Vec3::from(p));
+        let (Some(a), Some(b)) = (screen(from), screen(to)) else {
+            return vec![from, to];
+        };
+        let steps = (((b.0 - a.0).hypot(b.1 - a.1) / 1.5).ceil() as usize).clamp(1, 2000);
+        let mut out = vec![from];
+        ctrl.document().with_scene(|spatial| {
+            for i in 1..steps {
+                let t = i as f32 / steps as f32;
+                let (x, y) = (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t);
+                let ray = picking::ray_from_pixel(&camera, fov, w, h, x, y);
+                let keep = |id| {
+                    !spatial
+                        .graph()
+                        .leaf_mesh_arc(id)
+                        .is_some_and(|m| sc_geom::supports::is_any_support_mesh(m))
+                };
+                if let Some(hit) = picking::pick_face_where(&ray, spatial, keep) {
+                    let p = ray.origin + ray.direction * hit.t;
+                    out.push([p.x, p.y, p.z]);
+                }
+            }
+        });
+        out.push(to);
+        out
+    }
+
+    /// The line tool's rays run in parallel (#178) and find the very points
+    /// they found one after the other, gap and all: the row the hover shows
+    /// and the click places is the same as before, to the bit.
+    #[test]
+    fn the_line_path_in_parallel_is_the_path_one_by_one() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = wired_viewport(&window);
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            for x in [10.0, 35.0] {
+                let leaf = graph
+                    .add_leaf(
+                        None,
+                        translation([x, 20.0, 9.0]),
+                        LeafPayload::Mesh(Arc::new(slab_mesh())),
+                    )
+                    .unwrap();
+                graph.add_root(leaf).unwrap();
+            }
+            document.install_graph(graph, PathBuf::from("slabs.stl"));
+            let run =
+                SupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            ctrl.set_section(WorkspaceSection::Supports);
+            ctrl.set_viewport_for_test(1600.0, 1000.0);
+            ctrl.set_camera_for_test(camera_at([32.0, 25.0, 9.0], 0.3, -0.7, 60.0));
+            let (from, to) = ([12.0, 25.0, 9.0], [52.0, 25.0, 9.0]);
+            let before = surface_path_one_by_one(&ctrl, from, to);
+            assert!(before.len() > 300, "{} points", before.len());
+            assert_eq!(ctrl.surface_path(from, to), before);
+            let gaps = before
+                .windows(2)
+                .filter(|w| (w[1][0] - w[0][0]).abs() > 2.0)
+                .count();
+            assert_eq!(gaps, 1, "the path leaves the slabs once");
+            // The hover counts the row the click places, from that path.
+            let row = line_points(&before, run.line_spacing.get());
+            window.set_support_tool(6);
+            run.on_tool_changed();
+            run.on_tool_click_with(from, false);
+            run.on_tool_hover_with(Some(to), false);
+            assert!(
+                window
+                    .get_support_add_note()
+                    .contains(&format!("{} supports", row.len())),
+                "{} for {} dots",
+                window.get_support_add_note(),
+                row.len()
+            );
+            assert_eq!(run.line_row(from, to), row);
+        });
     }
 
     /// The line tool (#178): two clicks under a bare slab, seen from below,

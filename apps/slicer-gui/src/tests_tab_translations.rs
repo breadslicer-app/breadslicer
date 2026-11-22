@@ -38,7 +38,6 @@ const PANEL_SOURCES: &[(&str, &str)] = &[
     ("repair_run.rs", include_str!("repair_run.rs")),
     ("repair_report.rs", include_str!("repair_report.rs")),
     ("support_run.rs", include_str!("support_run.rs")),
-    ("support_gen_run.rs", include_str!("support_gen_run.rs")),
     ("slice_panel.rs", include_str!("slice_panel.rs")),
     ("slice_run.rs", include_str!("slice_run.rs")),
     ("print_format.rs", include_str!("print_format.rs")),
@@ -971,7 +970,6 @@ const DIALOG_SOURCES: &[(&str, &str)] = &[
     ("slice_projection.rs", include_str!("slice_projection.rs")),
     ("slice_run.rs", include_str!("slice_run.rs")),
     ("split_bodies.rs", include_str!("split_bodies.rs")),
-    ("support_gen_run.rs", include_str!("support_gen_run.rs")),
     ("surface_brush.rs", include_str!("surface_brush.rs")),
     (
         "viewport/controller.rs",

@@ -49,7 +49,6 @@ use crate::slice_panel::SlicePanelBridge;
 use crate::slice_run::SliceRun;
 use crate::split_bodies::SplitBodies;
 use crate::start_dialog::{Recovery, StartDialog};
-use crate::support_gen_run::GenSupportRun;
 use crate::ui_language::UiLanguage;
 use crate::viewport::ViewportController;
 use crate::window_prefs::{WindowPreferences, restore_panels};
@@ -248,9 +247,6 @@ struct WindowDrivers {
     _repair_on_import: Rc<crate::repair_on_import::RepairOnImport>,
     /// The Slice tab's layer keys (#501).
     _layer_keys: Rc<crate::layer_keys::LayerKeys>,
-    /// The Tools > "Generate Support (trivial for test)" action driver. Held so
-    /// its Slint callbacks live as long as the window.
-    _support_gen_run: Rc<GenSupportRun>,
     _support_run: Rc<SupportRun>,
     _hollow_run: Rc<HollowRun>,
     /// Edit > Split into Bodies and Keep Only This Body. Held so its Slint
@@ -797,8 +793,6 @@ impl AppState {
         );
         let repair_run = RepairRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
         let arrange_run = ArrangeRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
-        let support_gen_run =
-            GenSupportRun::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
         let support_run = SupportRun::install(
             ui,
             self.prefs.clone(),
@@ -903,7 +897,6 @@ impl AppState {
             _arrange_run: arrange_run,
             _orient_run: orient_run,
             _cut_run: cut_run,
-            _support_gen_run: support_gen_run,
             _support_run: support_run,
         }
     }
@@ -3177,20 +3170,6 @@ mod window_wiring_tests {
             let before = window.get_repairing_in_progress();
             window.invoke_repair_requested();
             (before, window.get_repairing_in_progress())
-        });
-        assert_eq!((before, after), (false, true));
-    }
-
-    #[test]
-    fn a_support_press_with_a_scene_starts_the_generation() {
-        let (before, after) = on_fresh_slint_thread(|| {
-            let app = test_app(PreferencesSnapshot::for_tests());
-            let (window, _pending_load, controller) = new_window(&app);
-            let _drivers = app.install_window_drivers(&window, &controller);
-            load_cube(&controller);
-            let before = window.get_support_gen_in_progress();
-            window.invoke_support_gen_requested();
-            (before, window.get_support_gen_in_progress())
         });
         assert_eq!((before, after), (false, true));
     }

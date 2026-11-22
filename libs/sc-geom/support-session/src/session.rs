@@ -16,43 +16,40 @@ use std::sync::{Arc, OnceLock};
 
 use sc_mesh_core::IndexedMesh;
 use serde_json::Value;
-use support_engine::bvh::{MeshBvh, Side};
-use support_engine::features::slicing::support_world_triangles::raft_and_feet_top_mm;
-use support_engine::geom::ray::Ray;
-use support_engine::geom::{Matrix4, Vec3};
-use support_engine::pipeline::{ModelInput, PipelineSettings, support_soup};
-use support_engine::supports::auto_bracing::auto_brace::{
-    HandBrace, HandBraceRefusal, brace_new_shaft, hand_brace,
-};
-use support_engine::supports::auto_bracing::mesh_clearance::{BraceMesh, BraceMeshes};
-use support_engine::supports::auto_support::auto_place::fan::{
-    FanArgs, FanHostOrder, FanLeafRefusal, FanLeafResult, add_fanned, fan_leaf_to_host,
-};
-use support_engine::supports::auto_support::auto_place::helpers::{
-    FanShaftPoint, PlanCtx, PlanMesh, apply_zone_size, collect_fan_shaft_points, host_segment_span,
-    member_max_angle_from_vertical_deg,
-};
-use support_engine::supports::auto_support::auto_place::place::{
-    PlaceArgs, RejectReason, place_one_candidate,
-};
-use support_engine::supports::auto_support::parameter_sizing::SizingBands;
-use support_engine::supports::auto_support::types::{CandidatePoint, CandidateSource};
-use support_engine::supports::auto_support::zone_rules::SupportSize;
-use support_engine::supports::placement_logic::cone_axis_policy::is_side_wall_contact;
-use support_engine::supports::placement_logic::pathfinding::sdf_cache::SdfCache;
-use support_engine::supports::rafts::crenelated::raft_types::RaftBottomMode;
-use support_engine::supports::support_kinds::{
+use support_bracing::auto_brace::{HandBrace, HandBraceRefusal, brace_new_shaft, hand_brace};
+use support_geom::bvh::{MeshBvh, Side};
+use support_geom::geom::ray::Ray;
+use support_geom::geom::{Matrix4, Vec3};
+use support_mesh::features::slicing::support_world_triangles::raft_and_feet_top_mm;
+use support_mesh::rafts::crenelated::raft_types::RaftBottomMode;
+use support_model::auto_bracing::mesh_clearance::{BraceMesh, BraceMeshes};
+use support_model::auto_support::zone_rules::SupportSize;
+use support_model::auto_support::zone_rules::apply_zone_size;
+use support_model::cone_axis_policy::is_side_wall_contact;
+use support_model::support_kinds::{
     SupportOriginId, SupportPlacementMetric, SupportPlacementSettingPath, SupportTypeId,
     near_plate_origin, select_type_for_placement,
 };
-use support_engine::supports::support_types::contact_bridge::{
+use support_model::types::LimitationCode;
+use support_model::types::{Knot, SupportCollections, SupportState};
+use support_pipeline::{ModelInput, PipelineSettings, support_soup};
+use support_placement::auto_support::auto_place::fan::{
+    FanArgs, FanHostOrder, FanLeafRefusal, FanLeafResult, add_fanned, fan_leaf_to_host,
+};
+use support_placement::auto_support::auto_place::helpers::{
+    FanShaftPoint, PlanCtx, PlanMesh, collect_fan_shaft_points, host_segment_span,
+    member_max_angle_from_vertical_deg,
+};
+use support_placement::auto_support::auto_place::place::{
+    PlaceArgs, RejectReason, place_one_candidate,
+};
+use support_placement::auto_support::parameter_sizing::SizingBands;
+use support_placement::auto_support::types::{CandidatePoint, CandidateSource};
+use support_placement::placement_logic::pathfinding::sdf_cache::SdfCache;
+use support_placement::support_types::contact_bridge::{
     BridgeEntity, ContactBridgeRequest, build_contact_bridge,
 };
-use support_engine::supports::support_types::trunk::trunk_builder::{
-    TrunkBuildInput, build_trunk_data,
-};
-use support_engine::supports::types::LimitationCode;
-use support_engine::supports::types::{Knot, SupportCollections, SupportState};
+use support_placement::support_types::trunk::trunk_builder::{TrunkBuildInput, build_trunk_data};
 
 use crate::document::ModelPrint;
 use crate::hand_log::{
@@ -163,7 +160,7 @@ pub(crate) struct PlacedBvh {
 impl PlacedBvh {
     /// `model`'s shared BVH, placed where the model stands.
     pub(crate) fn of(model: &ModelInput) -> Self {
-        let to_world = support_engine::pipeline::model_matrix(&model.transform);
+        let to_world = support_pipeline::model_matrix(&model.transform);
         PlacedBvh {
             bvh: shared_bvh(model),
             to_local: to_world.invert(),
@@ -178,7 +175,7 @@ impl PlacedBvh {
         point: Vec3,
         min_threshold: f64,
         max_threshold: f64,
-    ) -> Option<support_engine::bvh::ClosestPointTarget> {
+    ) -> Option<support_geom::bvh::ClosestPointTarget> {
         let mut hit = self.bvh.closest_point_to_point(
             point.apply_matrix4(&self.to_local),
             min_threshold,
@@ -189,9 +186,9 @@ impl PlacedBvh {
     }
 
     /// Face `face`, in world mm.
-    pub(crate) fn triangle(&self, face: usize) -> support_engine::geom::Triangle {
+    pub(crate) fn triangle(&self, face: usize) -> support_geom::geom::Triangle {
         let t = self.bvh.triangle(face);
-        support_engine::geom::Triangle::new(
+        support_geom::geom::Triangle::new(
             t.a.apply_matrix4(&self.to_world),
             t.b.apply_matrix4(&self.to_world),
             t.c.apply_matrix4(&self.to_world),
@@ -211,7 +208,7 @@ impl PlacedBvh {
         side: Side,
         near: f64,
         far: f64,
-    ) -> Option<support_engine::bvh::Intersection> {
+    ) -> Option<support_geom::bvh::Intersection> {
         let mut hit =
             self.bvh
                 .raycast_first(&ray.apply_matrix4(&self.to_local), side, near, far)?;
@@ -225,7 +222,7 @@ impl PlacedBvh {
 /// model geometry they were built from.
 static SHARED_BVHS: std::sync::Mutex<
     Vec<(
-        std::sync::Weak<support_engine::geom::buffer_geometry::BufferGeometry>,
+        std::sync::Weak<support_geom::geom::buffer_geometry::BufferGeometry>,
         std::sync::Weak<MeshBvh>,
     )>,
 > = std::sync::Mutex::new(Vec::new());
@@ -235,7 +232,7 @@ static SHARED_BVHS: std::sync::Mutex<
 /// new one.
 fn shared_bvh(model: &ModelInput) -> Arc<MeshBvh> {
     let held = |list: &Vec<(
-        std::sync::Weak<support_engine::geom::buffer_geometry::BufferGeometry>,
+        std::sync::Weak<support_geom::geom::buffer_geometry::BufferGeometry>,
         std::sync::Weak<MeshBvh>,
     )>| {
         list.iter().find_map(|(g, b)| {
@@ -249,7 +246,7 @@ fn shared_bvh(model: &ModelInput) -> Arc<MeshBvh> {
         return bvh;
     }
     // Built with no lock held: another thread's query does not wait on it.
-    let soup = support_engine::pipeline::local_soup(model);
+    let soup = support_pipeline::local_soup(model);
     let triples: Vec<[f32; 3]> = soup.as_chunks::<3>().0.to_vec();
     let bvh = Arc::new(MeshBvh::new(triples, None));
     let Ok(mut list) = SHARED_BVHS.lock() else {
@@ -1213,7 +1210,7 @@ impl SupportSession {
     /// whose supports were carried from one to the other read alike.
     pub(crate) fn shape_in_model(&self) -> Option<(Vec<[f64; 3]>, [usize; 9])> {
         let model = self.models.first()?;
-        let to_model = support_engine::pipeline::model_matrix(&model.transform).invert();
+        let to_model = support_pipeline::model_matrix(&model.transform).invert();
         let c = &self.state.collections;
         let mut points: Vec<[f64; 3]> = self
             .model_contacts()
@@ -1426,7 +1423,7 @@ impl SupportSession {
     fn bvh(&self, i: usize) -> PlacedBvh {
         let model = &self.models[i];
         let bvh = self.bvhs[i].get_or_build(|| shared_bvh(model));
-        let to_world = support_engine::pipeline::model_matrix(&model.transform);
+        let to_world = support_pipeline::model_matrix(&model.transform);
         PlacedBvh {
             to_local: to_world.invert(),
             to_world,
@@ -2241,7 +2238,7 @@ impl SupportSession {
     /// it touches (#524): the places a run picked, for showing them.
     pub fn tip_contacts(&self) -> Vec<([f64; 3], [f64; 3])> {
         let c = &self.state.collections;
-        let of = |k: &support_engine::supports::tips::ContactCone| {
+        let of = |k: &support_model::tips::ContactCone| {
             // The cone's axis points into the model: the surface normal is
             // turned to face the other way, out of it.
             let out = [-k.normal.x, -k.normal.y, -k.normal.z];
@@ -2275,7 +2272,7 @@ impl SupportSession {
     pub fn support_paths(&self) -> Vec<(String, Vec<[f64; 3]>)> {
         let c = &self.state.collections;
         let at = |p: Vec3| [p.x, p.y, p.z];
-        let joints = |segments: &[support_engine::supports::types::Segment]| {
+        let joints = |segments: &[support_model::types::Segment]| {
             segments
                 .iter()
                 .flat_map(|s| [s.top_joint.as_ref(), s.bottom_joint.as_ref()])
@@ -2621,8 +2618,8 @@ impl SupportSession {
     pub fn raft_roots(
         &self,
         motion: &sc_mesh_core::transform::AffineTransform3D,
-    ) -> Vec<support_engine::supports::rafts::crenelated::raft_types::SupportBaseCircle> {
-        use support_engine::features::slicing::support_world_triangles::{
+    ) -> Vec<support_mesh::rafts::crenelated::raft_types::SupportBaseCircle> {
+        use support_mesh::features::slicing::support_world_triangles::{
             raft_circle_of, root_shaft_radii,
         };
         let (l, t) = (motion.linear(), motion.translation());
@@ -2645,7 +2642,7 @@ impl SupportSession {
     /// The raft these supports are drawn on.
     pub(crate) fn raft_settings(
         &self,
-    ) -> support_engine::supports::rafts::crenelated::raft_types::RaftSettings {
+    ) -> support_mesh::rafts::crenelated::raft_types::RaftSettings {
         self.settings.raft
     }
 
@@ -3030,11 +3027,7 @@ impl SupportSession {
     /// How far `point` lies off brace `brace`'s surface, 0 on it, when it
     /// lies on it: within [`ON_BRACE_MM`] of the brace's surface where it
     /// runs in the open, between the shafts it joins (#3).
-    fn on_brace(
-        &self,
-        brace: &support_engine::supports::types::Brace,
-        point: [f64; 3],
-    ) -> Option<f64> {
+    fn on_brace(&self, brace: &support_model::types::Brace, point: [f64; 3]) -> Option<f64> {
         let c = &self.state.collections;
         let (s, e) = (
             c.knots.get(&brace.start_knot_id)?,
@@ -3973,7 +3966,7 @@ pub(crate) mod session_tests {
 
     /// The wall a raft gets by default, mm.
     const DEFAULT_RAFT_WALL_HEIGHT_MM: f64 =
-        support_engine::supports::rafts::crenelated::raft_types::DEFAULT_RAFT_SETTINGS.wall_height;
+        support_mesh::rafts::crenelated::raft_types::DEFAULT_RAFT_SETTINGS.wall_height;
 
     #[test]
     fn a_set_tells_the_diameter_of_the_tips_added_to_it() {
@@ -4704,7 +4697,7 @@ pub(crate) mod session_tests {
         // pipeline puts it is where the scene shows it.
         let models = crate::scene_model_leaves(&scene, None).unwrap();
         assert!(Arc::ptr_eq(&models[0].1.geometry, &models[1].1.geometry));
-        let soup = support_engine::pipeline::world_soup(&models[1].1);
+        let soup = support_pipeline::world_soup(&models[1].1);
         let baked = sc_scene::bake_mesh_to_world(&mesh, &Transform3D::Affine(turn)).unwrap();
         for corner in soup.as_chunks::<3>().0 {
             let near = baked.vertices().iter().any(|v| {
@@ -5172,7 +5165,7 @@ pub(crate) mod session_tests {
     fn new_brace<'a>(
         before: &SupportSession,
         edited: &'a SupportSession,
-    ) -> (&'a support_engine::supports::types::Brace, [Vec3; 2]) {
+    ) -> (&'a support_model::types::Brace, [Vec3; 2]) {
         let c = &edited.state.collections;
         let brace = c
             .braces
