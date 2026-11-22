@@ -15,6 +15,7 @@ members = [
     "libs/mesh-core",
     "libs/mesh-fixtures",
     "libs/mesh-formats",
+    "libs/lys",
     "libs/mesh-spatial",
     "libs/message-catalog",
     "libs/orient",
@@ -84,6 +85,7 @@ incremental = true
 sc-3mf = { path = "libs/3mf", version = "0.2.0" }
 sc-app-paths = { path = "libs/app-paths", version = "0.2.0" }
 sc-arrange = { path = "libs/arrange", version = "0.1.0" }
+sc-lys = { path = "libs/lys", version = "0.1.0" }
 sc-mesh-core = { path = "libs/mesh-core", version = "0.2.0" }
 sc-mesh-fixtures = { path = "libs/mesh-fixtures", version = "0.2.0" }
 sc-mesh-formats = { path = "libs/mesh-formats", version = "0.2.0" }

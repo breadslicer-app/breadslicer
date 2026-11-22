@@ -1765,6 +1765,35 @@ impl SupportSession {
         self.place(point, how).map(|_| ()).map_err(|(err, _)| err)
     }
 
+    /// Adds a support touching the model at `tip` (world mm), whose surface
+    /// faces `normal` there: a support of a scene saved by another program
+    /// put back (#699). Where the surface still lies at `tip` and faces that
+    /// way, the tip lands exactly there, as a hand edit put back on a run
+    /// made again does; else where a click at `tip` lands. The engine routes
+    /// it, as it routes a click. Nothing changes when it fails.
+    pub fn add_contact(
+        &mut self,
+        tip: [f64; 3],
+        normal: [f64; 3],
+        how: &AddOptions,
+    ) -> Result<(), EditError> {
+        let aim = aim_at(tip, normal);
+        if let Some(model) = self.surface_holds(aim, tip, normal) {
+            let [x, y, z] = tip;
+            let [nx, ny, nz] = normal;
+            let contact = At::Contact(model, Vec3::new(x, y, z), Vec3::new(nx, ny, nz).normalize());
+            let mut added = self.clone();
+            if added.place_at(contact, how).is_ok() {
+                *self = added;
+                return Ok(());
+            }
+        }
+        let mut added = self.clone();
+        added.add_at(tip, how)?;
+        *self = added;
+        Ok(())
+    }
+
     /// Adds a support at `point` (world mm) as [`Self::add_trunk_at`] does
     /// or, when nothing can hold that very point, at the nearest point the
     /// engine can hold on the same underside, whose tip lands within

@@ -75,12 +75,14 @@ pub(crate) fn is_supported_mesh_extension(path: &Path) -> bool {
     is_supported_scene_file_extension(path)
 }
 
-/// Returns whether `path` names a project (`.bread`): a whole scene, which
-/// opens in place of the window's, where a model joins it (#384).
+/// Returns whether `path` names a project (`.bread`, or a Lychee scene, #698):
+/// a whole scene, which opens in place of the window's, where a model joins it
+/// (#384).
 pub(crate) fn is_project(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| ext.eq_ignore_ascii_case("bread"))
+        || sc_project_formats::is_lys(path)
 }
 
 /// Checks the file at `path` against the size ceiling. Returns a
@@ -261,7 +263,7 @@ pub(crate) fn opened_scene(
     let LoadedScene {
         content,
         mesh_warnings,
-        project_warnings,
+        mut project_warnings,
     } = loaded;
     let mut restored_supports = RestoredSupports::default();
     let mut restored_hollows = RestoredHollows::default();
@@ -277,11 +279,36 @@ pub(crate) fn opened_scene(
         }
         LoadedContent::Project(ProjectContent {
             mut scene,
-            payload,
+            mut payload,
             persisted_slices,
             supports,
             hollows,
+            foreign,
         }) => {
+            // A scene from another slicer (#698): its profiles by name, and
+            // each model onto its plate.
+            if let Some(foreign) = foreign {
+                let catalog = crate::profile_catalog::ProfileCatalog::from_libraries(
+                    &ProfileLibraries::platform_default(),
+                );
+                if let Some(note) =
+                    settle_foreign(&mut scene, &mut payload, &foreign, &catalog, build_volume)
+                {
+                    project_warnings.push(note);
+                }
+                // Its hollowing and supports, made again by our engines
+                // (#699, #700) once each model stands where it prints.
+                if foreign.has_work() {
+                    let request = sc_geom::supports::SupportRequest {
+                        options: crate::support_run::load_saved_options(),
+                        ..Default::default()
+                    };
+                    let built = crate::foreign_build::build_foreign(&mut scene, &foreign, &request);
+                    restored_supports = built.supports;
+                    restored_hollows = built.hollows;
+                    project_warnings.extend(built.note);
+                }
+            }
             // Supports kept as data (a `.bread`) are redrawn into their empty
             // leaves before the scene is checked, primed and uploaded.
             if !supports.is_empty() {
@@ -310,6 +337,89 @@ pub(crate) fn opened_scene(
         restored_supports,
         restored_hollows,
     })
+}
+
+#[cfg(test)]
+impl OpenedScene {
+    /// What the scene's supports and hollows came back as, and its notes.
+    pub(crate) fn built_for_tests(
+        &self,
+    ) -> (&RestoredSupports, &RestoredHollows, &[ReadProjectWarning]) {
+        (
+            &self.restored_supports,
+            &self.restored_hollows,
+            &self.project_warnings,
+        )
+    }
+}
+
+/// A name as the catalogues compare it: lower case, its words one space apart.
+fn plain(name: &str) -> String {
+    name.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// Settles what a scene from another slicer (#698) leaves to the app: the
+/// printer and resin it names, picked from `catalog` when one matches by
+/// name, and each model moved onto its plate, laid out as the printer's
+/// plates are. A note when a profile it names matches none of ours.
+pub(crate) fn settle_foreign(
+    scene: &mut Scene,
+    payload: &mut ProjectPayload,
+    foreign: &sc_project_formats::ForeignScene,
+    catalog: &crate::profile_catalog::ProfileCatalog,
+    build_volume: sc_print_primitives::BuildVolume,
+) -> Option<ReadProjectWarning> {
+    let printer = foreign.printer.as_ref().and_then(|name| {
+        let wanted = plain(name);
+        catalog.printers().iter().find(|p| {
+            plain(&format!("{} {}", p.manufacturer, p.name)) == wanted || plain(&p.name) == wanted
+        })
+    });
+    let resin = foreign.resin.as_ref().and_then(|(brand, name)| {
+        let (brand, name) = (plain(brand), plain(name));
+        catalog
+            .materials()
+            .iter()
+            .find(|m| plain(&m.brand) == brand && plain(&m.name) == name)
+    });
+    payload.printer = printer.map(|p| p.id.clone());
+    payload.resin = resin.map(|m| m.id.clone());
+    let volume = printer.map_or(build_volume, |p| p.build_volume);
+    for (row, root) in scene.roots().to_vec().into_iter().enumerate() {
+        let plate = foreign.plates.get(row).copied().unwrap_or(0);
+        if plate == 0 {
+            continue;
+        }
+        let at = crate::plates::offset(&BuildVolume::from(volume), plate);
+        let shift = sc_mesh_core::transform::Transform3D::Affine(
+            sc_mesh_core::transform::AffineTransform3D::from_translation([
+                f64::from(at.x),
+                f64::from(at.y),
+                0.0,
+            ]),
+        );
+        if let Some(node) = scene.node(root) {
+            let moved = shift.compose(&node.local_transform);
+            let _ = scene.set_local_transform(root, moved);
+        }
+    }
+    let printer_missing = foreign.printer.clone().filter(|_| printer.is_none());
+    let resin_missing = foreign
+        .resin
+        .as_ref()
+        .filter(|_| resin.is_none())
+        // A resin with no name of its own is no resin to look for.
+        .filter(|(brand, name)| plain(name) != "default" || plain(brand) != "default")
+        .map(|(brand, name)| format!("{brand} {name}").trim().to_owned());
+    (printer_missing.is_some() || resin_missing.is_some()).then_some(
+        ReadProjectWarning::ProfileNotFound {
+            printer: printer_missing,
+            resin: resin_missing,
+        },
+    )
 }
 
 /// Checks, primes and uploads the scene `opened`, read from `path`, for the
@@ -467,5 +577,202 @@ mod is_supported_mesh_extension_tests {
         // no dot: guards against accidentally treating a dropped directory as a
         // loadable file.
         assert!(!is_supported_mesh_extension(Path::new("/tmp/")));
+    }
+}
+
+#[cfg(test)]
+mod settle_foreign_tests {
+    use std::collections::BTreeSet;
+    use std::sync::Arc;
+
+    use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
+    use sc_print_primitives::MaterialId;
+    use sc_project_formats::ForeignScene;
+    use sc_scene::LeafPayload;
+
+    use super::*;
+    use crate::profile_catalog::{MaterialCatalogEntry, ProfileCatalog, ProfileSource};
+    use crate::test_support::catalog_entries::named_printer_entry;
+
+    fn catalog() -> ProfileCatalog {
+        let mut halot = named_printer_entry("creality-halot-one", "Halot One");
+        halot.manufacturer = "Creality".into();
+        halot.build_volume = sc_print_primitives::BuildVolume::new(127.0, 80.0, 160.0).unwrap();
+        let resin = MaterialCatalogEntry {
+            id: MaterialId::new("creality-standard-rigid-plus").unwrap(),
+            brand: "Creality".into(),
+            name: "Standard  Rigid Plus".into(),
+            family: String::new(),
+            calibrated_printers: BTreeSet::new(),
+            source: ProfileSource::Bundled,
+        };
+        ProfileCatalog::from_entries(vec![halot], vec![resin])
+    }
+
+    /// Two models at the origin of their plates, the second on plate 1.
+    fn two_models() -> Scene {
+        let mut scene = Scene::new();
+        for _ in 0..2 {
+            let mesh = Arc::new(sc_mesh_core::IndexedMesh::new(None, Vec::new(), Vec::new()));
+            let leaf = scene
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::identity()),
+                    LeafPayload::Mesh(mesh),
+                )
+                .unwrap();
+            scene.add_root(leaf).unwrap();
+        }
+        scene
+    }
+
+    fn translation(scene: &Scene, row: usize) -> [f64; 3] {
+        let root = scene.roots()[row];
+        match scene.node(root).unwrap().local_transform {
+            Transform3D::Affine(a) => *a.translation(),
+            Transform3D::Identity => [0.0; 3],
+        }
+    }
+
+    #[test]
+    fn a_scene_takes_our_printer_and_resin_by_name_and_its_models_their_plates() {
+        let mut scene = two_models();
+        let mut payload = ProjectPayload::default();
+        let foreign = ForeignScene {
+            printer: Some("creality  HALOT one".into()),
+            resin: Some(("Creality".into(), "Standard Rigid Plus".into())),
+            plates: vec![0, 1],
+            models: Vec::new(),
+        };
+        let other = sc_print_primitives::BuildVolume::new(300.0, 200.0, 300.0).unwrap();
+        let note = settle_foreign(&mut scene, &mut payload, &foreign, &catalog(), other);
+        assert_eq!(note, None);
+        assert_eq!(payload.printer.unwrap().as_str(), "creality-halot-one");
+        assert_eq!(
+            payload.resin.unwrap().as_str(),
+            "creality-standard-rigid-plus"
+        );
+        assert_eq!(translation(&scene, 0), [0.0; 3]);
+        // Plate 1 stands where the Halot One's plates are laid out, not the
+        // current printer's.
+        let at = crate::plates::offset(
+            &BuildVolume::from(sc_print_primitives::BuildVolume::new(127.0, 80.0, 160.0).unwrap()),
+            1,
+        );
+        assert_eq!(
+            translation(&scene, 1),
+            [f64::from(at.x), f64::from(at.y), 0.0]
+        );
+    }
+
+    #[test]
+    fn names_that_match_nothing_leave_the_current_ones_and_say_so() {
+        let mut scene = two_models();
+        let mut payload = ProjectPayload::default();
+        let foreign = ForeignScene {
+            printer: Some("Someone Else".into()),
+            resin: Some(("Default".into(), "Default".into())),
+            plates: vec![0, 0],
+            models: Vec::new(),
+        };
+        let volume = sc_print_primitives::BuildVolume::new(100.0, 60.0, 80.0).unwrap();
+        let note = settle_foreign(&mut scene, &mut payload, &foreign, &catalog(), volume);
+        // A resin Lychee calls "Default" is no resin to look for.
+        assert_eq!(
+            note,
+            Some(ReadProjectWarning::ProfileNotFound {
+                printer: Some("Someone Else".into()),
+                resin: None,
+            })
+        );
+        assert_eq!(payload.printer, None);
+        assert_eq!(payload.resin, None);
+    }
+}
+
+/// Opens every Lychee scene listed (one path per line) in `LYS_CORPUS` the
+/// way a window opens a file (#698), and says what came out: models, plates,
+/// the printer and resin it took, the notes.
+#[cfg(test)]
+mod lys_corpus_tests {
+    use super::*;
+
+    #[test]
+    #[ignore]
+    fn the_scenes_of_a_corpus_open_in_the_app() {
+        let list = std::env::var("LYS_CORPUS").expect("LYS_CORPUS: a file listing .lys paths");
+        let volume = sc_print_primitives::BuildVolume::new(128.0, 81.0, 160.0).unwrap();
+        let mut took_printer = 0;
+        let mut total = 0;
+        let mut all_asked = 0;
+        let mut all_landed = 0;
+        for path in std::fs::read_to_string(list)
+            .unwrap()
+            .lines()
+            .filter(|l| !l.is_empty())
+        {
+            let path = Path::new(path);
+            total += 1;
+            let loaded = load_scene(path, Some(DEFAULT_MAX_MESH_FILE_SIZE_BYTES), |_| {})
+                .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            let foreign = match &loaded.content {
+                LoadedContent::Project(p) => p.foreign.clone().unwrap_or_default(),
+                LoadedContent::Mesh(_) => Default::default(),
+            };
+            let models = foreign.models.len();
+            let started = std::time::Instant::now();
+            let opened = opened_scene(loaded, path, volume)
+                .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            let took = started.elapsed().as_secs_f64();
+            let payload = opened.project_payload.as_ref().expect("a project");
+            took_printer += usize::from(payload.printer.is_some());
+            // Each contact of the file, in the world, against the tips of
+            // its model's set: how many a tip touches within 0.01 mm.
+            let mut asked = 0;
+            let mut landed = 0;
+            for (row, model) in foreign.models.iter().enumerate() {
+                let leaf = opened.scene.roots()[row];
+                let world = opened.scene.node(leaf).unwrap().local_transform;
+                let tips: Vec<[f64; 3]> = opened
+                    .restored_supports
+                    .sets
+                    .iter()
+                    .filter(|s| s.model == leaf)
+                    .flat_map(|s| {
+                        s.session
+                            .pieces()
+                            .into_iter()
+                            .flat_map(|p| p.contacts)
+                            .map(|c| c.surface)
+                    })
+                    .collect();
+                for c in &model.contacts {
+                    asked += 1;
+                    let at = world
+                        .apply_to_vertex(sc_mesh_core::Vertex::new(c.point.map(|v| v as f32)))
+                        .coords()
+                        .map(f64::from);
+                    if tips
+                        .iter()
+                        .any(|t| (0..3).map(|k| (t[k] - at[k]).powi(2)).sum::<f64>().sqrt() <= 0.01)
+                    {
+                        landed += 1;
+                    }
+                }
+            }
+            all_asked += asked;
+            all_landed += landed;
+            println!(
+                "{took:>7.2} s  {models} models, {} sets, {asked} contacts, {landed} land within 0.01 mm, {} hollows, notes {:?}, failures {:?}  {}",
+                opened.restored_supports.sets.len(),
+                opened.restored_hollows.hollows.len(),
+                opened.project_warnings,
+                opened.restored_supports.failures,
+                path.display()
+            );
+        }
+        println!(
+            "{total} scenes, {took_printer} took one of our printers, {all_landed} of {all_asked} contacts land within 0.01 mm"
+        );
     }
 }

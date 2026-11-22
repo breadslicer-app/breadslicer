@@ -102,6 +102,7 @@ sc-slicer-gui-render = { workspace = true, features = ["test-support"] }
 sc-mesh-fixtures = { workspace = true }
 sc-print-primitives = { workspace = true }
 sc-scene-fixtures = { workspace = true }
+sc-lys = { workspace = true, features = ["fixture"] }
 
 float-cmp = { workspace = true }
 # Slint's element queries (positions and sizes of laid-out elements) for

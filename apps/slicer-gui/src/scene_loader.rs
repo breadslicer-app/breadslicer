@@ -874,6 +874,16 @@ pub(crate) fn describe_project_warning(warning: &ReadProjectWarning) -> String {
             "the file carries project data written by {}; only the model data was loaded",
             dialect_name(*dialect),
         ),
+        ReadProjectWarning::NotBroughtIn {
+            supports,
+            drains,
+            hollows,
+        } => format!(
+            "{supports} support(s) found no way to be placed, {drains} drain(s) reach no cavity, {hollows} model(s) could not be hollowed; the rest of the scene opened"
+        ),
+        ReadProjectWarning::ProfileNotFound { printer, resin } => format!(
+            "no profile of ours matches the scene's printer {printer:?} or resin {resin:?} by name; the current ones stay"
+        ),
     }
 }
 

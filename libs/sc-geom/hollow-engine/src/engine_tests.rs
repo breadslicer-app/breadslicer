@@ -2164,6 +2164,7 @@ fn slanted_region(perspective: bool) -> LassoRegion {
         v: [0.0, -1.0, 0.0],
         w: [0.0, 0.0, -1.0],
         polygon,
+        depth: None,
     }
 }
 
@@ -2229,6 +2230,7 @@ fn a_drawn_band_leaves_a_cavity_on_each_side() {
         v: [0.0, 1.0, 0.0],
         w: [0.0, 0.0, -1.0],
         polygon: vec![[-3.0, -20.0], [3.0, -20.0], [3.0, 20.0], [-3.0, 20.0]],
+        depth: None,
     };
     let settings = HollowSettings {
         solid_areas: vec![SolidArea::Lasso(band)],

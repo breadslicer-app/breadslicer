@@ -29,13 +29,14 @@ use sc_sl1cer::contour::ContourStack;
 
 use crate::error::ReadProjectError;
 use crate::filetypes::{ProjectFileType, infer_project_file_type_from_extension};
+use crate::lys::{ForeignScene, is_lys, open_lys};
 use crate::messages::ReadProjectWarning;
 use crate::payload::ProjectPayload;
 use crate::progress_reader::ProgressReader;
 use crate::read::{LoadedProject, read_project_with_progress};
 
 pub const SUPPORTED_SCENE_FILE_EXTENSIONS: &[&str] =
-    &["bread", "3mf", "obj", "stl", "stla", "stlb"];
+    &["bread", "3mf", "obj", "stl", "stla", "stlb", "lys"];
 
 /// Returns whether `path`'s extension is in
 /// [`SUPPORTED_SCENE_FILE_EXTENSIONS`], matching case-insensitively.
@@ -93,6 +94,10 @@ pub struct ProjectContent {
     /// How hollowed models were made (see
     /// [`crate::LoadedProject::hollows`]).
     pub hollows: Vec<HollowDocument>,
+    /// What a scene from another slicer leaves to the application: the
+    /// profiles it names and each model's plate (#698). `None` for our own
+    /// projects.
+    pub foreign: Option<ForeignScene>,
 }
 
 /// Slices that a project file stores, with the token that they were saved with.
@@ -119,6 +124,8 @@ pub enum LoadSceneError {
     Mesh(LoadMeshError),
     /// The project route failed to parse the file.
     Project(ReadProjectError),
+    /// A Lychee scene that could not be read (#698).
+    Lys(sc_lys::LysError),
 }
 
 impl std::fmt::Display for LoadSceneError {
@@ -139,6 +146,7 @@ impl std::fmt::Display for LoadSceneError {
             Self::Io(e) => write!(f, "I/O error while opening the scene file: {e}"),
             Self::Mesh(e) => write!(f, "{e}"),
             Self::Project(e) => write!(f, "{e}"),
+            Self::Lys(e) => write!(f, "{e}"),
         }
     }
 }
@@ -149,6 +157,7 @@ impl std::error::Error for LoadSceneError {
             Self::Io(e) => Some(e),
             Self::Mesh(e) => Some(e),
             Self::Project(e) => Some(e),
+            Self::Lys(e) => Some(e),
             Self::UnsupportedExtension { .. } | Self::FileTooLarge { .. } => None,
         }
     }
@@ -180,6 +189,9 @@ pub fn load_scene(
             actual_bytes: meta.len(),
             limit_bytes: cap,
         });
+    }
+    if is_lys(path) {
+        return open_lys(path, max_file_size, &mut on_progress);
     }
     let mut loaded = match infer_project_file_type_from_extension(path) {
         Ok(file_type) => open_project(path, file_type, max_file_size, &mut on_progress)?,
@@ -293,6 +305,7 @@ fn open_project<F: FnMut(LoadProgress)>(
                 }),
             supports,
             hollows,
+            foreign: None,
         }),
         None => LoadedContent::Mesh(scene),
     };

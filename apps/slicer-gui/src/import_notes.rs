@@ -171,6 +171,65 @@ impl Notes {
                 "The file carries project settings from {}; only the models were loaded.",
                 crate::scene_loader::dialect_name(*dialect)
             ),
+            ReadProjectWarning::NotBroughtIn {
+                supports,
+                drains,
+                hollows,
+            } => {
+                let detail = describe_project_warning(warning);
+                if *supports > 0 {
+                    self.add(
+                        ctr!(
+                            "ImportNotes",
+                            "{n} support of the scene found no way to be placed and was left out.",
+                            "{n} supports of the scene found no way to be placed and were left out.",
+                            *supports
+                        ),
+                        detail.clone(),
+                    );
+                }
+                if *drains > 0 {
+                    self.add(
+                        ctr!(
+                            "ImportNotes",
+                            "{n} drain of the scene reaches no cavity and was left out.",
+                            "{n} drains of the scene reach no cavity and were left out.",
+                            *drains
+                        ),
+                        detail.clone(),
+                    );
+                }
+                if *hollows > 0 {
+                    self.add(
+                        ctr!(
+                            "ImportNotes",
+                            "{n} hollowed model of the scene could not be hollowed again and opened solid.",
+                            "{n} hollowed models of the scene could not be hollowed again and opened solid.",
+                            *hollows
+                        ),
+                        detail,
+                    );
+                }
+                return;
+            }
+            ReadProjectWarning::ProfileNotFound { printer, resin } => match (printer, resin) {
+                (Some(p), None) => ctr!(
+                    "ImportNotes",
+                    "None of our printers is called {}; the current printer stays.",
+                    p
+                ),
+                (None, Some(r)) => ctr!(
+                    "ImportNotes",
+                    "None of our resins is called {}; the current resin stays.",
+                    r
+                ),
+                (Some(p), Some(r)) => ctr!(
+                    "ImportNotes",
+                    "None of our printers and resins is called {}; the current ones stay.",
+                    format!("{p} / {r}")
+                ),
+                (None, None) => SharedString::default(),
+            },
         };
         self.add(line, describe_project_warning(warning));
     }

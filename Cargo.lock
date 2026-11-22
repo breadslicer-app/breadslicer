@@ -5442,6 +5442,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "sc-lys"
+version = "0.1.0"
+dependencies = [
+ "sc-mesh-core",
+ "sc-print-profiles",
+ "serde_json",
+]
+
+[[package]]
 name = "sc-mesh-core"
 version = "0.2.0"
 dependencies = [
@@ -5597,6 +5606,7 @@ dependencies = [
  "bread-format",
  "rayon",
  "sc-3mf",
+ "sc-lys",
  "sc-mesh-core",
  "sc-mesh-fixtures",
  "sc-mesh-formats",
@@ -5765,6 +5775,7 @@ dependencies = [
  "sc-arrange",
  "sc-cut",
  "sc-geom",
+ "sc-lys",
  "sc-mesh-core",
  "sc-mesh-fixtures",
  "sc-mesh-formats",

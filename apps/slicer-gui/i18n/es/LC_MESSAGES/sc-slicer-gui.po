@@ -5861,8 +5861,8 @@ msgstr "Abrir proyecto…"
 
 #: ui/start-dialog.slint
 msgctxt "StartDialog"
-msgid "A Breadslicer project (.bread)"
-msgstr "Un proyecto de Breadslicer (.bread)"
+msgid ".bread .lys"
+msgstr ".bread .lys"
 
 #: ui/start-dialog.slint
 msgctxt "StartDialog"
@@ -10867,3 +10867,52 @@ msgid "The file could not be imported as it came: {n} triangle has no coordinate
 msgid_plural "The file could not be imported as it came: {n} triangles have no coordinates in space. They were left out; the rest of the model is whole and slices."
 msgstr[0] "El archivo no se podía importar como vino: {n} triángulo no tiene coordenadas en el espacio. Se dejó afuera; el resto del modelo está entero y se lamina."
 msgstr[1] "El archivo no se podía importar como vino: {n} triángulos no tienen coordenadas en el espacio. Se dejaron afuera; el resto del modelo está entero y se lamina."
+
+#: src/import_notes.rs
+#, rust-format
+msgctxt "ImportNotes"
+msgid "{n} support of the scene found no way to be placed and was left out."
+msgid_plural "{n} supports of the scene found no way to be placed and were left out."
+msgstr[0] "{n} soporte de la escena no encontró cómo colocarse y quedó afuera."
+msgstr[1] "{n} soportes de la escena no encontraron cómo colocarse y quedaron afuera."
+
+#: src/import_notes.rs
+#, rust-format
+msgctxt "ImportNotes"
+msgid "{n} drain of the scene reaches no cavity and was left out."
+msgid_plural "{n} drains of the scene reach no cavity and were left out."
+msgstr[0] "{n} drenaje de la escena no llega a ningún hueco y quedó afuera."
+msgstr[1] "{n} drenajes de la escena no llegan a ningún hueco y quedaron afuera."
+
+#: src/import_notes.rs
+#, rust-format
+msgctxt "ImportNotes"
+msgid "{n} hollowed model of the scene could not be hollowed again and opened solid."
+msgid_plural "{n} hollowed models of the scene could not be hollowed again and opened solid."
+msgstr[0] "{n} modelo ahuecado de la escena no se pudo ahuecar de nuevo y abrió macizo."
+msgstr[1] "{n} modelos ahuecados de la escena no se pudieron ahuecar de nuevo y abrieron macizos."
+
+#: src/import_notes.rs
+msgctxt "ImportNotes"
+msgid "None of our printers is called {}; the current printer stays."
+msgstr "Ninguna de nuestras impresoras se llama {}; queda la impresora actual."
+
+#: src/import_notes.rs
+msgctxt "ImportNotes"
+msgid "None of our resins is called {}; the current resin stays."
+msgstr "Ninguna de nuestras resinas se llama {}; queda la resina actual."
+
+#: src/import_notes.rs
+msgctxt "ImportNotes"
+msgid "None of our printers and resins is called {}; the current ones stay."
+msgstr "Ninguna de nuestras impresoras y resinas se llama {}; quedan las actuales."
+
+#: src/wiring.rs
+msgctxt "FileDialog"
+msgid "Lychee scenes"
+msgstr "Escenas de Lychee"
+
+#: src/wiring.rs
+msgctxt "FileDialog"
+msgid "Projects and Lychee scenes"
+msgstr "Proyectos y escenas de Lychee"
