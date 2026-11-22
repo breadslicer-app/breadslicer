@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use sc_printer_link::sdcp::{self, Machine, Printer, Status};
+use bread_printer_link::sdcp::{self, Machine, Printer, Status};
 use slint::{ComponentHandle, Image, Model, ModelRc, SharedString, VecModel};
 
 use crate::i18n::ctr;

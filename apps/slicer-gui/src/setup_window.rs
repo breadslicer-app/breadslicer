@@ -712,7 +712,7 @@ mod tests {
 
     fn catalog() -> ProfileCatalog {
         // Every writer the app installs at start-up.
-        sc_sla_formats_uvtools::install();
+        bread_sla_formats_uvtools::install();
         ProfileCatalog::from_libraries(&ProfileLibraries::platform_default())
     }
 

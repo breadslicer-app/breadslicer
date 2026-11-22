@@ -1,5 +1,5 @@
 [package]
-name = "sc-lys"
+name = "bread-lys"
 version = "0.1.0"
 edition.workspace = true
 license = "Apache-2.0"

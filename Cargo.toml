@@ -84,30 +84,30 @@ incremental = true
 [workspace.dependencies]
 sc-3mf = { path = "libs/3mf", version = "0.2.0" }
 sc-app-paths = { path = "libs/app-paths", version = "0.2.0" }
-sc-arrange = { path = "libs/arrange", version = "0.1.0" }
-sc-lys = { path = "libs/lys", version = "0.1.0" }
+bread-arrange = { path = "libs/arrange", version = "0.1.0" }
+bread-lys = { path = "libs/lys", version = "0.1.0" }
 sc-mesh-core = { path = "libs/mesh-core", version = "0.2.0" }
 sc-mesh-fixtures = { path = "libs/mesh-fixtures", version = "0.2.0" }
 sc-mesh-formats = { path = "libs/mesh-formats", version = "0.2.0" }
 sc-mesh-spatial = { path = "libs/mesh-spatial", version = "0.2.0" }
 sc-message-catalog = { path = "libs/message-catalog", version = "0.1.0" }
-sc-cut = { path = "libs/cut", version = "0.1.0" }
-sc-orient = { path = "libs/orient", version = "0.1.0" }
-sc-peel = { path = "libs/peel", version = "0.1.0" }
-sc-printer-link = { path = "libs/printer-link", version = "0.1.0" }
+bread-cut = { path = "libs/cut", version = "0.1.0" }
+bread-orient = { path = "libs/orient", version = "0.1.0" }
+bread-peel = { path = "libs/peel", version = "0.1.0" }
+bread-printer-link = { path = "libs/printer-link", version = "0.1.0" }
 sc-print-glue = { path = "libs/print-glue", version = "0.2.0" }
 sc-print-primitives = { path = "libs/print-primitives", version = "0.2.0" }
 sc-print-profiles = { path = "libs/print-profiles", version = "0.3.0" }
 # The .bread file format, kept in its own repository and published on crates.io.
 bread-format = { git = "https://github.com/breadslicer-app/bread-format", tag = "v0.5.0" }
 sc-project-formats = { path = "libs/project-formats", version = "0.2.0" }
-sc-review = { path = "libs/review", version = "0.1.0" }
+bread-review = { path = "libs/review", version = "0.1.0" }
 sc-scene = { path = "libs/scene", version = "0.2.0" }
 sc-scene-edit = { path = "libs/scene-edit", version = "0.2.0" }
 sc-scene-fixtures = { path = "libs/scene-fixtures", version = "0.2.0" }
 sc-sl1cer = { path = "libs/sl1cer", version = "0.2.0" }
 sc-sla-formats = { path = "libs/sla-formats", version = "0.2.0" }
-sc-sla-formats-uvtools = { path = "libs/sla-formats-uvtools", version = "0.1.0" }
+bread-sla-formats-uvtools = { path = "libs/sla-formats-uvtools", version = "0.1.0" }
 
 sc-geom = { path = "libs/sc-geom", version = "0.0.2" }
 engine-base = { path = "libs/sc-geom/engine-base", version = "0.1.0" }
@@ -116,9 +116,9 @@ islands = { path = "libs/sc-geom/islands", version = "0.1.0" }
 
 # The GUI's own crates, split from `apps/slicer-gui` so that an edit rebuilds
 # less of it (#361).
-sc-slicer-gui-base = { path = "apps/slicer-gui/crates/base", version = "0.4.0-alpha.1" }
-sc-slicer-gui-render = { path = "apps/slicer-gui/crates/render", version = "0.4.0-alpha.1" }
-sc-slicer-gui-ui = { path = "apps/slicer-gui/crates/ui", version = "0.4.0-alpha.1" }
+bread-gui-base = { path = "apps/slicer-gui/crates/base", version = "0.4.0-alpha.1" }
+bread-gui-render = { path = "apps/slicer-gui/crates/render", version = "0.4.0-alpha.1" }
+bread-gui-ui = { path = "apps/slicer-gui/crates/ui", version = "0.4.0-alpha.1" }
 
 # Slint's default feature set minus FemtoVG renderer. One spec for every GUI
 # crate, so the generated interface and the code that drives it agree.

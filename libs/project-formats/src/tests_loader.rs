@@ -513,7 +513,7 @@ fn a_missing_file_is_an_io_error() {
 fn a_lychee_scene_opens_as_a_project_of_its_models_on_their_plates() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("scene.LYS");
-    std::fs::write(&path, sc_lys::fixture::box_on_second_plate()).unwrap();
+    std::fs::write(&path, bread_lys::fixture::box_on_second_plate()).unwrap();
     assert!(is_supported_scene_file_extension(&path));
     let opened = open(&path).expect("the scene opens");
     let LoadedContent::Project(project) = &opened.content else {

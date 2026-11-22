@@ -21,8 +21,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use sc_printer_link::camera::{self, CameraError, Event, Lease, Picture};
-use sc_printer_link::sdcp::Printer;
+use bread_printer_link::camera::{self, CameraError, Event, Lease, Picture};
+use bread_printer_link::sdcp::Printer;
 use serde_json::{Value, json};
 use slint::{ComponentHandle, Image, Rgba8Pixel, SharedPixelBuffer, SharedString};
 
@@ -395,7 +395,7 @@ mod tests {
             CameraError::NoCamera,
             CameraError::TooManyViewers,
             CameraError::Refused(3),
-            CameraError::Printer(sc_printer_link::sdcp::Error::Timeout),
+            CameraError::Printer(bread_printer_link::sdcp::Error::Timeout),
             CameraError::Stream("broken pipe".into()),
             CameraError::NoVideo(vec!["video/h265".into()]),
             CameraError::Codec("bad".into()),

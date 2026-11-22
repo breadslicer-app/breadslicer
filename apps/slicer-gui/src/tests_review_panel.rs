@@ -7,7 +7,7 @@
 
 use std::collections::BTreeSet;
 
-use sc_review::{CheckKind, Finding, PlatePoint, RoleScope, Severity, SuggestedFix};
+use bread_review::{CheckKind, Finding, PlatePoint, RoleScope, Severity, SuggestedFix};
 
 use super::*;
 
@@ -719,7 +719,7 @@ mod fix_all {
     use sc_mesh_fixtures::unit_cube_mesh;
     use sc_print_glue::PlateContours;
     use sc_print_primitives::{AaLevel, MaterialId, PrinterId};
-    use sc_review::{FillSlab, PlateRect, fill_stack};
+    use bread_review::{FillSlab, PlateRect, fill_stack};
     use sc_scene::{LeafPayload, Scene};
     use sc_sl1cer::contour::merge_stacks;
     use sc_sl1cer::profile::{
@@ -1576,7 +1576,7 @@ mod fix_all {
             slice_with_extra(&document, &panel, false, &profile(), &[cup_again(at)]);
             let row = row_titled(&window, "Suction cup").expect("the cup's row");
             window.invoke_review_turn_requested(row.id);
-            assert_eq!(orient.open_with(), Some(sc_orient::Preset::NoCups));
+            assert_eq!(orient.open_with(), Some(bread_orient::Preset::NoCups));
             assert_eq!(document.selection(), Selection::One(LeafId(cube)));
         });
     }

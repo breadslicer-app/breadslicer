@@ -6,7 +6,7 @@
 //! Arranges STL files on a plate and reports how it went.
 //!
 //! ```text
-//! cargo run --release -p sc-arrange --example arrange_bench -- \
+//! cargo run --release -p bread-arrange --example arrange_bench -- \
 //!     [--plate 223.642x126.976] [--copies N] [--shadow] [--turns N] \
 //!     [--cell MM] [--band MM] [--gap MM] [--margin MM] [--passes N] \
 //!     [--png top.png] [--scale F] [--fill] [--limit N] model.stl...
@@ -27,7 +27,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
-use sc_arrange::{Body, Part, Plate, Settings, arrange};
+use bread_arrange::{Body, Part, Plate, Settings, arrange};
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::AffineTransform3D;
 
@@ -240,7 +240,7 @@ fn shadow_area(mesh: &IndexedMesh) -> f64 {
 fn draw(
     path: &std::path::Path,
     bodies: &[Body],
-    placements: &[Option<sc_arrange::Placement>],
+    placements: &[Option<bread_arrange::Placement>],
     plate: &Plate,
     margin: f64,
 ) {
@@ -346,7 +346,7 @@ fn fill(mask: &mut [bool], w: usize, h: usize, t: &[[f64; 2]]) {
 fn fill_plate(
     args: &Args,
     bodies: &[Body],
-    placements: &[Option<sc_arrange::Placement>],
+    placements: &[Option<bread_arrange::Placement>],
     plate: &Plate,
 ) {
     let standing: Vec<Body> = bodies
@@ -370,7 +370,7 @@ fn fill_plate(
     let sources: Vec<usize> = (0..standing.len()).collect();
     let placed = std::sync::atomic::AtomicUsize::new(0);
     let t = Instant::now();
-    let filled = sc_arrange::fill(
+    let filled = bread_arrange::fill(
         &standing,
         &sources,
         plate,
@@ -399,8 +399,8 @@ fn fill_plate(
     );
     if let Some(path) = &args.png {
         let mut all = standing.clone();
-        let mut at: Vec<Option<sc_arrange::Placement>> = vec![
-            Some(sc_arrange::Placement {
+        let mut at: Vec<Option<bread_arrange::Placement>> = vec![
+            Some(bread_arrange::Placement {
                 angle: 0.0,
                 translation: [0.0, 0.0],
                 on_plate: true,

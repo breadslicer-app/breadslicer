@@ -31,7 +31,7 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
 use assert_cmd::Command;
-use sc_sla_formats_uvtools::read::{read_anycubic_zip, read_cxdlp};
+use bread_sla_formats_uvtools::read::{read_anycubic_zip, read_cxdlp};
 use tempfile::tempdir;
 
 fn bundled_profiles_dir() -> PathBuf {

@@ -161,7 +161,7 @@ pub struct LitMeasure {
     pub area_mm2: f64,
     /// The length of the edges of the pixels lit at all, mm, measured so a
     /// diagonal edge is not the length of its stair steps
-    /// ([`sc_peel::PerimeterMeter`]).
+    /// ([`bread_peel::PerimeterMeter`]).
     pub perimeter_mm: f64,
 }
 
@@ -196,7 +196,7 @@ pub fn lit_measures(stack: &ContourStack, raster: &RasterSetup) -> Vec<LitMeasur
 /// The area and perimeter of `pixels`, rows `width` pixels wide.
 fn measure_pixels(pixels: &LayerRaster, width: u32, pixel_mm: [f64; 2]) -> LitMeasure {
     let width = u64::from(width.max(1));
-    let mut meter = sc_peel::PerimeterMeter::new(pixel_mm);
+    let mut meter = bread_peel::PerimeterMeter::new(pixel_mm);
     let mut grey = 0u64;
     let mut at = 0u64;
     for run in pixels.runs() {

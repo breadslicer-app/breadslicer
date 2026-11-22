@@ -125,7 +125,7 @@ pub enum LoadSceneError {
     /// The project route failed to parse the file.
     Project(ReadProjectError),
     /// A Lychee scene that could not be read (#698).
-    Lys(sc_lys::LysError),
+    Lys(bread_lys::LysError),
 }
 
 impl std::fmt::Display for LoadSceneError {

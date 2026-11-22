@@ -13,7 +13,7 @@
 //! does not fit goes to plates added at the end. One step of history: the
 //! moves and the plates.
 
-use sc_arrange::{Across, Body, Plate};
+use bread_arrange::{Across, Body, Plate};
 use sc_scene::NodeId;
 use sc_scene_edit::SceneEdit;
 
@@ -176,7 +176,7 @@ pub(crate) fn apply(
     across: &Across,
     again: bool,
 ) -> Result<Option<Applied>, EditNotApplied> {
-    let placements: Vec<Option<sc_arrange::Placement>> = across
+    let placements: Vec<Option<bread_arrange::Placement>> = across
         .placements
         .iter()
         .map(|p| p.map(|(_, placement)| placement))

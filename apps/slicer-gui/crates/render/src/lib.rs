@@ -30,4 +30,4 @@ pub mod test_support;
 mod tests_print_file_preview;
 pub mod under_plate;
 
-use sc_slicer_gui_base::{breadcrumbs, startup_timing};
+use bread_gui_base::{breadcrumbs, startup_timing};

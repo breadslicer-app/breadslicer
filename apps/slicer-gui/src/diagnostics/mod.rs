@@ -13,7 +13,7 @@
 
 mod bundle;
 mod scene;
-pub(crate) use sc_slicer_gui_base::scrub;
+pub(crate) use bread_gui_base::scrub;
 pub(crate) mod system;
 
 use std::path::{Path, PathBuf};
