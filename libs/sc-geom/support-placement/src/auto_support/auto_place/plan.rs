@@ -4,8 +4,8 @@
 //! wide flat ones given more contacts; then the final check (with what it
 //! takes placed again), the tip cones sized to their hosts, and the braces.
 
-use std::collections::{HashMap, HashSet};
 use bread_support_geom::perf;
+use std::collections::{HashMap, HashSet};
 
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -35,7 +35,9 @@ use bread_support_model::auto_support::constants::{
     CONSOLIDATION_BRANCH_MIN_HEIGHT_MM, CONSOLIDATION_FAN_RADIUS_MM, CONSOLIDATION_MAX_ANGLE_DEG,
     GRID_HOST_FAN_RADIUS_MM, MIN_LEAF_FAN_RADIUS_MM,
 };
-use bread_support_model::auto_support::settings::{AutoSupportSettings, normalize_auto_support_settings};
+use bread_support_model::auto_support::settings::{
+    AutoSupportSettings, normalize_auto_support_settings,
+};
 use bread_support_model::model_mesh::ModelMesh;
 use bread_support_model::support_kinds::{
     PlacementPrimitive, SupportEntityValue, SupportOriginId, SupportTypeId, contact_bridge_types,

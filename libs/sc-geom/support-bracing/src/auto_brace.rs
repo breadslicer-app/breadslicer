@@ -674,7 +674,9 @@ pub fn build_auto_braced_snapshot(
 mod tests {
     use super::*;
     use bread_support_model::support_kinds::SupportTypeId;
-    use bread_support_model::types::{Joint, Roots, Segment, SupportEntity, Transform, Trunk, Vec3};
+    use bread_support_model::types::{
+        Joint, Roots, Segment, SupportEntity, Transform, Trunk, Vec3,
+    };
 
     /// Adds a trunk standing at (`x`, `y`) whose segments end at `joints`,
     /// bottom to top; its segments are `{id}-0`, `{id}-1`, ...

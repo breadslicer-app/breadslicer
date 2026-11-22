@@ -47,7 +47,9 @@ use bread_support_placement::auto_support::parameter_sizing::SizingBands;
 use bread_support_placement::auto_support::resting::{RESTING_LAYERS, rests_on_model};
 pub use bread_support_placement::auto_support::zone_candidates::KeepOut;
 use bread_support_placement::native::islands::body::IslandBodyScan;
-use bread_support_placement::native::mesh_minima::{CombinedIslandScanResult, scan_islands_with_bodies};
+use bread_support_placement::native::mesh_minima::{
+    CombinedIslandScanResult, scan_islands_with_bodies,
+};
 use bread_support_placement::native::overhang::{
     OVERHANG_WELD_EPSILON, OverhangScan, classify_overhangs, overhang_and_stability,
     overhang_and_stability_from_soup,
@@ -927,8 +929,7 @@ pub fn apply_zone_preset(
         &rules.section_heights_mm(),
         rules.volume_cap_mm3(),
     ));
-    settings.scan.steep_angle_deg = rules
-        .stabilization
-        .enabled
-        .then_some(bread_support_model::auto_support::zone_rules::STABILIZATION_MAX_ANGLE_DEG as f32);
+    settings.scan.steep_angle_deg = rules.stabilization.enabled.then_some(
+        bread_support_model::auto_support::zone_rules::STABILIZATION_MAX_ANGLE_DEG as f32,
+    );
 }

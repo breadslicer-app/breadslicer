@@ -32,7 +32,9 @@ use bread_support_geom::geom::primitive_geometry::{cylinder_geometry, sphere_geo
 use bread_support_geom::geom::{Matrix4, Quaternion, Vector2};
 use bread_support_model::bezier::get_bezier_point_at_t;
 use bread_support_model::constants::JOINT_DIAMETER_OFFSET_MM;
-use bread_support_model::shafts::{EndpointHosts, ShaftEntity, resolve_segment_endpoints, root_top};
+use bread_support_model::shafts::{
+    EndpointHosts, ShaftEntity, resolve_segment_endpoints, root_top,
+};
 use bread_support_model::tips::ContactCone;
 use bread_support_model::tips::get_final_socket_position;
 use bread_support_model::tips::{get_disk_center, get_disk_rotation, nib_length};

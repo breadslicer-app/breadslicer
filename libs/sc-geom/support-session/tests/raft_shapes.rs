@@ -4,10 +4,12 @@
 
 use std::sync::Arc;
 
+use bread_support_session::{
+    RaftMode, SupportOptions, SupportRequest, SupportSession, start_supports,
+};
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_scene::{LeafPayload, Scene};
-use bread_support_session::{RaftMode, SupportOptions, SupportRequest, SupportSession, start_supports};
 
 /// A closed 40 mm block, 4 mm thick, outward-wound.
 fn cube() -> IndexedMesh {

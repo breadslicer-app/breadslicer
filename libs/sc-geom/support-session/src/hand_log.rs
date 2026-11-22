@@ -21,8 +21,8 @@
 //! again lays the one between the supports there now, and takes the run's
 //! brace at those ends away.
 
-use serde::{Deserialize, Serialize};
 use bread_support_geom::geom::Vec3;
+use serde::{Deserialize, Serialize};
 
 use crate::shift::PlaneMotion;
 

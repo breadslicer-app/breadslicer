@@ -20,7 +20,9 @@ use bread_support_model::auto_bracing::two_axis_detection::{
 use bread_support_model::constants::JOINT_DIAMETER_OFFSET_MM;
 use bread_support_model::settings::types::SupportSettings;
 use bread_support_model::support_kinds::is_auto_braceable_shaft_type;
-use bread_support_model::types::{Brace, BraceDebugSection, Knot, SupportCollections, SupportState};
+use bread_support_model::types::{
+    Brace, BraceDebugSection, Knot, SupportCollections, SupportState,
+};
 use bread_support_placement::auto_support::types::js_compare;
 
 /// The shafts of `c` a brace may join.

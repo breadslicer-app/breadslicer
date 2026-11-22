@@ -4,12 +4,12 @@
 
 use std::sync::Arc;
 
-use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
-use sc_scene::{LeafPayload, Scene};
 use bread_support_session::{
     RestoreError, SUPPORT_DOCUMENT_VERSION, SupportRequest, SupportSession, start_supports,
 };
+use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
+use sc_scene::{LeafPayload, Scene};
 
 /// A closed 10 mm cube, outward-wound.
 fn cube() -> IndexedMesh {

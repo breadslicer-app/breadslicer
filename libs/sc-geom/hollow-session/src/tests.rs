@@ -299,7 +299,9 @@ fn an_applied_hollow_with_a_drain_slices_with_a_hole() {
         mesh.meta().as_ref().and_then(|m| m.name.as_deref()),
         Some("sphere")
     );
-    assert!(bread_hollow_engine::topology::is_edge_manifold(&as_engine(mesh)));
+    assert!(bread_hollow_engine::topology::is_edge_manifold(&as_engine(
+        mesh
+    )));
     let removed = out.stats.removed_volume_mm3.unwrap();
     assert!(
         removed > 0.5 * out.stats.source_volume_mm3,
@@ -1153,8 +1155,10 @@ fn drilling_a_real_hollow_against_hollowing_it_again() {
     let probe = Arc::new(DrillProbe::new(&hollow, &world).unwrap());
     println!("drill on the hollow: {:?}", probe.report(&world, &drain));
     {
-        let target =
-            bread_hollow_engine::DrillTarget::new(engine_mesh(&hollow, &LeafFrame::of(&world).unwrap()));
+        let target = bread_hollow_engine::DrillTarget::new(engine_mesh(
+            &hollow,
+            &LeafFrame::of(&world).unwrap(),
+        ));
         let started = std::time::Instant::now();
         let _ = bread_hollow_engine::DrillTarget::new(target.mesh().clone());
         println!("target {:.0} ms", started.elapsed().as_secs_f64() * 1e3);

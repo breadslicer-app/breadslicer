@@ -17,12 +17,12 @@
 use std::fmt;
 use std::sync::Arc;
 
-use sc_mesh_core::IndexedMesh;
-use sc_scene::{LeafPayload, NodeId, NodeKind, Scene};
-use serde::{Deserialize, Serialize};
 use bread_support_geom::geom::Vec3;
 use bread_support_model::types::SupportState;
 use bread_support_pipeline::ModelInput;
+use sc_mesh_core::IndexedMesh;
+use sc_scene::{LeafPayload, NodeId, NodeKind, Scene};
+use serde::{Deserialize, Serialize};
 
 use crate::hand_log::HandLog;
 use crate::{SettingsRecipe, SupportSession, scene_model_leaves, scene_models};

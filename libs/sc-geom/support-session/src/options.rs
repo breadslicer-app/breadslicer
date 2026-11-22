@@ -4,11 +4,11 @@
 //! Every value is clamped to its bounds (`auto_support_constraints`), so a
 //! hand-edited preset cannot push the planner outside what it was built for.
 
-use serde::{Deserialize, Serialize};
 use bread_support_mesh::features::slicing::smooth_shafts::{ShaftStyle, SmoothShaftParams};
 use bread_support_mesh::rafts::crenelated::geometry::compute_raft_footprint::raft_band_top_mm;
 use bread_support_mesh::rafts::crenelated::raft_types::{RaftBottomMode, RaftSettings};
 use bread_support_pipeline::PipelineSettings;
+use serde::{Deserialize, Serialize};
 
 use crate::zone_presets::{ZonePreset, apply_zone_preset, zone_self_support_angle_deg};
 

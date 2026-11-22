@@ -18,12 +18,12 @@
 
 use std::time::{Duration, Instant};
 
-use sc_mesh_core::IndexedMesh;
-use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
-use sc_scene::{LeafPayload, Scene};
 use bread_support_session::{
     SupportOutcome, SupportRequest, SupportSession, start_prescan, start_supports,
 };
+use sc_mesh_core::IndexedMesh;
+use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
+use sc_scene::{LeafPayload, Scene};
 
 // The M7 Pro's pixel pitch.
 const PITCH_MM: [f64; 2] = [0.016_800_030_048_076_92, 0.0248];

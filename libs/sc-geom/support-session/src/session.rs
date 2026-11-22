@@ -14,8 +14,6 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::{Arc, OnceLock};
 
-use sc_mesh_core::IndexedMesh;
-use serde_json::Value;
 use bread_support_bracing::auto_brace::{HandBrace, HandBraceRefusal, brace_new_shaft, hand_brace};
 use bread_support_geom::bvh::{MeshBvh, Side};
 use bread_support_geom::geom::ray::Ray;
@@ -49,7 +47,11 @@ use bread_support_placement::placement_logic::pathfinding::sdf_cache::SdfCache;
 use bread_support_placement::support_types::contact_bridge::{
     BridgeEntity, ContactBridgeRequest, build_contact_bridge,
 };
-use bread_support_placement::support_types::trunk::trunk_builder::{TrunkBuildInput, build_trunk_data};
+use bread_support_placement::support_types::trunk::trunk_builder::{
+    TrunkBuildInput, build_trunk_data,
+};
+use sc_mesh_core::IndexedMesh;
+use serde_json::Value;
 
 use crate::document::ModelPrint;
 use crate::hand_log::{

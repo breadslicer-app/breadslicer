@@ -13,12 +13,12 @@
 //!   agnostic; a future `sc-geom-flow-outofprocess` sibling is meant
 //!   to implement the same shape over a subprocess/socket boundary.
 
+/// The DragonFruit support port, run on a scene (`bread-support-session`).
+pub use bread_support_session as supports;
 pub use sc_geom_transport_inprocess::{
     AlgorithmId, CancelToken, Diagnostic, FieldSource, JobError, JobHandle, JobProgress, JobRecipe,
     JobWorker, ResolutionRecord, Severity, Staged,
 };
-/// The DragonFruit support port, run on a scene (`bread-support-session`).
-pub use bread_support_session as supports;
 
 /// The DragonFruit hollowing port, run on a scene leaf (`bread-hollow-session`; the
 /// engine itself is `hollow::bread_hollow_engine`).

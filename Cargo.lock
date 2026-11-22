@@ -752,6 +752,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "bread-engine-base"
+version = "0.1.0"
+
+[[package]]
 name = "bread-format"
 version = "0.5.0"
 source = "git+https://github.com/breadslicer-app/bread-format?tag=v0.5.0#dd6847e976072288be986b64bf2dd3fb03629c1f"
@@ -807,6 +811,37 @@ version = "0.4.0-alpha.1"
 dependencies = [
  "slint",
  "slint-build",
+]
+
+[[package]]
+name = "bread-hollow-engine"
+version = "0.0.1"
+dependencies = [
+ "ahash",
+ "bread-engine-base",
+ "manifold-rust",
+ "rayon",
+ "serde_json",
+]
+
+[[package]]
+name = "bread-hollow-session"
+version = "0.0.1"
+dependencies = [
+ "bread-hollow-engine",
+ "rayon",
+ "sc-geom-transport-inprocess",
+ "sc-mesh-core",
+ "sc-scene",
+ "sc-sl1cer",
+]
+
+[[package]]
+name = "bread-islands"
+version = "0.1.0"
+dependencies = [
+ "rayon",
+ "serde",
 ]
 
 [[package]]
@@ -871,6 +906,150 @@ dependencies = [
  "serde_json",
  "tempfile",
  "zip",
+]
+
+[[package]]
+name = "bread-support-bracing"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "bread-support-geom",
+ "bread-support-model",
+ "bread-support-placement",
+ "earcutr",
+ "glam",
+ "i_float",
+ "i_overlay",
+ "indexmap",
+ "rayon",
+ "serde",
+ "serde_json",
+ "smallvec",
+]
+
+[[package]]
+name = "bread-support-geom"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "earcutr",
+ "glam",
+ "i_float",
+ "i_overlay",
+ "indexmap",
+ "rayon",
+ "serde",
+ "serde_json",
+ "smallvec",
+]
+
+[[package]]
+name = "bread-support-mesh"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "bread-support-geom",
+ "bread-support-model",
+ "earcutr",
+ "glam",
+ "i_float",
+ "i_overlay",
+ "indexmap",
+ "rayon",
+ "serde",
+ "serde_json",
+ "smallvec",
+]
+
+[[package]]
+name = "bread-support-model"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "bread-support-geom",
+ "earcutr",
+ "glam",
+ "i_float",
+ "i_overlay",
+ "indexmap",
+ "rayon",
+ "serde",
+ "serde_json",
+ "smallvec",
+]
+
+[[package]]
+name = "bread-support-pipeline"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "bread-engine-base",
+ "bread-islands",
+ "bread-support-bracing",
+ "bread-support-geom",
+ "bread-support-mesh",
+ "bread-support-model",
+ "bread-support-placement",
+ "bread-surface-analysis",
+ "earcutr",
+ "glam",
+ "i_float",
+ "i_overlay",
+ "indexmap",
+ "rayon",
+ "serde",
+ "serde_json",
+ "smallvec",
+]
+
+[[package]]
+name = "bread-support-placement"
+version = "0.1.0"
+dependencies = [
+ "ahash",
+ "bread-engine-base",
+ "bread-islands",
+ "bread-support-geom",
+ "bread-support-model",
+ "bread-surface-analysis",
+ "earcutr",
+ "glam",
+ "i_float",
+ "i_overlay",
+ "indexmap",
+ "rayon",
+ "serde",
+ "serde_json",
+ "smallvec",
+]
+
+[[package]]
+name = "bread-support-session"
+version = "0.0.1"
+dependencies = [
+ "ahash",
+ "bread-support-bracing",
+ "bread-support-geom",
+ "bread-support-mesh",
+ "bread-support-model",
+ "bread-support-pipeline",
+ "bread-support-placement",
+ "indexmap",
+ "rayon",
+ "sc-geom-transport-inprocess",
+ "sc-mesh-core",
+ "sc-mesh-formats",
+ "sc-scene",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "bread-surface-analysis"
+version = "0.1.0"
+dependencies = [
+ "rayon",
+ "serde",
 ]
 
 [[package]]
@@ -1604,10 +1783,6 @@ name = "endi"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "66b7e2430c6dff6a955451e2cfc438f09cea1965a9d6f87f7e3b90decc014099"
-
-[[package]]
-name = "bread-engine-base"
-version = "0.1.0"
 
 [[package]]
 name = "enumflags2"
@@ -2406,29 +2581,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5491a308e0214554f07a81d8944abe45f552871c12e3c3c6e7e5d354039a6c4c"
 
 [[package]]
-name = "bread-hollow-engine"
-version = "0.0.1"
-dependencies = [
- "ahash",
- "bread-engine-base",
- "manifold-rust",
- "rayon",
- "serde_json",
-]
-
-[[package]]
-name = "bread-hollow-session"
-version = "0.0.1"
-dependencies = [
- "bread-hollow-engine",
- "rayon",
- "sc-geom-transport-inprocess",
- "sc-mesh-core",
- "sc-scene",
- "sc-sl1cer",
-]
-
-[[package]]
 name = "html5ever"
 version = "0.40.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3196,14 +3348,6 @@ dependencies = [
  "hermit-abi 0.3.9",
  "libc",
  "windows-sys 0.48.0",
-]
-
-[[package]]
-name = "islands"
-version = "0.1.0"
-dependencies = [
- "rayon",
- "serde",
 ]
 
 [[package]]
@@ -5533,8 +5677,8 @@ name = "sc-geom"
 version = "0.0.2"
 dependencies = [
  "bread-hollow-session",
- "sc-geom-transport-inprocess",
  "bread-support-session",
+ "sc-geom-transport-inprocess",
 ]
 
 [[package]]
@@ -5767,6 +5911,12 @@ dependencies = [
  "bread-orient",
  "bread-review",
  "bread-sla-formats-uvtools",
+ "bread-support-bracing",
+ "bread-support-geom",
+ "bread-support-mesh",
+ "bread-support-model",
+ "bread-support-pipeline",
+ "bread-support-placement",
  "mimalloc",
  "png 0.18.1",
  "predicates",
@@ -5785,12 +5935,6 @@ dependencies = [
  "sc-sl1cer",
  "sc-sla-formats",
  "serde_json",
- "bread-support-bracing",
- "bread-support-geom",
- "bread-support-mesh",
- "bread-support-model",
- "bread-support-pipeline",
- "bread-support-placement",
  "tempfile",
  "windows-sys 0.61.2",
 ]
@@ -6415,150 +6559,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "bread-support-bracing"
-version = "0.1.0"
-dependencies = [
- "ahash",
- "earcutr",
- "glam",
- "i_float",
- "i_overlay",
- "indexmap",
- "rayon",
- "serde",
- "serde_json",
- "smallvec",
- "bread-support-geom",
- "bread-support-model",
- "bread-support-placement",
-]
-
-[[package]]
-name = "bread-support-geom"
-version = "0.1.0"
-dependencies = [
- "ahash",
- "earcutr",
- "glam",
- "i_float",
- "i_overlay",
- "indexmap",
- "rayon",
- "serde",
- "serde_json",
- "smallvec",
-]
-
-[[package]]
-name = "bread-support-mesh"
-version = "0.1.0"
-dependencies = [
- "ahash",
- "earcutr",
- "glam",
- "i_float",
- "i_overlay",
- "indexmap",
- "rayon",
- "serde",
- "serde_json",
- "smallvec",
- "bread-support-geom",
- "bread-support-model",
-]
-
-[[package]]
-name = "bread-support-model"
-version = "0.1.0"
-dependencies = [
- "ahash",
- "earcutr",
- "glam",
- "i_float",
- "i_overlay",
- "indexmap",
- "rayon",
- "serde",
- "serde_json",
- "smallvec",
- "bread-support-geom",
-]
-
-[[package]]
-name = "bread-support-pipeline"
-version = "0.1.0"
-dependencies = [
- "ahash",
- "earcutr",
- "bread-engine-base",
- "glam",
- "i_float",
- "i_overlay",
- "indexmap",
- "islands",
- "rayon",
- "serde",
- "serde_json",
- "smallvec",
- "bread-support-bracing",
- "bread-support-geom",
- "bread-support-mesh",
- "bread-support-model",
- "bread-support-placement",
- "bread-surface-analysis",
-]
-
-[[package]]
-name = "bread-support-placement"
-version = "0.1.0"
-dependencies = [
- "ahash",
- "earcutr",
- "bread-engine-base",
- "glam",
- "i_float",
- "i_overlay",
- "indexmap",
- "islands",
- "rayon",
- "serde",
- "serde_json",
- "smallvec",
- "bread-support-geom",
- "bread-support-model",
- "bread-surface-analysis",
-]
-
-[[package]]
-name = "bread-support-session"
-version = "0.0.1"
-dependencies = [
- "ahash",
- "indexmap",
- "rayon",
- "sc-geom-transport-inprocess",
- "sc-mesh-core",
- "sc-mesh-formats",
- "sc-scene",
- "serde",
- "serde_json",
- "bread-support-bracing",
- "bread-support-geom",
- "bread-support-mesh",
- "bread-support-model",
- "bread-support-pipeline",
- "bread-support-placement",
-]
-
-[[package]]
-name = "bread-surface-analysis"
-version = "0.1.0"
-dependencies = [
- "rayon",
- "serde",
 ]
 
 [[package]]

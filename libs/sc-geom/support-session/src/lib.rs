@@ -14,11 +14,6 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
-use rayon::prelude::*;
-use sc_geom_transport_inprocess::{JobError, JobHandle, JobProgress, JobWorker};
-pub use sc_mesh_core::MeshRole;
-use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
-use sc_scene::{CsgPolicy, NodeId, Scene, SceneError, bake_mesh_to_world};
 use bread_support_geom::geom::Vec3;
 use bread_support_geom::geom::buffer_geometry::BufferGeometry;
 use bread_support_geom::perf::{PerfEntry, PerfFrame};
@@ -29,6 +24,11 @@ use bread_support_model::types::SupportState;
 use bread_support_pipeline::{
     ModelInput, PipelineError, PipelineSettings, Stage, plan_supports_with, prescan_models,
 };
+use rayon::prelude::*;
+use sc_geom_transport_inprocess::{JobError, JobHandle, JobProgress, JobWorker};
+pub use sc_mesh_core::MeshRole;
+use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
+use sc_scene::{CsgPolicy, NodeId, Scene, SceneError, bake_mesh_to_world};
 
 mod compare;
 mod document;
@@ -42,6 +42,15 @@ pub mod zone_presets {
     pub use bread_support_pipeline::apply_zone_preset;
 }
 
+pub use bread_support_bracing::auto_brace::HandBraceRefusal;
+pub use bread_support_model::auto_bracing::settings::{AutoBracingPattern, GridDiagonal};
+pub use bread_support_model::auto_support::zone_rules::{
+    AreaBand, BaseTip, OverhangRule, StabilizationRule, SupportSize, ZoneRules,
+};
+pub use bread_support_pipeline::{KeepOut, ScanCache};
+pub use bread_support_placement::native::overhang::{
+    is_overhang_normal_z, overhang_and_stability_from_soup, overhang_normal_z_limit,
+};
 pub use document::{
     Drawings, RestoreError, RestoredSet, SUPPORT_DOCUMENT_VERSION, SUPPORT_GENERATOR,
     is_support_generator,
@@ -52,15 +61,6 @@ pub use session::{
     AddNote, AddOptions, BraceEnd, COVERED_AGREEMENT, COVERED_SURFACE_MM, EditError, EditPreview,
     HandShape, ImportedPlan, PartSizes, REVIEW_NUDGE_MM, SupportContact, SupportJoint,
     SupportParts, SupportPiece, SupportPieceKind, SupportSession,
-};
-pub use bread_support_bracing::auto_brace::HandBraceRefusal;
-pub use bread_support_model::auto_bracing::settings::{AutoBracingPattern, GridDiagonal};
-pub use bread_support_model::auto_support::zone_rules::{
-    AreaBand, BaseTip, OverhangRule, StabilizationRule, SupportSize, ZoneRules,
-};
-pub use bread_support_pipeline::{KeepOut, ScanCache};
-pub use bread_support_placement::native::overhang::{
-    is_overhang_normal_z, overhang_and_stability_from_soup, overhang_normal_z_limit,
 };
 
 /// The name the generated support mesh carries.
@@ -98,9 +98,10 @@ pub fn plate_raft(
         .collect();
     // The same scene draws the same raft whatever order its sets come in.
     circles.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
-    let sink =
-        bread_support_mesh::features::slicing::support_world_triangles::plate_raft_parts(&circles, &raft)
-            .ok()?;
+    let sink = bread_support_mesh::features::slicing::support_world_triangles::plate_raft_parts(
+        &circles, &raft,
+    )
+    .ok()?;
     weld_parts(&sink.floats, &sink.parts, PLATE_RAFT_NAME)
 }
 
