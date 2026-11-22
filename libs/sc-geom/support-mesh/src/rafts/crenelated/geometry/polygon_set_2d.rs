@@ -19,8 +19,8 @@ use i_overlay::mesh::float::outline::offset::OutlineOffset;
 use i_overlay::mesh::float::style::{LineJoin, OutlineStyle};
 
 use super::raft_body::signed_area_2d;
-use support_geom::geom::Vector2;
-use support_geom::geom::shape::{Path as ShapePath, Shape};
+use bread_support_geom::geom::Vector2;
+use bread_support_geom::geom::shape::{Path as ShapePath, Shape};
 
 /// A failure of a polygon operation. The booleans and offsets cannot fail;
 /// the type stays so the raft code keeps its fallbacks for a failure.

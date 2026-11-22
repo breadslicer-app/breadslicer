@@ -13,8 +13,8 @@
 use std::sync::Arc;
 
 use rayon::prelude::*;
-use sc_geom::hollow::hollow_engine::GridRequest;
-use sc_geom::hollow::hollow_engine::LassoRegion;
+use sc_geom::hollow::bread_hollow_engine::GridRequest;
+use sc_geom::hollow::bread_hollow_engine::LassoRegion;
 use sc_geom::hollow::{
     HOLLOW_ENGINE_VERSION, HollowKind, HollowRequest, HollowResult, LeafFrame, start_hollow_mesh,
 };
@@ -424,7 +424,7 @@ mod tests {
             ],
         };
         let region = solid_region(&zone).prepared().expect("a box");
-        use sc_geom::hollow::hollow_engine::mesh::Vec3;
+        use sc_geom::hollow::bread_hollow_engine::mesh::Vec3;
         assert!(region.contains(Vec3::new(1.9, 3.9, 5.9)));
         assert!(!region.contains(Vec3::new(1.0, 2.0, 6.1)));
         assert!(!region.contains(Vec3::new(2.1, 2.0, 3.0)));

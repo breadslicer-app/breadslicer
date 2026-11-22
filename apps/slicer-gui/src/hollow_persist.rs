@@ -99,7 +99,7 @@ use sc_project_formats::HollowDocument;
 use sc_scene::node::NodeKind;
 use sc_scene::{NodeId, Scene};
 
-use sc_geom::hollow::hollow_engine::LassoRegion;
+use sc_geom::hollow::bread_hollow_engine::LassoRegion;
 
 use crate::hollow_run::{HollowOptions, Hollowed, LocalDrain, PlugLink};
 use crate::scene_document::SceneDocument;

@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! SC_BENCH_STL="C:/a.stl|C:/b.stl" [SC_BENCH_HEIGHT=mm] [SC_BENCH_RUNS=3] \
-//!   cargo test --release -p support-session --test bench_support_job -- --ignored --nocapture
+//!   cargo test --release -p bread-support-session --test bench_support_job -- --ignored --nocapture
 //! ```
 //!
 //! Several paths (`|`) make a plate, side by side 6 mm apart. Prints the
@@ -18,12 +18,12 @@
 
 use std::time::{Duration, Instant};
 
+use bread_support_session::{
+    SupportOutcome, SupportRequest, SupportSession, start_prescan, start_supports,
+};
 use sc_mesh_core::IndexedMesh;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_scene::{LeafPayload, Scene};
-use support_session::{
-    SupportOutcome, SupportRequest, SupportSession, start_prescan, start_supports,
-};
 
 // The M7 Pro's pixel pitch.
 const PITCH_MM: [f64; 2] = [0.016_800_030_048_076_92, 0.0248];

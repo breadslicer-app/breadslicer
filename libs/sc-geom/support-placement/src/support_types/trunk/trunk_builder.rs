@@ -18,19 +18,19 @@ use crate::placement_logic::standard_placement::{
 use crate::placement_logic_v3::smart_placement_v3::{
     RouterStats, SmartPlacementV3Context, SmartPlacementV3Input, calculate_smart_placement_v3,
 };
-use support_geom::geom::Matrix4;
-use support_geom::geom::math_utils::{js_max, js_min};
-use support_model::collision_avoidance::CollisionField;
-use support_model::constants::get_joint_diameter;
-use support_model::rendering::support_builder::SupportData;
-use support_model::settings::types::SupportSettings;
-use support_model::support_kinds::SupportTypeId;
-use support_model::tips::{
+use bread_support_geom::geom::Matrix4;
+use bread_support_geom::geom::math_utils::{js_max, js_min};
+use bread_support_model::collision_avoidance::CollisionField;
+use bread_support_model::constants::get_joint_diameter;
+use bread_support_model::rendering::support_builder::SupportData;
+use bread_support_model::settings::types::SupportSettings;
+use bread_support_model::support_kinds::SupportTypeId;
+use bread_support_model::tips::{
     ContactCone, SupportTipProfile, TipPrimitive, get_contact_cone_lowest_z,
     get_final_socket_position, get_socket_position, nib_length,
     recompute_contact_cone_for_moved_disk,
 };
-use support_model::types::{
+use bread_support_model::types::{
     Joint, LimitationCode, Quaternion, Roots, Segment, SupportEntity, Transform, Trunk, Vec3,
     WarningCode,
 };
@@ -189,7 +189,7 @@ pub fn build_trunk_data_routed(
     settings: &SupportSettings,
     new_id: &mut dyn FnMut() -> String,
 ) -> TrunkBuildResult {
-    let _perf = support_geom::perf::scope("trunk:build-routed");
+    let _perf = bread_support_geom::perf::scope("trunk:build-routed");
     let placement = calculate_smart_placement_v3(
         &SmartPlacementV3Input {
             placement: placement_input(input, settings),

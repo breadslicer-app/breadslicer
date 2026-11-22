@@ -32,22 +32,22 @@ use crate::support_types::trunk::trunk_builder::{
     build_trunk_data_routed,
 };
 use crate::support_types::trunk::trunk_route_resolution::get_resolved_snapped_root_pos;
-use support_geom::geom::math_utils::{js_atan2, js_hypot, js_max, js_min, js_to_fixed};
-use support_model::auto_support::constants::{
+use bread_support_geom::geom::math_utils::{js_atan2, js_hypot, js_max, js_min, js_to_fixed};
+use bread_support_model::auto_support::constants::{
     CAVITY_FAN_RADIUS_MM, CAVITY_STICK_FAN_RADIUS_MM, CAVITY_STICK_MAX_MEMBERS,
     GRID_HOST_FAN_RADIUS_MM, MAX_CAVITY_BRIDGE_MM, MAX_LEAF_SPAN_BEFORE_BRANCH_MM,
     MIN_LEAF_FAN_RADIUS_MM,
 };
-use support_model::auto_support::settings::SizingBand;
-use support_model::collision_avoidance::CollisionField;
-use support_model::cone_axis_policy::is_side_wall_contact;
-use support_model::model_mesh::ModelMesh;
-use support_model::support_kinds::{
+use bread_support_model::auto_support::settings::SizingBand;
+use bread_support_model::collision_avoidance::CollisionField;
+use bread_support_model::cone_axis_policy::is_side_wall_contact;
+use bread_support_model::model_mesh::ModelMesh;
+use bread_support_model::support_kinds::{
     CONTACT_OVERRIDE_REGISTRATIONS, EndpointEnd, PlacementPrimitive, SupportEntityValue,
     SupportOriginId, SupportPlacementMetric, SupportPlacementSettingPath, SupportTypeId,
     contact_endpoints_for, get_support_type_descriptor, select_type_for_placement,
 };
-use support_model::types::{Knot, LimitationCode, SupportState, Vec3};
+use bread_support_model::types::{Knot, LimitationCode, SupportState, Vec3};
 
 /// Why a contact got no support.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

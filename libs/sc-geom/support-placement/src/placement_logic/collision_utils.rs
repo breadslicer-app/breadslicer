@@ -1,12 +1,12 @@
 //! Whether a support's shaft or tip cone runs into the model: rays cast
 //! along it, through both sides of every face.
 
-use support_geom::bvh::{BvhMesh, Intersection, Side};
-use support_geom::geom::Ray;
-use support_geom::geom::math_utils::{js_hypot, js_max, js_min};
-use support_model::tips::ContactCone;
-use support_model::tips::get_final_socket_position;
-use support_model::types::Vec3;
+use bread_support_geom::bvh::{BvhMesh, Intersection, Side};
+use bread_support_geom::geom::Ray;
+use bread_support_geom::geom::math_utils::{js_hypot, js_max, js_min};
+use bread_support_model::tips::ContactCone;
+use bread_support_model::tips::get_final_socket_position;
+use bread_support_model::types::Vec3;
 
 /// How far before its contact a tip cone may go into the model: the tip's own
 /// way into its surface, and a crease or a bump of the surface around it.

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::collision_avoidance::{CollisionField, CollisionFrustumProfile, calculate_safe_offset};
 use crate::types::{PlacementSurface, Vec3};
-use support_geom::geom::Quaternion;
+use bread_support_geom::geom::Quaternion;
 
 /// The `disk` tag a nib's profile carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

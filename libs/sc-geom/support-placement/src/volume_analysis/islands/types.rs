@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::voxel_footprint::VoxelFootprint;
 use crate::native::islands::body::IslandBody;
-use support_model::types::Vec3;
+use bread_support_model::types::Vec3;
 
 /// What found an island.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]

@@ -6,7 +6,7 @@
 //! In-process transport for sc-geom's handlers: the async job model, a
 //! constraint-to-actual resolution trail, and a reproducibility recipe.
 //! Domain-agnostic: no dependency on `sc-mesh-core` or any
-//! other mesh type. `support-session` and `hollow-session` run their jobs on
+//! other mesh type. `bread-support-session` and `bread-hollow-session` run their jobs on
 //! the same primitives instead of each reinventing a job handle.
 //!
 //! A future `sc-geom-flow-outofprocess` sibling crate is meant to

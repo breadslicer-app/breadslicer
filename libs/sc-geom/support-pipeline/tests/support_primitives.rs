@@ -2,20 +2,20 @@
 //! and a shaft's taper.
 
 use indexmap::IndexMap;
-use support_model::bezier::{
+use bread_support_model::bezier::{
     get_bezier_point_at_t, subdivide_cubic_bezier,
 };
-use support_model::tips::{
+use bread_support_model::tips::{
     ContactDiskProfile, DiskTag,
 };
-use support_model::tips::nib_length;
-use support_model::shafts::{
+use bread_support_model::tips::nib_length;
+use bread_support_model::shafts::{
     SplitHosts, split_support_shaft,
 };
-use support_model::shafts::{
+use bread_support_model::shafts::{
     calculate_knot_position_on_segment_from_t, remap_knot_across_split,
 };
-use support_model::types::*;
+use bread_support_model::types::*;
 
 // --- contactDiskNib.test.ts ---
 
@@ -275,7 +275,7 @@ fn split_fixture() -> (Roots, Trunk) {
         base: SupportEntity {
             id: "trunk-1".to_owned(),
             model_id: "model-1".to_owned(),
-            type_id: Some(support_model::support_kinds::SupportTypeId::Trunk),
+            type_id: Some(bread_support_model::support_kinds::SupportTypeId::Trunk),
             ..SupportEntity::default()
         },
         root_id: "root-1".to_owned(),

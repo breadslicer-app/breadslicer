@@ -1,7 +1,7 @@
 //! The pillars' grid: snapping a position to its node, and the text key a
 //! node is known by (`"gx,gy"`, its indices on the grid).
 
-use support_geom::geom::math_utils::js_round;
+use bread_support_geom::geom::math_utils::js_round;
 
 /// The grid index nearest `value_mm` at `spacing_mm`, halves rounded away
 /// from zero; 0 for a spacing that is not positive.

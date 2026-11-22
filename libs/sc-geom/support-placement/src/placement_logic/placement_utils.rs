@@ -1,7 +1,7 @@
 //! The surface normal at a ray hit, smoothed from the vertex normals.
 
-use support_geom::bvh::Intersection;
-use support_geom::geom::{Matrix4, Vec3};
+use bread_support_geom::bvh::Intersection;
+use bread_support_geom::geom::{Matrix4, Vec3};
 
 /// The weights of `a`, `b` and `c` that make `point` (barycentric
 /// coordinates), or zero for a triangle with no area.

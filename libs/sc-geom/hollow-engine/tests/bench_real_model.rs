@@ -5,7 +5,7 @@
 //! SC_BENCH_STL=C:/path/model.stl [SC_BENCH_HEIGHT=90] [SC_BENCH_VOXEL=0.65] \
 //!   [SC_BENCH_MAX_RES=192] [SC_BENCH_WALL=2.0] [SC_BENCH_FILL=lattice|pillar] \
 //!   [SC_BENCH_REPEAT=1] \
-//!   cargo test --release -p hollow-engine --test bench_real_model -- --ignored --nocapture
+//!   cargo test --release -p bread-hollow-engine --test bench_real_model -- --ignored --nocapture
 //! ```
 //!
 //! The model is welded, centred and scaled to `SC_BENCH_HEIGHT` mm (as the
@@ -18,11 +18,11 @@
 
 use std::time::Instant;
 
-use hollow_engine::bvh::Bvh;
-use hollow_engine::mesh::{IndexedMesh, Vec3};
-use hollow_engine::shapes::read_binary_stl;
-use hollow_engine::topology::{face_shells, is_edge_manifold};
-use hollow_engine::{
+use bread_hollow_engine::bvh::Bvh;
+use bread_hollow_engine::mesh::{IndexedMesh, Vec3};
+use bread_hollow_engine::shapes::read_binary_stl;
+use bread_hollow_engine::topology::{face_shells, is_edge_manifold};
+use bread_hollow_engine::{
     Control, DrainHole, GridRequest, HollowApplied, HollowError, HollowFill, HollowSettings,
     InfillMode, Session,
 };
@@ -62,7 +62,7 @@ fn ms(t: Instant) -> f64 {
 /// When each stage was first reported, to print how long each took.
 struct StageClock {
     start: Instant,
-    marks: std::sync::Mutex<Vec<(hollow_engine::Stage, Instant)>>,
+    marks: std::sync::Mutex<Vec<(bread_hollow_engine::Stage, Instant)>>,
 }
 
 impl StageClock {
@@ -73,7 +73,7 @@ impl StageClock {
         }
     }
 
-    fn mark(&self, stage: hollow_engine::Stage) {
+    fn mark(&self, stage: bread_hollow_engine::Stage) {
         let mut marks = self.marks.lock().unwrap();
         if !marks.iter().any(|(s, _)| *s == stage) {
             marks.push((stage, Instant::now()));

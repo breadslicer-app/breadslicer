@@ -7,15 +7,15 @@ use std::collections::{HashMap, HashSet};
 
 use super::grouping::Vec2;
 use super::samples::Shaft;
-use support_geom::geom::math_utils::{js_atan2, js_max};
-use support_model::auto_bracing::settings::{AutoBracingSettings, auto_bracing_hard_rules};
-use support_model::auto_bracing::two_axis_detection::{
+use bread_support_geom::geom::math_utils::{js_atan2, js_max};
+use bread_support_model::auto_bracing::settings::{AutoBracingSettings, auto_bracing_hard_rules};
+use bread_support_model::auto_bracing::two_axis_detection::{
     axis_separation_deg, has_qualified_two_axis_bracing, normalize_axis_angle_rad,
 };
-use support_model::settings::types::SupportSettings;
-use support_placement::auto_support::types::js_compare;
-use support_placement::placement_logic::grid::grid_math::snap_to_grid_index;
-use support_placement::support_types::kickstand::kickstand_stabiliser::GridSnap;
+use bread_support_model::settings::types::SupportSettings;
+use bread_support_placement::auto_support::types::js_compare;
+use bread_support_placement::placement_logic::grid::grid_math::snap_to_grid_index;
+use bread_support_placement::support_types::kickstand::kickstand_stabiliser::GridSnap;
 
 /// Two shafts to brace (indices into the run's shafts), with the horizontal
 /// distance and the axis between them.

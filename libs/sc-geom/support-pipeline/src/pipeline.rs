@@ -20,42 +20,44 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use support_bracing::auto_brace::build_auto_braced_snapshot;
-use support_geom::bvh::{BvhMesh, MeshBvh, Side};
-use support_geom::geom::buffer_geometry::BufferGeometry;
-use support_geom::geom::{Matrix4, Vec3};
-use support_geom::perf::{self, PerfFrame};
-use support_mesh::features::slicing::smooth_shafts::ShaftStyle;
-use support_mesh::features::slicing::support_world_triangles::{
+use bread_support_bracing::auto_brace::build_auto_braced_snapshot;
+use bread_support_geom::bvh::{BvhMesh, MeshBvh, Side};
+use bread_support_geom::geom::buffer_geometry::BufferGeometry;
+use bread_support_geom::geom::{Matrix4, Vec3};
+use bread_support_geom::perf::{self, PerfFrame};
+use bread_support_mesh::features::slicing::smooth_shafts::ShaftStyle;
+use bread_support_mesh::features::slicing::support_world_triangles::{
     SupportSliceInput, TipDrawing, TriangleSink, build_support_and_raft_world_parts,
 };
-use support_mesh::rafts::crenelated::geometry::model_plate_footprint::{
+use bread_support_mesh::rafts::crenelated::geometry::model_plate_footprint::{
     ModelTransform, PlateFootprintSource, quaternion_from_global_euler,
 };
-use support_mesh::rafts::crenelated::geometry::polygon_set_2d::PolygonError;
-use support_mesh::rafts::crenelated::raft_types::{
+use bread_support_mesh::rafts::crenelated::geometry::polygon_set_2d::PolygonError;
+use bread_support_mesh::rafts::crenelated::raft_types::{
     DEFAULT_RAFT_SETTINGS, RaftBottomMode, RaftSettings,
 };
-use support_model::auto_bracing::mesh_clearance::{BraceMesh, BraceMeshes};
-use support_model::settings::types::SupportSettings;
-use support_model::types::SupportState;
-use support_placement::auto_support::auto_place::helpers::{PlanCtx, PlanMesh};
-use support_placement::auto_support::auto_place::plan::{
+use bread_support_model::auto_bracing::mesh_clearance::{BraceMesh, BraceMeshes};
+use bread_support_model::settings::types::SupportSettings;
+use bread_support_model::types::SupportState;
+use bread_support_placement::auto_support::auto_place::helpers::{PlanCtx, PlanMesh};
+use bread_support_placement::auto_support::auto_place::plan::{
     AutoSupportPlan, PlanInput, ZonePlanInput, compute_auto_support_plan,
 };
-use support_placement::auto_support::parameter_sizing::SizingBands;
-use support_placement::auto_support::resting::{RESTING_LAYERS, rests_on_model};
-pub use support_placement::auto_support::zone_candidates::KeepOut;
-use support_placement::native::islands::body::IslandBodyScan;
-use support_placement::native::mesh_minima::{CombinedIslandScanResult, scan_islands_with_bodies};
-use support_placement::native::overhang::{
+use bread_support_placement::auto_support::parameter_sizing::SizingBands;
+use bread_support_placement::auto_support::resting::{RESTING_LAYERS, rests_on_model};
+pub use bread_support_placement::auto_support::zone_candidates::KeepOut;
+use bread_support_placement::native::islands::body::IslandBodyScan;
+use bread_support_placement::native::mesh_minima::{
+    CombinedIslandScanResult, scan_islands_with_bodies,
+};
+use bread_support_placement::native::overhang::{
     OVERHANG_WELD_EPSILON, OverhangScan, classify_overhangs, overhang_and_stability,
     overhang_and_stability_from_soup,
 };
-use support_placement::native::welded::WeldedMesh;
-use support_placement::placement_logic::pathfinding::sdf_cache::SdfCache;
-use support_placement::volume_analysis::islands::types::{DetectedIsland, IslandSource};
-use support_placement::volume_analysis::islands::use_islands::{
+use bread_support_placement::native::welded::WeldedMesh;
+use bread_support_placement::placement_logic::pathfinding::sdf_cache::SdfCache;
+use bread_support_placement::volume_analysis::islands::types::{DetectedIsland, IslandSource};
+use bread_support_placement::volume_analysis::islands::use_islands::{
     DerivedIslands, IslandSettings, derive_islands, overhang_region_to_island,
 };
 
@@ -158,7 +160,7 @@ impl PipelineSettings {
         };
         // Every set is placed by zones; Miniatures unless told otherwise.
         apply_zone_preset(
-            &support_model::auto_support::presets::minis_30(),
+            &bread_support_model::auto_support::presets::minis_30(),
             &mut settings,
             false,
         );
@@ -186,7 +188,7 @@ pub struct Progress<'a> {
     pub model_id: Option<&'a str>,
 }
 
-pub use engine_base::CancelToken;
+pub use bread_engine_base::CancelToken;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PipelineError {
@@ -488,7 +490,7 @@ fn scan_model(
 /// The scan numbers triangles as the soup holds them; the tree's build
 /// reorders them, and the region sampler tells a region's surface by the
 /// face a ray's hit names
-/// ([`SurfaceSampler`](support_placement::auto_support::grid_placement::SurfaceSampler)).
+/// ([`SurfaceSampler`](bread_support_placement::auto_support::grid_placement::SurfaceSampler)).
 /// Without this the sampler took for a region's surface whatever face shared a number
 /// with one of its triangles: tops and walls of the model, and little of an
 /// underside. Overhang candidates landed on surfaces that face up (and went
@@ -510,7 +512,7 @@ pub fn regions_on_tree_faces(mut scan: OverhangScan, bvh: &MeshBvh) -> OverhangS
 /// A steep flat is a large planar face too steep to be an overhang (up to 85 degrees from horizontal), supported as one lest it
 /// topple the part. The zone rules give their own answer
 /// by angle: an overhang up to their overhang angle, stabilization up to
-/// [`STABILIZATION_MAX_ANGLE_DEG`](support_model::auto_support::zone_rules::STABILIZATION_MAX_ANGLE_DEG),
+/// [`STABILIZATION_MAX_ANGLE_DEG`](bread_support_model::auto_support::zone_rules::STABILIZATION_MAX_ANGLE_DEG),
 /// nothing past it. With steep flats the underside of a mini's base, stood
 /// near upright (12 degrees past vertical), took the overhang lattice: 119
 /// tips 1.9 mm apart on a face that prints without any.
@@ -887,7 +889,7 @@ pub fn support_soup(
 /// of a turn hangs one from another pillar further out, and the room a model
 /// takes swings with it; dropping near the model they keep it compact.
 pub fn apply_zone_preset(
-    zones: &support_model::auto_support::presets::ZonePreset,
+    zones: &bread_support_model::auto_support::presets::ZonePreset,
     settings: &mut PipelineSettings,
     one_raft: bool,
 ) {
@@ -895,12 +897,12 @@ pub fn apply_zone_preset(
     let supports = &mut settings.supports;
     let auto = &mut supports.auto_support;
     auto.overhang_self_support_angle_deg =
-        support_model::auto_support::presets::zone_self_support_angle_deg(&rules);
+        bread_support_model::auto_support::presets::zone_self_support_angle_deg(&rules);
     // The sizes are drawn as written: no model scaling.
     auto.model_scale_enabled = false;
     auto.zone_rules = rules.clone();
     if let Some(i) = rules.default_size_index() {
-        support_model::auto_support::zone_rules::apply_zone_size(supports, &rules, i);
+        bread_support_model::auto_support::zone_rules::apply_zone_size(supports, &rules, i);
     }
     match zones.grid_mm.filter(|_| !one_raft) {
         Some(spacing_mm) => {
@@ -911,12 +913,12 @@ pub fn apply_zone_preset(
             supports.auto_support.max_attachments_per_trunk = f64::MAX;
         }
         None => {
-            let defaults = support_model::settings::types::GridSettings::default();
+            let defaults = bread_support_model::settings::types::GridSettings::default();
             supports.grid.enabled = defaults.enabled;
             supports.grid.spacing_mm = defaults.spacing_mm;
             supports.grid.pillars = defaults.pillars;
             supports.auto_support.max_attachments_per_trunk =
-                support_model::auto_support::settings::AutoSupportSettings::default()
+                bread_support_model::auto_support::settings::AutoSupportSettings::default()
                     .max_attachments_per_trunk;
         }
     }
@@ -927,8 +929,7 @@ pub fn apply_zone_preset(
         &rules.section_heights_mm(),
         rules.volume_cap_mm3(),
     ));
-    settings.scan.steep_angle_deg = rules
-        .stabilization
-        .enabled
-        .then_some(support_model::auto_support::zone_rules::STABILIZATION_MAX_ANGLE_DEG as f32);
+    settings.scan.steep_angle_deg = rules.stabilization.enabled.then_some(
+        bread_support_model::auto_support::zone_rules::STABILIZATION_MAX_ANGLE_DEG as f32,
+    );
 }

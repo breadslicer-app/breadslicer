@@ -1,7 +1,7 @@
 //! Reading a route's grid snap.
 
 use super::trunk_route_types::{SnappedRouteValidity, TrunkRoute, TrunkRouteValidity};
-use support_model::types::Vec3;
+use bread_support_model::types::Vec3;
 
 /// The key of the grid node the route snapped to, if any.
 pub fn get_resolved_snapped_node_key(route: &TrunkRoute) -> Option<&str> {

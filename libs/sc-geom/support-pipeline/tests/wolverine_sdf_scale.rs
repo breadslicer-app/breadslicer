@@ -2,14 +2,14 @@
 //! SDF over Wolverine (1.9M triangles). Ignored by default, and skipped
 //! unless `WOLVERINE_STL` names the posed STL.
 //!
-//!     cargo test -p support-pipeline --release --test main wolverine_sdf_scale -- --ignored --nocapture
+//!     cargo test -p bread-support-pipeline --release --test main wolverine_sdf_scale -- --ignored --nocapture
 
 use std::sync::Arc;
 use std::time::Instant;
 
-use support_placement::placement_logic::pathfinding::sdf_cache::SdfCache;
-use support_geom::geom::Matrix4;
-use support_geom::bvh::MeshBvh;
+use bread_support_placement::placement_logic::pathfinding::sdf_cache::SdfCache;
+use bread_support_geom::geom::Matrix4;
+use bread_support_geom::bvh::MeshBvh;
 
 fn read_binary_stl(path: &std::path::Path) -> Option<Vec<[f32; 3]>> {
     let data = std::fs::read(path).ok()?;

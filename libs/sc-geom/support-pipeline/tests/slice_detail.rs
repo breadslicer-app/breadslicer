@@ -12,13 +12,13 @@ use std::collections::HashSet;
 
 use serde_json::Value;
 
-use support_mesh::features::slicing::smooth_shafts::{ShaftStyle, SmoothShaftParams};
-use support_mesh::features::slicing::support_world_triangles::{
+use bread_support_mesh::features::slicing::smooth_shafts::{ShaftStyle, SmoothShaftParams};
+use bread_support_mesh::features::slicing::support_world_triangles::{
     SUPPORT_SLICE_TESSELLATION, SupportSliceInput, build_support_and_raft_world_triangles,
     resolve_support_slice_tessellation,
 };
-use support_mesh::rafts::crenelated::raft_types::DEFAULT_RAFT_SETTINGS;
-use support_model::types::SupportCollections;
+use bread_support_mesh::rafts::crenelated::raft_types::DEFAULT_RAFT_SETTINGS;
+use bread_support_model::types::SupportCollections;
 
 fn load(name: &str) -> Value {
     let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));

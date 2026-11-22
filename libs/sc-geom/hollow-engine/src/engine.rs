@@ -4,7 +4,7 @@
 //! (a model-local grid): moving or rotating the model does not
 //! invalidate it, only a new mesh, a new voxel size or a scale does (the
 //! caller expresses the mesh in a frame whose millimetres are physical; see
-//! `support-session`'s hollow adapter). A session then answers two
+//! `bread-support-session`'s hollow adapter). A session then answers two
 //! questions:
 //!
 //! - [`Session::preview`]: the inward cavity wall (and infill) the hollow

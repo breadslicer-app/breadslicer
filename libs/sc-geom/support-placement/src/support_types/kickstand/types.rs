@@ -2,11 +2,11 @@
 
 use serde::{Deserialize, Serialize};
 
-use support_model::support_kinds::SupportTypeId;
+use bread_support_model::support_kinds::SupportTypeId;
 /// The kickstand entity lives with the other support types; it is named here
 /// too so everything about kickstands can be imported from one place.
-pub use support_model::types::Kickstand;
-use support_model::types::{Knot, LimitationCode, Roots, Vec3};
+pub use bread_support_model::types::Kickstand;
+use bread_support_model::types::{Knot, LimitationCode, Roots, Vec3};
 
 /// The point on another support that a kickstand props up.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

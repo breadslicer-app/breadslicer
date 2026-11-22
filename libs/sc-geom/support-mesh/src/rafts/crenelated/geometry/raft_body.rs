@@ -6,10 +6,10 @@
 //! thickness and its bottom on the plate.
 
 use super::super::raft_types::{RaftSettings, SupportBaseCircle};
-use support_geom::geom::buffer_geometry::BufferGeometry;
-use support_geom::geom::extrude_geometry::{ExtrudeOptions, extrude_geometry};
-use support_geom::geom::shape::{Path, Shape};
-use support_geom::geom::{Vec3, Vector2};
+use bread_support_geom::geom::buffer_geometry::BufferGeometry;
+use bread_support_geom::geom::extrude_geometry::{ExtrudeOptions, extrude_geometry};
+use bread_support_geom::geom::shape::{Path, Shape};
+use bread_support_geom::geom::{Vec3, Vector2};
 
 /// Twice-free shoelace area: positive for a counter-clockwise ring.
 pub fn signed_area_2d(ring: &[Vector2]) -> f64 {

@@ -5,8 +5,8 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use super::helpers::OrphanInfo;
-use support_model::support_kinds::SupportTypeId;
-use support_model::types::Vec3;
+use bread_support_model::support_kinds::SupportTypeId;
+use bread_support_model::types::Vec3;
 
 /// What a run reports about its forest.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]

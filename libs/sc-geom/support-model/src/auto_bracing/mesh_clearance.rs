@@ -9,10 +9,10 @@
 use std::collections::HashMap;
 
 use crate::types::Vec3;
-use support_geom::bvh::{BvhMesh, MeshBvh, Side};
-use support_geom::geom::Matrix4;
-use support_geom::geom::Ray;
-use support_geom::geom::math_utils::{js_max, js_min};
+use bread_support_geom::bvh::{BvhMesh, MeshBvh, Side};
+use bread_support_geom::geom::Matrix4;
+use bread_support_geom::geom::Ray;
+use bread_support_geom::geom::math_utils::{js_max, js_min};
 
 /// A model as bracing tests against it: its BVH and its world transform.
 /// Rays hit both faces of a triangle, whatever the model's material.

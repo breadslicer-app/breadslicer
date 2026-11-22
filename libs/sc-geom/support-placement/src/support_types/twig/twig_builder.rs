@@ -6,13 +6,13 @@ use serde::Serialize;
 use super::twig_joint_standoff::twig_disk_joint_standoff;
 use super::twig_taper::twig_joint_diameter_for_local_diameter;
 use crate::placement_logic::collision_utils::check_short_bridge_collision;
-use support_model::cone_axis_policy::{
+use bread_support_model::cone_axis_policy::{
     MAX_CONE_AXIS_DEVIATION_FROM_SURFACE_NORMAL_DEG, clamp_cone_axis_deviation_from_surface_normal,
 };
-use support_model::model_mesh::ModelMesh;
-use support_model::settings::types::SupportSettings;
-use support_model::tips::{ContactDiskProfile, DiskTag};
-use support_model::types::{
+use bread_support_model::model_mesh::ModelMesh;
+use bread_support_model::settings::types::SupportSettings;
+use bread_support_model::tips::{ContactDiskProfile, DiskTag};
+use bread_support_model::types::{
     ContactDisk, Joint, LimitationCode, Segment, SupportEntity, Twig, Vec3,
 };
 

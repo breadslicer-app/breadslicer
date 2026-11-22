@@ -4,16 +4,16 @@
 
 use std::cmp::Ordering;
 
-use support_geom::geom::math_utils::{clamp, js_atan2, js_max, js_min};
-use support_geom::utils::collation::js_locale_compare;
-use support_model::auto_bracing::two_axis_detection::normalize_axis_angle_rad;
-use support_model::shafts::{
+use bread_support_geom::geom::math_utils::{clamp, js_atan2, js_max, js_min};
+use bread_support_geom::utils::collation::js_locale_compare;
+use bread_support_model::auto_bracing::two_axis_detection::normalize_axis_angle_rad;
+use bread_support_model::shafts::{
     EndpointHosts, ShaftEntity, calculate_knot_position_on_segment_from_t,
     resolve_segment_endpoints,
 };
-use support_model::support_kinds::{SupportTypeId, store_type_of};
-use support_model::types::{Segment, SupportCollections, Vec3};
-use support_placement::auto_support::types::js_compare;
+use bread_support_model::support_kinds::{SupportTypeId, store_type_of};
+use bread_support_model::types::{Segment, SupportCollections, Vec3};
+use bread_support_placement::auto_support::types::js_compare;
 
 pub(super) const EPS: f64 = 0.000001;
 

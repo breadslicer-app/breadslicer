@@ -2,8 +2,8 @@
 //! limits of their own (a thick column and a thin strut tolerate different
 //! cants); this is the measurement those limits read.
 
-use support_geom::geom::math_utils::{js_cos, js_hypot};
-use support_model::types::Segment;
+use bread_support_geom::geom::math_utils::{js_cos, js_hypot};
+use bread_support_model::types::Segment;
 
 /// The unsigned cosine between the first segment and the Z axis: 1 for a
 /// plumb shaft, 0 for a level one. A shaft with no first segment, a missing

@@ -7,9 +7,9 @@ use std::collections::{HashMap, HashSet};
 use super::types::js_compare;
 use crate::volume_analysis::islands::types::DetectedIsland;
 use crate::volume_analysis::islands::voxel_footprint::{FootprintPoint, cell_key_bits};
-use support_geom::bvh::{BvhMesh, Side};
-use support_geom::geom::math_utils::{js_atan2, js_max, js_round};
-use support_geom::geom::{Matrix3, Ray, Vec3};
+use bread_support_geom::bvh::{BvhMesh, Side};
+use bread_support_geom::geom::math_utils::{js_atan2, js_max, js_round};
+use bread_support_geom::geom::{Matrix3, Ray, Vec3};
 
 /// A footprint cell within this of a point stands for it, mm.
 const CELL_REACH_MM: f64 = 0.25;

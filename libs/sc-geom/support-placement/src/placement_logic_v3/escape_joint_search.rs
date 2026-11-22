@@ -18,11 +18,11 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use serde::{Deserialize, Serialize};
 
-use support_geom::geom::math_utils::{
+use bread_support_geom::geom::math_utils::{
     js_atan2, js_cos, js_hypot, js_min, js_round, js_sin, js_tan,
 };
-use support_model::collision_avoidance::CollisionField;
-use support_model::types::Vec3;
+use bread_support_model::collision_avoidance::CollisionField;
+use bread_support_model::types::Vec3;
 
 /// A horizontal direction or offset.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

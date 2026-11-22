@@ -1,7 +1,7 @@
 //! The joint a straight trunk gets partway up its shaft.
 
-use support_geom::geom::math_utils::{js_max, js_min};
-use support_model::types::Vec3;
+use bread_support_geom::geom::math_utils::{js_max, js_min};
+use bread_support_model::types::Vec3;
 
 /// The shortest segment left below the joint, in mm.
 const MIN_LOWER_SEGMENT_MM: f64 = 1.0;

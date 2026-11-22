@@ -4,17 +4,17 @@
 //!
 //! ```text
 //! SC_QUALITY_STLS="a.stl;b.stl" [SC_QUALITY_HEIGHT=90] [SC_QUALITY_WALL=2.0] \
-//!   cargo test --release -p hollow-engine --test main hollow_quality -- --ignored --nocapture
+//!   cargo test --release -p bread-hollow-engine --test main hollow_quality -- --ignored --nocapture
 //! ```
 //!
 //! One line per model, tab separated, for a spreadsheet.
 
 use std::time::Instant;
 
-use hollow_engine::bvh::Bvh;
-use hollow_engine::mesh::{IndexedMesh, Vec3};
-use hollow_engine::shapes::read_binary_stl;
-use hollow_engine::{Control, GridRequest, HollowSettings, Session};
+use bread_hollow_engine::bvh::Bvh;
+use bread_hollow_engine::mesh::{IndexedMesh, Vec3};
+use bread_hollow_engine::shapes::read_binary_stl;
+use bread_hollow_engine::{Control, GridRequest, HollowSettings, Session};
 
 fn posed(mut mesh: IndexedMesh, height: f32) -> IndexedMesh {
     let bbox = mesh.bbox();

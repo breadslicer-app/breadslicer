@@ -110,7 +110,7 @@ pub fn scan_islands_with_bodies(
     k: Option<usize>,
     bodies: Option<IslandBodyScan>,
 ) -> CombinedIslandScanResult {
-    let settings = islands::ScanSettings {
+    let settings = bread_islands::ScanSettings {
         layer_height_mm,
         px_mm,
         support_buffer_mm,
@@ -118,7 +118,7 @@ pub fn scan_islands_with_bodies(
         rings: k.unwrap_or(2),
         bodies,
     };
-    let (found, low) = islands::scan(&mesh.positions, &mesh.triangles, &settings);
+    let (found, low) = bread_islands::scan(&mesh.positions, &mesh.triangles, &settings);
     let v = |p: [f32; 3]| ScanPoint {
         x: p[0],
         y: p[1],

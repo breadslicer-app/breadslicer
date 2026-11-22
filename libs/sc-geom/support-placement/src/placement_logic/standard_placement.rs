@@ -3,14 +3,14 @@
 
 use serde::{Deserialize, Serialize};
 
-use support_model::cone_axis_policy::{
+use bread_support_model::cone_axis_policy::{
     ConeAngleMode, ConeAxisPolicyInput, resolve_cone_axis_policy,
 };
-use support_model::settings::types::SupportSettings;
-use support_model::tips::SupportTipProfile;
-use support_model::tips::get_socket_position;
-use support_model::tips::nib_length;
-use support_model::types::{LimitationCode, Vec3, WarningCode};
+use bread_support_model::settings::types::SupportSettings;
+use bread_support_model::tips::SupportTipProfile;
+use bread_support_model::tips::get_socket_position;
+use bread_support_model::tips::nib_length;
+use bread_support_model::types::{LimitationCode, Vec3, WarningCode};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TrunkPlacementInput {
