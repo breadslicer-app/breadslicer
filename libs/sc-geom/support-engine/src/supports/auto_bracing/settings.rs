@@ -1,14 +1,20 @@
-//! DragonFruit `src/supports/autoBracing/settings.ts`.
+//! What a bracing run is told: the brace size, how pairs of shafts are
+//! braced up their height, how shafts are grouped, and the fixed rules no
+//! setting changes.
 
 use serde::{Deserialize, Serialize};
 
 use crate::supports::numeric_constraint::{NumericConstraint, clamp_numeric};
 
+/// How a pair of shafts is braced at one height.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum AutoBracingPattern {
+    /// One diagonal from the first shaft up to the second.
     SingleDiagonal,
+    /// Two diagonals, one each way: an X.
     CrossDiagonal,
+    /// A continuous chain climbing the pair, each link leaning the other way.
     ZigZag,
 }
 
@@ -16,61 +22,69 @@ pub enum AutoBracingPattern {
 #[serde(rename_all = "camelCase", default)]
 pub struct AutoBracingSettings {
     pub brace_diameter_mm: f64,
+    /// The pattern of the lowest tier.
     pub initial_pattern: AutoBracingPattern,
+    /// Height of the lowest tier above the plate.
     pub initial_distance_mm: f64,
+    /// The pattern of every tier above the lowest.
     pub repeating_pattern: AutoBracingPattern,
+    /// Vertical distance between tiers.
     pub pattern_interval_mm: f64,
+    /// Spacing of the seeds that split a model's shafts into groups.
     pub seed_spacing_mm: f64,
+    /// How far a seed may stray from its grid point.
     pub seed_jitter_mm: f64,
     pub max_brace_length_mm: f64,
     pub debug_section_colors_enabled: bool,
     pub debug_voronoi_seeds_enabled: bool,
-    /// Remove existing bracing before generating. Only braces and kickstands
-    /// this tool generated are removed; `generatedBy` distinguishes them.
+    /// Drop the braces and kickstands an earlier run made (`generatedBy`
+    /// tells them apart) before bracing; what the person placed stays.
     pub remove_existing_bracing: bool,
-    /// SoulCrafted (#360): a bracing preset. When set, braces climb every
-    /// pair in a chain from `initial_distance_mm`, its links `gap_mm` apart,
-    /// with patterns for the bottom, middle and top links and rings at the
-    /// reinforcement heights; every brace is drawn at
-    /// `brace_diameter_mm` (not at its hosts' diameter). The tier fields
-    /// above are not read.
+    /// A bracing preset (#360). When set, every pair climbs in one chain
+    /// from `initial_distance_mm`, its links `gap_mm` apart, with one
+    /// pattern for the bottom links, one for the middle and one for the top,
+    /// and a ring at each reinforcement height; braces are drawn at
+    /// `brace_diameter_mm`, not at the width of the shafts they join. The
+    /// tier fields are then unused.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stacked: Option<StackedBracing>,
-    /// SoulCrafted (#475): the models braced together as one structure, by
-    /// their ids: a group of models whose supports share braces. A brace
-    /// between two of them belongs to the first of the group, and keeps off
-    /// every model of it.
+    /// Models whose supports are braced as one structure (#475), by id. A
+    /// brace between two of them belongs to the first model of the group and
+    /// must keep clear of every model in it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub brace_together: Vec<Vec<String>>,
-    /// SoulCrafted (#471): every brace is drawn at a share of the thinner
-    /// shaft it joins
-    /// ([`BRACE_SHARE_OF_TRUNK`](crate::supports::auto_support::zone_rules::BRACE_SHARE_OF_TRUNK)),
-    /// not at `brace_diameter_mm`.
+    /// Size every brace from the thinner of the two shafts it joins (#471),
+    /// as [`BRACE_SHARE_OF_TRUNK`](crate::supports::auto_support::zone_rules::BRACE_SHARE_OF_TRUNK)
+    /// of its width, instead of `brace_diameter_mm`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub follow_trunks: bool,
 }
 
 impl AutoBracingSettings {
-    /// The model `model_id` is braced as (#475): the first of its group, or
-    /// itself.
+    /// The id model `model_id` is braced under (#475): the first model of
+    /// its group, or its own.
     pub fn bracing_key<'a>(&'a self, model_id: &'a str) -> &'a str {
         self.brace_together
             .iter()
-            .find(|g| g.iter().any(|m| m == model_id))
-            .and_then(|g| g.first())
+            .find(|group| group.iter().any(|m| m == model_id))
+            .and_then(|group| group.first())
             .map_or(model_id, String::as_str)
     }
 
-    /// The models braced as `key` (#475): its group, or `key` alone.
+    /// Every model braced under `key` (#475): its group, or `key` alone.
     pub fn braced_with<'a>(&'a self, key: &'a str) -> Vec<&'a str> {
-        self.brace_together
+        match self
+            .brace_together
             .iter()
-            .find(|g| g.first().is_some_and(|f| f == key))
-            .map_or_else(|| vec![key], |g| g.iter().map(String::as_str).collect())
+            .find(|group| group.first().is_some_and(|first| first == key))
+        {
+            Some(group) => group.iter().map(String::as_str).collect(),
+            None => vec![key],
+        }
     }
 }
 
-/// How the links of a stacked chain are drawn.
+/// Which diagonal a reinforcement ring adds above itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum GridDiagonal {
@@ -79,22 +93,21 @@ pub enum GridDiagonal {
     Cross,
 }
 
-/// A bracing preset (SoulCrafted, #360); see `AutoBracingSettings::stacked`.
+/// A bracing preset (#360); see [`AutoBracingSettings::stacked`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct StackedBracing {
-    /// Vertical gap between one link's top and the next link's bottom.
+    /// Vertical gap from the top of one link to the bottom of the next.
     pub gap_mm: f64,
     pub bottom_pattern: AutoBracingPattern,
-    /// How many links from the bottom take the bottom pattern.
+    /// How many links, counted from the bottom, use `bottom_pattern`.
     pub bottom_repeat: u32,
     pub middle_pattern: AutoBracingPattern,
     pub top_pattern: AutoBracingPattern,
-    /// How many links from the top take the top pattern.
+    /// How many links, counted from the top, use `top_pattern`.
     pub top_repeat: u32,
-    /// Heights (mm above the plate) of reinforcement rings between every
-    /// pair, each drawn as a cross at that height (a level brace would start
-    /// in mid-air).
+    /// Heights above the plate where every pair gets a ring: a cross at that
+    /// height (a level brace would begin in mid-air).
     pub reinforcement_heights_mm: Vec<f64>,
     /// The diagonal each ring adds in the link above it.
     pub reinforcement_diagonal: GridDiagonal,
@@ -116,15 +129,16 @@ impl Default for StackedBracing {
 }
 
 impl StackedBracing {
-    /// The pattern link `index` of a chain of `links` takes.
+    /// The pattern of link `index` (from 0 at the bottom) in a chain of
+    /// `links`. The bottom links win over the top ones in a short chain.
     pub fn pattern_of(&self, index: u32, links: u32) -> AutoBracingPattern {
         if index < self.bottom_repeat {
-            self.bottom_pattern
-        } else if index + self.top_repeat >= links {
-            self.top_pattern
-        } else {
-            self.middle_pattern
+            return self.bottom_pattern;
         }
+        if index + self.top_repeat >= links {
+            return self.top_pattern;
+        }
+        self.middle_pattern
     }
 }
 
@@ -134,6 +148,7 @@ impl Default for AutoBracingSettings {
     }
 }
 
+/// The range, step and default of each numeric setting.
 pub mod auto_bracing_constraints {
     use crate::supports::numeric_constraint::NumericConstraint;
 
@@ -145,30 +160,22 @@ pub mod auto_bracing_constraints {
     pub const MAX_BRACE_LENGTH_MM: NumericConstraint = NumericConstraint::new(1.0, 50.0, 0.1, 10.0);
 }
 
-/// `AUTO_BRACING_HARD_RULES`.
+/// Rules of every bracing run that no setting changes.
 pub mod auto_bracing_hard_rules {
-    pub const BRACE_ANGLE_DEG: f64 = 45.0;
+    /// Fewer shafts than this on the plate are not braced at all.
     pub const MIN_GROUP_SIZE: usize = 3;
-    /// A second axis must be separated by at least the ladder's own brace
-    /// angle: the 45° X-pattern diagonals qualify as a second axis, so a
-    /// braced trunk reads as 2-axis and does NOT get a kickstand. (Was 50° —
-    /// stricter than the braces the ladder actually places, so dense forests
-    /// of X-braced trunks still spawned kickstands.)
+    /// Two brace axes count as two directions from this angle on. It equals
+    /// the 45° of the braces themselves, so the diagonals of an X already
+    /// hold a shaft both ways and it needs no kickstand.
     pub const MIN_AXIS_SEPARATION_DEG: f64 = 45.0;
-    pub const TARGET_AXIS_SEPARATION_DEG: f64 = 90.0;
-    pub const KICKSTAND_MESH_CLEARANCE_MM: f64 = 0.5;
-    /// A zig-zag link rises by its own horizontal span, so a pair of nearly
-    /// coincident trunks used to stack one 45° stub per fraction of a mm —
-    /// hundreds of near-parallel links filling the gap. Two floors keep that
-    /// from happening without starving close-but-real pairs of bracing:
-    ///  * the chain never climbs less than minZigZagRiseMm per link — a pitch
-    ///    below one brace thickness is unprintable mush; the link simply
-    ///    steepens and still starts where the previous one ended, and
-    ///  * supports closer than minPairSpanMm are one post (raised to the brace
-    ///    diameter, since two surfaces that overlap cannot be bridged).
-    ///
-    /// Both are deliberately small: they only reject degenerate pairs.
+    /// The least a zigzag link climbs. A link climbs by the pair's own
+    /// horizontal span, so two shafts almost touching would stack dozens of
+    /// flat stubs into the gap; below one brace thickness the pitch cannot
+    /// print, so the link steepens instead, still starting where the
+    /// previous one ended.
     pub const MIN_ZIG_ZAG_RISE_MM: f64 = 1.0;
+    /// Shafts closer than this (or than the brace diameter, if larger) are
+    /// one post: there is no gap to bridge.
     pub const MIN_PAIR_SPAN_MM: f64 = 0.7;
 }
 
@@ -192,40 +199,36 @@ pub fn create_default_auto_bracing_settings() -> AutoBracingSettings {
     }
 }
 
-/// `normalizeAutoBracingSettings`. Every field of a Rust value is present, so
-/// the type coercions of the TypeScript reduce to the numeric clamps.
+/// `source` with every number brought into its range; a preset's gap is
+/// kept within 0–50 mm, its repeats within 100, and only its positive
+/// finite ring heights are kept.
 pub fn normalize_auto_bracing_settings(source: &AutoBracingSettings) -> AutoBracingSettings {
     use auto_bracing_constraints as c;
-    let clamp = |value: f64, constraint: NumericConstraint| clamp_numeric(Some(value), constraint);
+    let within = |value: f64, range: NumericConstraint| clamp_numeric(Some(value), range);
+    let stacked = source.stacked.as_ref().map(|preset| StackedBracing {
+        gap_mm: if preset.gap_mm.is_finite() {
+            preset.gap_mm.clamp(0.0, 50.0)
+        } else {
+            0.0
+        },
+        bottom_repeat: preset.bottom_repeat.min(100),
+        top_repeat: preset.top_repeat.min(100),
+        reinforcement_heights_mm: preset
+            .reinforcement_heights_mm
+            .iter()
+            .copied()
+            .filter(|h| h.is_finite() && *h > 0.0)
+            .collect(),
+        ..preset.clone()
+    });
     AutoBracingSettings {
-        brace_diameter_mm: clamp(source.brace_diameter_mm, c::BRACE_DIAMETER_MM),
-        initial_pattern: source.initial_pattern,
-        initial_distance_mm: clamp(source.initial_distance_mm, c::INITIAL_DISTANCE_MM),
-        repeating_pattern: source.repeating_pattern,
-        pattern_interval_mm: clamp(source.pattern_interval_mm, c::PATTERN_INTERVAL_MM),
-        seed_spacing_mm: clamp(source.seed_spacing_mm, c::SEED_SPACING_MM),
-        seed_jitter_mm: clamp(source.seed_jitter_mm, c::SEED_JITTER_MM),
-        max_brace_length_mm: clamp(source.max_brace_length_mm, c::MAX_BRACE_LENGTH_MM),
-        debug_section_colors_enabled: source.debug_section_colors_enabled,
-        debug_voronoi_seeds_enabled: source.debug_voronoi_seeds_enabled,
-        remove_existing_bracing: source.remove_existing_bracing,
-        brace_together: source.brace_together.clone(),
-        follow_trunks: source.follow_trunks,
-        stacked: source.stacked.as_ref().map(|st| StackedBracing {
-            gap_mm: if st.gap_mm.is_finite() {
-                st.gap_mm.clamp(0.0, 50.0)
-            } else {
-                0.0
-            },
-            bottom_repeat: st.bottom_repeat.min(100),
-            top_repeat: st.top_repeat.min(100),
-            reinforcement_heights_mm: st
-                .reinforcement_heights_mm
-                .iter()
-                .copied()
-                .filter(|h| h.is_finite() && *h > 0.0)
-                .collect(),
-            ..st.clone()
-        }),
+        brace_diameter_mm: within(source.brace_diameter_mm, c::BRACE_DIAMETER_MM),
+        initial_distance_mm: within(source.initial_distance_mm, c::INITIAL_DISTANCE_MM),
+        pattern_interval_mm: within(source.pattern_interval_mm, c::PATTERN_INTERVAL_MM),
+        seed_spacing_mm: within(source.seed_spacing_mm, c::SEED_SPACING_MM),
+        seed_jitter_mm: within(source.seed_jitter_mm, c::SEED_JITTER_MM),
+        max_brace_length_mm: within(source.max_brace_length_mm, c::MAX_BRACE_LENGTH_MM),
+        stacked,
+        ..source.clone()
     }
 }
