@@ -8951,7 +8951,7 @@ const SHAFT_PICK_MM: f64 = 1.5;
 /// The support a click of the Select tool at `p` (world mm) picks (#377):
 /// the one whose own shaft passes nearest, trunk, branch or tip; else the
 /// one with a tip, joint or foot nearest, within reach.
-fn support_picked_at(session: &SupportSession, p: [f64; 3]) -> Option<String> {
+pub(crate) fn support_picked_at(session: &SupportSession, p: [f64; 3]) -> Option<String> {
     session
         .shaft_near(p, SHAFT_PICK_MM)
         .or_else(|| session.support_near(p, SELECT_REACH_MM))
@@ -11397,7 +11397,7 @@ mod hand_edit_tests {
             for (owner, (set, id, _)) in owners.iter().zip(&tips) {
                 assert_eq!(owner.as_ref(), Some(&(*set, id.clone())));
             }
-            let shares = crate::stress_view::support_shares(&loads, &owners, sets.len());
+            let shares = crate::stress_view::support_shares(&loads, &owners, sets.len(), None);
             assert_eq!(shares[tips[0].0], vec![(tips[0].1.clone(), 2.0)]);
             let others: usize = shares.iter().map(Vec::len).sum();
             assert_eq!(others, 1, "the tips no peel reaches stay plain");
@@ -11405,6 +11405,22 @@ mod hand_edit_tests {
             assert_eq!(overlay.len(), 1, "one support pulled on, one colour");
             assert_eq!(overlay[0].tint, OverlayTint::Load7, "past all it holds: red");
             assert!(!overlay[0].indices.is_empty());
+
+            // As layer 1 peels, the second tip alone is pulled, on half of
+            // what it holds; the first, the hardest over the print, not.
+            loads.curve_layers = 1;
+            loads.tip_curves = vec![Vec::new(); loads.tips.len()];
+            loads.tip_curves[1] = vec![0.0, 0.5, 0.0];
+            let at = crate::stress_view::support_shares(&loads, &owners, sets.len(), Some(1));
+            assert_eq!(at[tips[1].0], vec![(tips[1].1.clone(), 0.5)]);
+            assert_eq!(at.iter().map(Vec::len).sum::<usize>(), 1);
+            let overlay = crate::stress_view::support_overlay(&sets, &at);
+            assert_eq!(overlay[0].tint, crate::mesh_render::load_tint(0.5));
+
+            // A click on a tip in the Slice tab picks its support.
+            let (set, id, at) = &tips[1];
+            let picked = support_picked_at(&sets[*set].session, *at).expect("its support");
+            assert_eq!(&picked, id);
         });
     }
 

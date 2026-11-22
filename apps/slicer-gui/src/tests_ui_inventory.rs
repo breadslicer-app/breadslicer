@@ -512,6 +512,7 @@ fn the_pictures_of_the_forces_card_are_written_when_asked() {
                 crate::stress_view::chart_pixels(&force, &share),
             ));
             window.set_slice_timeline_has_image(true);
+            window.set_slice_timeline_supports_caption("Supports: pull as layer 31 peels".into());
             window.set_slice_timeline_peak("Hardest peel: layer 31 · 40.0 N".into());
             let mut path = String::from("M 0 100");
             for p in 0..=100 {

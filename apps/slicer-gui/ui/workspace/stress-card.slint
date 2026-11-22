@@ -49,6 +49,7 @@ export component StressCard inherits Rectangle {
     in property <string> support-path;
     in property <float> holds-at: -1;
     in property <string> support-note;
+    in property <string> supports-caption;
     // The 3D view painted by load.
     in-out property <bool> paint: true;
     // Unfolded or folded to its heading.
@@ -148,6 +149,14 @@ export component StressCard inherits Rectangle {
                 }
             }
             if root.has-force-image: LoadLegend { }
+            // What the supports' colours tell: over the print, or as the
+            // layer on show peels.
+            if root.has-force-image && root.paint && root.supports-caption != "": Text {
+                text: root.supports-caption;
+                font-size: Theme.font-xs;
+                color: Theme.text-faint;
+                overflow: elide;
+            }
         }
     }
 }

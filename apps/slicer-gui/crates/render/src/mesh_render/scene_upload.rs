@@ -879,6 +879,12 @@ impl WorldBoxes {
     /// `index`-th leaf occurrence. On a miss it comes from the hull points of
     /// `shared` (the `Arc` holding `mesh`) when they are ready and vouch for
     /// the matrix, and from a walk over every vertex otherwise.
+    /// The box remembered for leaf occurrence `index`, as the last frame
+    /// drew it.
+    pub(super) fn box_at(&self, index: usize) -> Option<&Aabb> {
+        self.slots.get(index)?.as_ref().map(|slot| &slot.aabb)
+    }
+
     fn world_box(
         &mut self,
         index: usize,

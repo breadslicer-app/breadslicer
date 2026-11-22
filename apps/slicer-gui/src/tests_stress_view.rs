@@ -65,7 +65,7 @@ fn the_bands_follow_each_layer_s_height() {
     // third of the bands.
     let tops = [0.05, 0.1, 0.15, 0.2, 0.3];
     let share = [0.0, 0.0, 0.2, 0.0, 0.9];
-    let bands = height_bands(&share, &tops).expect("bands");
+    let bands = height_bands(&share, &tops, None).expect("bands");
     assert_eq!(bands.top_mm, 0.3);
     assert_eq!(bands.bands.len(), STRESS_BANDS);
     let band = |z: f64| bands.bands[((z / 0.3) * STRESS_BANDS as f64) as usize];
@@ -73,5 +73,5 @@ fn the_bands_follow_each_layer_s_height() {
     assert_eq!(band(0.12), 0.2);
     assert_eq!(band(0.25), 0.9);
     assert_eq!(band(0.299), 0.9);
-    assert!(height_bands(&share, &[]).is_none());
+    assert!(height_bands(&share, &[], None).is_none());
 }

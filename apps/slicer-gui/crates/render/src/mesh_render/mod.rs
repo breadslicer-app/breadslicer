@@ -1407,9 +1407,29 @@ impl Renderer {
             ) {
                 Ok(mut entries) if entries.len() == inst.gpu.object_count() => {
                     if stress {
-                        entries
-                            .iter_mut()
-                            .for_each(scene_upload::ModelEntry::paint_stress);
+                        // The models of the plate sliced alone (#245).
+                        let only = self
+                            .stress_bands
+                            .as_ref()
+                            .and_then(|bands| bands.plate)
+                            .filter(|_| self.plates.count() > 1);
+                        for (index, entry) in entries.iter_mut().enumerate() {
+                            if let Some(plate) = only {
+                                let on = self.world_boxes.box_at(index).and_then(|aabb| {
+                                    let (min, max) = (aabb.min().coords(), aabb.max().coords());
+                                    crate::plates::cell_at(
+                                        &build_volume,
+                                        self.plates,
+                                        (min[0] + max[0]) / 2.0,
+                                        (min[1] + max[1]) / 2.0,
+                                    )
+                                });
+                                if on != Some(plate) {
+                                    continue;
+                                }
+                            }
+                            entry.paint_stress();
+                        }
                     }
                     // Each entry lives at `i * model_stride`. The stride is at
                     // least `MODEL_ENTRY_SIZE` and a multiple of the device's

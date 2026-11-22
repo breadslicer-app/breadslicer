@@ -10,11 +10,15 @@
 //! ([`bread_review::TipLoad::utilization`]). The chart draws each layer's
 //! force as a bar in the colour of its most loaded tip; the models are
 //! painted by height in the colour of the layer there; each support in the
-//! colour of the hardest pull on its own tip over the print. A layer the
-//! plate holds, and a support no peel reaches, stay plain.
+//! colour of the pull on its own tip when the layer on show peels, or of
+//! the hardest over the print while the slider stands on the last layer. A
+//! layer the plate holds, and a support no peel reaches, stay plain. With
+//! several plates, the models of the plate sliced alone are painted.
 //!
-//! A support picked with the Select tool draws its tip's load along the
-//! print over the chart, with a line where all its tip holds stands.
+//! A support picked with the Select tool, or clicked in the Slice tab,
+//! draws its tip's load along the print over the chart, with a line where
+//! all its tip holds stands. A click on the scene in the Slice tab goes to
+//! the layer it lands on.
 //!
 //! The loads are estimates, not calibrated with prints yet (#246): the card
 //! says so.
@@ -117,7 +121,7 @@ pub(crate) fn chart_pixels(force_n: &[f64], share: &[f64]) -> SharedPixelBuffer<
 
 /// The models' bands of height: the share of the most loaded tip on each
 /// layer, laid on [`STRESS_BANDS`] even bands from the plate to `tops`' last.
-pub(crate) fn height_bands(share: &[f64], tops: &[f64]) -> Option<StressBands> {
+pub(crate) fn height_bands(share: &[f64], tops: &[f64], plate: Option<u32>) -> Option<StressBands> {
     let top = *tops.last()?;
     if !(top > 0.0) {
         return None;
@@ -140,6 +144,7 @@ pub(crate) fn height_bands(share: &[f64], tops: &[f64]) -> Option<StressBands> {
         bottom_mm: 0.0,
         top_mm: top as f32,
         bands,
+        plate,
     })
 }
 
@@ -169,19 +174,27 @@ pub(crate) fn tip_owners(
         .collect()
 }
 
-/// The supports of each set to paint, each with the share of the hardest
-/// pull on its tips: only those a peel reaches.
+/// The supports of each set to paint, each with the share of what its tips
+/// hold that the hardest pull on them uses: over the print, or when layer
+/// `at` peels. Only those a peel reaches.
 pub(crate) fn support_shares(
     loads: &PlateLoads,
     owners: &[Option<(usize, String)>],
     sets: usize,
+    at: Option<usize>,
 ) -> Vec<Vec<(String, f64)>> {
     let mut by_set: Vec<HashMap<String, f64>> = vec![HashMap::new(); sets];
-    for (tip, owner) in loads.tips.iter().zip(owners) {
+    for (k, (tip, owner)) in loads.tips.iter().zip(owners).enumerate() {
         let Some((set, id)) = owner else {
             continue;
         };
-        let share = tip.utilization();
+        let share = match at {
+            None => tip.utilization(),
+            Some(layer) if tip.capacity_n.mid > 0.0 => {
+                loads.tip_load_at(k, layer) / tip.capacity_n.mid
+            }
+            Some(_) => 0.0,
+        };
         if share <= 0.0 {
             continue;
         }
@@ -256,6 +269,14 @@ pub(crate) struct StressView {
     /// The supports' paint last drawn, with the review it was drawn for.
     supports: RefCell<Option<(u64, Overlay)>>,
     poll: slint::Timer,
+    /// Follows the layer on show, for the supports' paint.
+    layer_poll: slint::Timer,
+    /// The review and the layer the supports' paint was last asked for:
+    /// `None` for the hardest pull over the print.
+    layer_asked: Cell<Option<(u64, Option<usize>)>>,
+    /// The review and the layer seen at the last look: the paint is drawn
+    /// again once the slider rests.
+    layer_seen: Cell<Option<(u64, Option<usize>)>>,
 }
 
 impl std::fmt::Debug for StressView {
@@ -276,6 +297,9 @@ impl StressView {
             drawing: RefCell::new(None),
             supports: RefCell::new(None),
             poll: slint::Timer::default(),
+            layer_poll: slint::Timer::default(),
+            layer_asked: Cell::new(None),
+            layer_seen: Cell::new(None),
         });
         let weak = Rc::downgrade(&view);
         ui.on_stress_paint_toggled(move |_| {
@@ -283,6 +307,22 @@ impl StressView {
                 view.push_paint();
             }
         });
+        let weak = Rc::downgrade(&view);
+        view.ctrl.on_slice_click(move |x, y| {
+            if let Some(view) = weak.upgrade() {
+                view.slice_clicked(x, y);
+            }
+        });
+        let weak = Rc::downgrade(&view);
+        view.layer_poll.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(120),
+            move || {
+                if let Some(view) = weak.upgrade() {
+                    view.layer_tick();
+                }
+            },
+        );
         view
     }
 
@@ -303,6 +343,7 @@ impl StressView {
             *self.held.borrow_mut() = None;
             *self.paint.borrow_mut() = StressPaint::default();
             ui.set_slice_timeline_has_image(false);
+            ui.set_slice_timeline_supports_caption(Default::default());
             self.show_picked(&ui);
             self.push_paint();
             return;
@@ -318,21 +359,60 @@ impl StressView {
             .with_scene(|spatial| sets_in_force(spatial, &document.support_sessions()))
             .unwrap_or_default();
         let owners = tip_owners(&loads, &frame, &sets);
-        let shares = support_shares(&loads, &owners, sets.len());
+        let plate = document
+            .slice_params()
+            .map(|params| params.plate)
+            .filter(|_| document.plates().count() > 1);
         *self.paint.borrow_mut() = StressPaint {
-            bands: height_bands(share, &tops).map(Arc::new),
+            bands: height_bands(share, &tops, plate).map(Arc::new),
             supports: None,
         };
-        // The supports' drawing takes a while on a large plate: off the UI
-        // thread, kept only if no newer review came meanwhile.
+        *self.held.borrow_mut() = Some(Held {
+            loads,
+            owners,
+            sets,
+        });
+        self.layer_seen.set(None);
+        let at = self.paint_layer(&ui);
+        self.draw_supports(at);
+        self.show_picked(&ui);
+        self.push_paint();
+    }
+
+    /// The layer the supports are painted at: the one on show, or `None`
+    /// (the hardest pull over the print) on the last layer.
+    fn paint_layer(&self, ui: &MainWindow) -> Option<usize> {
+        let held = self.held.borrow();
+        let count = held.as_ref()?.loads.layer_utilization.len();
+        let layer = ui.get_selected_layer_index().round().max(0.0) as usize;
+        (layer + 1 < count).then_some(layer)
+    }
+
+    /// Draws the supports' paint for layer `at` (`None`: over the print).
+    /// It takes a while on a large plate: off the UI thread, kept only if
+    /// no newer drawing was asked meanwhile.
+    fn draw_supports(self: &Rc<Self>, at: Option<usize>) {
         let generation = self.generation.get();
+        self.layer_asked.set(Some((generation, at)));
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_slice_timeline_supports_caption(supports_caption(at).into());
+        }
+        let (shares, sets) = {
+            let held = self.held.borrow();
+            let Some(held) = held.as_ref() else {
+                return;
+            };
+            (
+                support_shares(&held.loads, &held.owners, held.sets.len(), at),
+                held.sets.clone(),
+            )
+        };
         let slot = Arc::new(Mutex::new(None));
         *self.drawing.borrow_mut() = Some(slot.clone());
-        let for_thread = sets.clone();
         let spawned = std::thread::Builder::new()
             .name("stress-paint".to_owned())
             .spawn(move || {
-                let overlay = support_overlay(&for_thread, &shares);
+                let overlay = support_overlay(&sets, &shares);
                 if let Ok(mut slot) = slot.lock() {
                     *slot = Some((generation, overlay));
                 }
@@ -340,13 +420,70 @@ impl StressView {
         if spawned.is_ok() {
             self.watch_drawing();
         }
-        *self.held.borrow_mut() = Some(Held {
-            loads,
-            owners,
-            sets,
-        });
-        self.show_picked(&ui);
-        self.push_paint();
+    }
+
+    /// Follows the layer on show: once the slider rests on another layer,
+    /// the supports are painted for it.
+    fn layer_tick(self: &Rc<Self>) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        if self.held.borrow().is_none() || !ui.get_stress_paint() {
+            return;
+        }
+        let key = (self.generation.get(), self.paint_layer(&ui));
+        if self.layer_asked.get() == Some(key) {
+            self.layer_seen.set(None);
+            return;
+        }
+        if self.layer_seen.get() != Some(key) {
+            self.layer_seen.set(Some(key));
+            return;
+        }
+        self.layer_seen.set(None);
+        self.draw_supports(key.1);
+    }
+
+    /// A click on the scene in the Slice tab (#245): the layer it lands on
+    /// is shown, and a support clicked is picked, its load drawn over the
+    /// chart. A click on nothing lets the picked support go.
+    fn slice_clicked(&self, x: f32, y: f32) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        if self.held.borrow().is_none() {
+            return;
+        }
+        let document = self.ctrl.document();
+        let shown = ui.get_selected_layer_index().round().max(0.0) as u32;
+        let Some(cut) = document.slice_layer_top_z(shown) else {
+            return;
+        };
+        let Some(hit) = self.ctrl.scene_point_below(x, y, cut as f32) else {
+            self.set_picked(Vec::new());
+            return;
+        };
+        let z = f64::from(hit.point[2]);
+        let count = ui.get_slice_layer_count().max(0) as u32;
+        if let Some(layer) = (0..count).find(|&k| {
+            document
+                .slice_layer_top_z(k)
+                .is_some_and(|top| top >= z - 1e-4)
+        }) && layer != shown
+        {
+            ui.set_selected_layer_index(layer as f32);
+            ui.invoke_selected_layer_changed();
+        }
+        let at = hit.point.map(f64::from);
+        let picked = {
+            let held = self.held.borrow();
+            held.as_ref().and_then(|held| {
+                let drawn = held.sets.iter().find(|drawn| drawn.leaf == hit.leaf)?;
+                let id = crate::support_run::support_picked_at(&drawn.session, at)?;
+                drawn.session.tip_point(&id).map(|tip| (drawn.leaf, tip))
+            })
+        };
+        self.set_picked(picked.into_iter().collect());
     }
 
     /// Waits for the supports' drawing, then paints it.
@@ -507,6 +644,16 @@ impl StressView {
             .to_string()
         } else {
             ctr!("StressCard", "No tip pulled: the plate holds this layer").to_string()
+        }
+    }
+}
+
+/// What the supports' colours tell, under the chart.
+fn supports_caption(at: Option<usize>) -> String {
+    match at {
+        None => ctr!("StressCard", "Supports: hardest pull over the print").to_string(),
+        Some(layer) => {
+            ctr!("StressCard", "Supports: pull as layer {} peels", layer + 1).to_string()
         }
     }
 }

@@ -35,6 +35,9 @@ pub struct StressBands {
     pub bottom_mm: f32,
     pub top_mm: f32,
     pub bands: Vec<f32>,
+    /// The plate whose models are painted, of several; `None` paints every
+    /// model.
+    pub plate: Option<u32>,
 }
 
 impl StressBands {
@@ -109,6 +112,7 @@ mod tests {
             bottom_mm: 0.0,
             top_mm: 10.0,
             bands: vec![0.0, 0.5, 1.2, 0.1],
+            plate: None,
         };
         let packed = bands.packed();
         let flat: Vec<f32> = packed.iter().flatten().copied().collect();
@@ -127,6 +131,7 @@ mod tests {
             bottom_mm: 0.0,
             top_mm: 150.0,
             bands: values,
+            plate: None,
         };
         let flat: Vec<f32> = bands.packed().iter().flatten().copied().collect();
         assert_eq!(flat.iter().filter(|&&v| v == 0.9).count(), 1);

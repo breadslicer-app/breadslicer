@@ -619,6 +619,9 @@ export component MainWindow inherits Window {
     in property <string> slice-timeline-support-path;
     in property <float> slice-timeline-holds-at: -1;
     in property <string> slice-timeline-support-note;
+    // What the supports' colours tell: over the print, or as the layer on
+    // show peels (#245).
+    in property <string> slice-timeline-supports-caption;
     in-out property <bool> stress-paint: true;
     in-out property <bool> stress-open: true;
     callback stress-paint-toggled(bool);
@@ -2502,6 +2505,7 @@ export component MainWindow inherits Window {
                         support-path: root.slice-timeline-support-path;
                         holds-at: root.slice-timeline-holds-at;
                         support-note: root.slice-timeline-support-note;
+                        supports-caption: root.slice-timeline-supports-caption;
                         readout(layer, generation) => {
                             return root.slice-timeline-readout(layer, generation);
                         }

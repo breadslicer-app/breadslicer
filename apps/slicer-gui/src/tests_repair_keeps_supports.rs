@@ -614,6 +614,110 @@ fn generate_analyzes_the_islands_on_its_own() {
     });
 }
 
+/// The Supports tab measures its forces on its own once the scene stands
+/// still (#245): a quiet slice, with no card, once per scene; none outside
+/// the tab or while the held slice is the scene's. Any other slice asked
+/// meanwhile is not lost: the quiet one gives way to it.
+#[test]
+fn the_supports_tab_measures_its_forces_on_its_own() {
+    on_fresh_slint_thread(|| {
+        let w = window_with(one(slab(None)));
+        let settled = |w: &Window| {
+            let revision = w.document.scene_revision();
+            let plate = w.document.slice_plate();
+            w.slice.forces_still.set(Some((
+                revision,
+                plate,
+                Instant::now() - FORCES_SETTLE - Duration::from_millis(10),
+            )));
+            w.slice.forces_tick();
+        };
+
+        // No supports yet: nothing to measure.
+        w.ctrl.set_section(WorkspaceSection::Supports);
+        settled(&w);
+        assert!(!w.window.get_slicing_in_progress(), "no supports, no slice");
+
+        w.generate();
+        // Out of the Supports tab, nothing.
+        w.ctrl.set_section(WorkspaceSection::Slice);
+        settled(&w);
+        assert!(
+            !w.window.get_slicing_in_progress(),
+            "the Slice tab slices when asked"
+        );
+
+        // In it, once still: a quiet slice, no card.
+        w.ctrl.set_section(WorkspaceSection::Supports);
+        w.slice.forces_tick();
+        assert!(
+            !w.window.get_slicing_in_progress(),
+            "the scene has not stood still yet"
+        );
+        settled(&w);
+        assert!(
+            w.window.get_slicing_in_progress(),
+            "the forces are measured"
+        );
+        assert!(w.window.get_slice_quiet(), "with no modal");
+        w.finish_slice();
+        assert!(w.close_cards().is_empty(), "no card to answer");
+        assert!(
+            !w.document.held_slice_changed(),
+            "the slice held is the scene's"
+        );
+
+        // Nothing changed: not again.
+        settled(&w);
+        assert!(
+            !w.window.get_slicing_in_progress(),
+            "measured once per scene"
+        );
+
+        // A change measures again; a slice asked meanwhile is not lost.
+        let leaf = w
+            .document
+            .with_scene(|spatial| crate::raft_clash::model_bottoms(spatial)[0].0)
+            .expect("the slab");
+        let before = w
+            .document
+            .with_scene(|spatial| spatial.graph().world_transform_of(leaf).ok())
+            .flatten()
+            .expect("its pose");
+        let edit = sc_scene_edit::SceneEdit::SetLocalTransform {
+            node_id: leaf,
+            before,
+            after: at(12.0),
+        };
+        w.document
+            .apply_edit(edit.clone())
+            .expect("the move applies");
+        w.document.push_edit(edit);
+        w.close_cards();
+        settled(&w);
+        assert!(
+            w.window.get_slicing_in_progress(),
+            "measured again after a change"
+        );
+        assert!(
+            w.slice.start_with(SliceTrigger::Islands),
+            "the analysis takes its turn"
+        );
+        assert!(w.slice.after_forces.get().is_some(), "and waits for it");
+        w.finish_slice();
+        assert!(w.slice.after_forces.take().is_none(), "its turn came");
+        if w.window.get_slicing_in_progress() {
+            assert_eq!(w.slice.trigger.get(), SliceTrigger::Islands);
+            w.finish_slice();
+        }
+        assert!(w.close_cards().is_empty(), "still no card");
+        assert!(
+            !w.document.held_slice_changed(),
+            "the slice held is the scene's"
+        );
+    });
+}
+
 /// Generate on a real mini lifted 5 mm, the islands step included (#606),
 /// and what the review says at the end. `BREADSLICER_CHAIN_MODEL` names the
 /// mesh; the preset is Miniatures.

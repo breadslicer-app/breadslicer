@@ -10967,3 +10967,11 @@ msgstr "Punta más exigida: {} de lo que aguanta"
 msgctxt "StressCard"
 msgid "No tip pulled: the plate holds this layer"
 msgstr "Ninguna punta tira: la cama sostiene esta capa"
+
+msgctxt "StressCard"
+msgid "Supports: hardest pull over the print"
+msgstr "Soportes: el tirón más fuerte de toda la impresión"
+
+msgctxt "StressCard"
+msgid "Supports: pull as layer {} peels"
+msgstr "Soportes: el tirón al despegar la capa {}"
