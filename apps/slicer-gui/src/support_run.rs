@@ -5692,13 +5692,14 @@ impl SupportRun {
 
     /// The tool a click of the Supports tab's tool code `tool` is, and how
     /// an Add makes its support: hung from the nearest one with `shift`, at
-    /// the tip size picked.
+    /// the tip size picked, with the selected preset's numbers for it (as
+    /// Line and Area place theirs).
     fn click_tool(&self, ui: &MainWindow, tool: i32, shift: bool) -> (HandTool, AddOptions) {
         if tool == 1 {
             let how = AddOptions {
                 attach: shift,
                 size: hand_tip_size(ui.get_support_tip_size()),
-                shape: self.hand_shape(ui).map(sc_geom::supports::HandShape),
+                shape: None,
             };
             (HandTool::Add, how)
         } else {
@@ -6072,8 +6073,9 @@ impl SupportRun {
             .then(|| self.sets_in_force().into_iter().next())
             .flatten();
         let session = session.or(first.as_ref().map(|d| d.session.as_ref()));
-        let label = match self.hand_shape(ui) {
-            Some(shape) => ctr!("Inspector", "{} mm tip", mm_text(shape.tip_diameter_mm)),
+        let picked = hand_tip_size(ui.get_support_tip_size());
+        let label = match picked.as_deref().and_then(|id| tip_mm(session, id)) {
+            Some(mm) => ctr!("Inspector", "{} mm tip", mm_text(mm)),
             None => match session
                 .and_then(|s| s.preset_hand_size().map(|id| (s, id)))
                 .and_then(|(s, id)| tip_mm(Some(s), id))
@@ -12725,8 +12727,8 @@ mod hand_edit_tests {
             assert!(tips(&large).contains(&0.40), "{:?}", tips(&large));
             assert!(window.get_support_tip_label().contains("0.4"));
 
-            // The person's own large size (#564): the next one placed has
-            // its numbers, whatever the preset of the run says.
+            // The size placed is the selected preset's, whatever the hand
+            // sizes say: a hand size changed to 0.55 places a 0.4 tip.
             let mut hand = run.hand.borrow().clone();
             let large_size = hand
                 .rules
@@ -12738,8 +12740,14 @@ mod hand_edit_tests {
             run.set_hand(hand);
             run.on_tool_click([19.6, 20.5, 7.5]);
             let own = in_force_session(&run).unwrap();
-            assert!(tips(&own).contains(&0.55), "{:?}", tips(&own));
-            assert!(window.get_support_tip_label().contains("0.55"));
+            assert!(!tips(&own).contains(&0.55), "{:?}", tips(&own));
+            assert_eq!(
+                tips(&own).iter().filter(|&&t| t == 0.40).count(),
+                tips(&large).iter().filter(|&&t| t == 0.40).count() + 1,
+                "{:?}",
+                tips(&own)
+            );
+            assert!(window.get_support_tip_label().contains("0.4"));
             assert!(document.undo().expect("undo"));
             run.set_hand(crate::support_shape_edit::hand_factory());
 
