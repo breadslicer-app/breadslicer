@@ -207,11 +207,11 @@ fn prefetch_walks(
         let (run, i) = (job / n, job % n);
         let first = run * STEPS_PER_JOB;
         let last = (first + STEPS_PER_JOB).min(along.len());
-        for k in first..last {
+        for (k, &step) in along.iter().enumerate().take(last).skip(first) {
             if k > ended[i].load(Ordering::Relaxed) {
                 return;
             }
-            let out = along[k] * sin;
+            let out = step * sin;
             let mut spent = 2 * k;
             for j in 0..i {
                 if out >= f64::from_bits(joint_at[j].load(Ordering::Relaxed)) {
