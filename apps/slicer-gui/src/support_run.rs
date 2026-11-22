@@ -1707,6 +1707,23 @@ fn line_dots(row: &[[f32; 3]]) -> Option<crate::mesh_render::Overlay> {
     Some(Arc::from(vec![Arc::new(piece)]))
 }
 
+/// The red dot where a support cannot be placed, for a spot that draws no
+/// support at all.
+fn refused_dot(at: [f32; 3]) -> OverlayMesh {
+    use crate::mesh_render::{OverlayMesh, OverlayTint};
+    let mut piece = OverlayMesh {
+        positions: Vec::new(),
+        indices: Vec::new(),
+        tint: OverlayTint::Invalid,
+    };
+    crate::measure::push_ball(&mut piece, at, REFUSED_DOT_MM);
+    piece
+}
+
+/// The radius of [`refused_dot`], mm: a little larger than the Line tool's
+/// dots.
+const REFUSED_DOT_MM: f32 = 0.45;
+
 /// What a bracing preset is called on the panel (#363).
 fn bracing_preset_name(id: &str) -> slint::SharedString {
     match id {
@@ -6122,13 +6139,20 @@ impl SupportRun {
                 _ if preview.valid => OverlayTint::Valid,
                 _ => OverlayTint::Invalid,
             };
-            // A surface no tip may touch draws no support (#491).
+            // A surface no tip may touch draws no support (#491): a red dot
+            // where the cursor is says so, so a spot that cannot take one is
+            // never just nothing.
             if !preview.mesh.faces().is_empty() {
                 pieces.push(Arc::new(overlay_of(&preview.mesh, tint)));
+            } else if !preview.valid && matches!(answer.tool, 1 | 3 | 10) {
+                pieces.push(Arc::new(refused_dot(answer.point)));
             }
             if let Some(taken) = &preview.taken {
                 pieces.push(Arc::new(overlay_of(taken, OverlayTint::Invalid)));
             }
+        } else if answer.tool == 1 {
+            // An addition the engine turned down altogether: the same dot.
+            pieces.push(Arc::new(refused_dot(answer.point)));
         }
         match (&answer.preview, answer.tool) {
             (Some(preview), 1) => self.show_add_note(preview_line(preview, answer.how.attach)),
@@ -6137,6 +6161,10 @@ impl SupportRun {
             (_, 6 | 7) if self.brace_from.borrow().is_some() => {
                 self.show_add_note(brace_first_line());
             }
+            (None, 1) => self.show_add_note((
+                ctr!("SupportDialog", "Cannot place it: no support can reach that point."),
+                true,
+            )),
             // A box's or a brush's line says how many go, as they pick.
             (_, 5) => {}
             _ => self.show_add_note(Default::default()),
@@ -9594,6 +9622,29 @@ mod hand_edit_tests {
             shown && !run.last_ghost.borrow().is_empty()
         });
         assert!(shown, "a green preview before the first support");
+    }
+
+    /// Add on a spot that cannot take a support (the top of a cube looks up)
+    /// draws no support: a red dot at the cursor and a line say so, so the
+    /// hover is never just nothing.
+    #[test]
+    fn a_spot_that_takes_no_support_shows_a_red_dot() {
+        let (tints, note) = on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (_, run, _) = supported(&window, &[[20.0, 20.0, 8.0]]);
+            window.set_support_tool(1);
+            run.on_tool_hover(Some([20.2, 20.2, 8.5]));
+            let waited = Instant::now();
+            while run.last_preview.borrow().is_none() && waited.elapsed() < Duration::from_secs(10)
+            {
+                std::thread::sleep(Duration::from_millis(5));
+                run.take_hover_answer();
+            }
+            let tints: Vec<_> = run.last_ghost.borrow().iter().map(|p| p.tint).collect();
+            (tints, window.get_support_add_note().to_string())
+        });
+        assert_eq!(tints, vec![OverlayTint::Invalid], "{note}");
+        assert!(note.starts_with("Cannot place it"), "{note}");
     }
 
     /// Fix All's supports (#156): several points, one undoable edit; one

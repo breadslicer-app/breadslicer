@@ -1979,10 +1979,12 @@ impl SupportSession {
     }
 
     /// What a preview shows red where nothing can hold `point`, refused as
-    /// `note` says (#491). A surface no tip may touch (it looks up, or it is
-    /// a wall) shows no support: none was tried. Otherwise the support
-    /// straight down to what lies under the point ([`Self::straight_drop`]),
-    /// of the size `how` asks for.
+    /// `note` says (#491): the support straight down to what lies under the
+    /// point ([`Self::straight_drop`]), of the size `how` asks for. A surface
+    /// no tip may touch (it looks up, or it is a wall) shows it too when the
+    /// face under the cursor looks down (a rough surface whose patch looks
+    /// up), and nothing when that face looks up as well: no support would
+    /// ever stand there.
     fn refused_at(
         &self,
         point: [f64; 3],
@@ -1991,8 +1993,12 @@ impl SupportSession {
     ) -> Result<IndexedMesh, EditError> {
         match note {
             Some(AddNote::FacesUp | AddNote::SteepSurface) => {
-                self.contact(point).ok_or(EditError::NothingThere)?;
-                Ok(IndexedMesh::new(None, Vec::new(), Vec::new()))
+                let (_, _, face) = self.contact(point).ok_or(EditError::NothingThere)?;
+                if face.z < 0.0 {
+                    self.straight_drop(point, how)
+                } else {
+                    Ok(IndexedMesh::new(None, Vec::new(), Vec::new()))
+                }
             }
             _ => self.straight_drop(point, how),
         }
@@ -4585,6 +4591,38 @@ pub(crate) mod session_tests {
             open.straight_drop([25.0, 5.0, 25.0], &AddOptions::default())
                 .is_ok_and(|mesh| { mesh.vertices().iter().any(|v| v.as_array()[2] < 1.0) })
         );
+    }
+
+    #[test]
+    fn a_refused_spot_whose_face_looks_down_shows_its_red_support() {
+        // A surface a tip may not touch draws no support where the face under
+        // the cursor looks up too, and the support straight down where that
+        // face looks down: a facet on the underside of a rough surface whose
+        // patch reads as up, or as a wall.
+        let scene = boxes_scene(&[([0.0, 0.0, 25.0], [20.0, 20.0, 27.0])]);
+        let mut session = crate::start_supports(&scene, Default::default())
+            .unwrap()
+            .join()
+            .unwrap()
+            .sets
+            .remove(0)
+            .session;
+        session.state = SupportState::default();
+        session.removal_index = Arc::default();
+        let how = AddOptions::default();
+        for note in [AddNote::FacesUp, AddNote::SteepSurface] {
+            let under = session
+                .refused_at([10.0, 10.0, 25.0], Some(note), &how)
+                .unwrap();
+            assert!(
+                !under.faces().is_empty(),
+                "{note:?}: a red support under the slab"
+            );
+            let top = session
+                .refused_at([10.0, 10.0, 27.0], Some(note), &how)
+                .unwrap();
+            assert!(top.faces().is_empty(), "{note:?}: nothing on the top");
+        }
     }
 
     /// A support from the model to the model below (a stick) is its two
