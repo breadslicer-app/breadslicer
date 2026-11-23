@@ -14,6 +14,7 @@ mod builder_cases;
 mod cavity_landing;
 mod hollow_cavity;
 mod pipeline;
+mod plate_neighbours;
 mod region_folds;
 mod slice_detail;
 mod smooth_shafts;

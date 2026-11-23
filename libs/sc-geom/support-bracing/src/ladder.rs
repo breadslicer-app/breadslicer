@@ -10,9 +10,7 @@ use indexmap::IndexMap;
 use super::pairing::{Edge, is_cardinal_delta, min_pair_span_mm, pair_key};
 use super::samples::{Anchor, EPS, Shaft, anchor_at, plan_distance, span_at};
 use bread_support_geom::geom::math_utils::{js_atan2, js_max, js_min};
-use bread_support_model::auto_bracing::mesh_clearance::{
-    BraceMeshes, line_passes_mesh_clearance, line_stays_off_mesh,
-};
+use bread_support_model::auto_bracing::mesh_clearance::{BraceMeshes, line_clear_of_meshes};
 use bread_support_model::auto_bracing::settings::{
     AutoBracingPattern, AutoBracingSettings, GridDiagonal, StackedBracing, auto_bracing_hard_rules,
 };
@@ -163,15 +161,15 @@ impl<'a> BraceWriter<'a> {
         if !unlimited && (dx * dx + dy * dy).sqrt() > max_len + EPS {
             return;
         }
-        // A brace keeps clear of every model braced with its own (#475).
-        let diameter = self.settings.brace_diameter_mm;
-        for model in self.settings.braced_with(&from.model_id) {
-            let mesh = self.meshes.get(model);
-            if !line_passes_mesh_clearance(from.pos, to.pos, mesh, diameter)
-                || !line_stays_off_mesh(from.pos, to.pos, mesh, diameter)
-            {
-                return;
-            }
+        // A brace keeps clear of every model registered: its own, its
+        // group's (#475) and those standing near it (#725).
+        if !line_clear_of_meshes(
+            from.pos,
+            to.pos,
+            self.meshes,
+            self.settings.brace_diameter_mm,
+        ) {
+            return;
         }
         self.commit(low, high, section, from, to);
     }

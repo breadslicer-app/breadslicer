@@ -1212,17 +1212,23 @@ impl SupportSession {
     }
 
     /// Whether nothing of the models comes within `radius` of the axis from
-    /// `from` to `to`. The way starts and ends outside the models, so one
-    /// through a model crosses its surface and is caught there.
+    /// `from` to `to`, nor of the neighbours it was given within `radius`
+    /// and their clearance (#725). The way starts and ends outside the
+    /// models, so one through a model crosses its surface and is caught
+    /// there.
     fn way_clear(&self, from: Vec3, to: Vec3, radius: f64) -> bool {
         let steps = (from.distance_to(to) / CLEAR_STEP_MM).ceil().max(1.0) as usize;
         let bvhs: Vec<_> = (0..self.models.len()).map(|i| self.bvh(i)).collect();
+        let near = radius + bread_support_pipeline::plate::NEIGHBOUR_CLEARANCE_MM;
         (0..=steps).all(|k| {
             let p = from.lerp(to, k as f64 / steps as f64);
             bvhs.iter().all(|bvh| {
                 bvh.closest_point_to_point(p, 0.0, radius)
                     .is_none_or(|hit| hit.distance >= radius)
-            })
+            }) && self
+                .neighbours
+                .iter()
+                .all(|m| m.distance(p, near).is_none_or(|d| d >= near))
         })
     }
 

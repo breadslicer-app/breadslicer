@@ -5,6 +5,11 @@
 //! normal of the nearest triangle, so a point deep in the solid is blocked
 //! whatever its distance to the surface.
 //!
+//! The field may read other models besides its own (#725): the models
+//! standing near it on the plate, each grown by a margin, so a support routed
+//! on the field keeps clear of them too. Its distance is then the least of
+//! every model's.
+//!
 //! Cells keep their distance as `f32` (the first few million cells; past
 //! that, at full precision), so a cached answer is the rounded one.
 //!
@@ -108,6 +113,29 @@ fn query_key(local: Vec3, bound: f64) -> QueryKey {
     ]
 }
 
+/// A model the field reads besides its own (#725), placed in the world.
+#[derive(Debug, Clone)]
+struct Obstacle {
+    bvh: Arc<MeshBvh>,
+    inverse: Matrix4,
+    /// Its box in the world, grown by `grown`.
+    bounds: Box3,
+    scale: f64,
+    /// How far the field takes it to reach past its surface, mm.
+    grown: f64,
+}
+
+/// How far a world point lies outside `b` (0 inside it).
+fn box_distance(b: &Box3, p: Vec3) -> f64 {
+    let gap = |v: f64, lo: f64, hi: f64| js_max(0.0, js_max(lo - v, v - hi));
+    let (dx, dy, dz) = (
+        gap(p.x, b.min.x, b.max.x),
+        gap(p.y, b.min.y, b.max.y),
+        gap(p.z, b.min.z, b.max.z),
+    );
+    (dx * dx + dy * dy + dz * dz).sqrt()
+}
+
 /// See the module notes.
 #[derive(Debug)]
 pub struct SdfCache {
@@ -115,15 +143,22 @@ pub struct SdfCache {
     bvh: Arc<MeshBvh>,
     matrix: Matrix4,
     inverse: Matrix4,
+    /// The box of the model and the obstacles, in the world.
     bounds: Box3,
     scale: f64,
+    /// The other models it reads (#725).
+    obstacles: Arc<[Obstacle]>,
+    /// No column map is built: for a field asked about a few supports,
+    /// building one costs more than it saves.
+    no_column_maps: bool,
     cells: RefCell<Cells>,
     /// The column map in use, for its clearance.
     columns: Option<(f64, ColumnClearanceMap)>,
     /// Column maps built so far, latest used first, and their weight.
     kept_columns: Vec<(f64, ColumnClearanceMap)>,
     kept_columns_bytes: usize,
-    normals: RefCell<HashMap<usize, Vec3>>,
+    /// Face normals by model (0 its own, then the obstacles) and face.
+    normals: RefCell<HashMap<(usize, usize), Vec3>>,
     /// Answers a prefetch worked out ahead of the queries.
     prefetched: RefCell<HashMap<QueryKey, f64>>,
     cell_reads: Cell<u64>,
@@ -141,6 +176,8 @@ impl SdfCache {
             inverse: Matrix4::IDENTITY,
             bounds: Box3::EMPTY,
             scale: 1.0,
+            obstacles: Arc::new([]),
+            no_column_maps: false,
             cells: RefCell::default(),
             columns: None,
             kept_columns: Vec::new(),
@@ -159,13 +196,124 @@ impl SdfCache {
         self.inverse = matrix_world.invert();
         let s = matrix_world.decompose_scale();
         self.scale = (s.x + s.y + s.z) / 3.0;
-        self.bounds = Box3::set_from_points(
-            self.bvh
-                .positions()
-                .iter()
-                .map(|p| Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]))),
+        self.bounds = mesh_bounds(&self.bvh, &matrix_world);
+        for o in self.obstacles.iter() {
+            self.bounds.expand_by_point(o.bounds.min);
+            self.bounds.expand_by_point(o.bounds.max);
+        }
+    }
+
+    /// The field reading `obstacles` too (#725): other models standing near
+    /// its own, each placed by its matrix and taken to reach `grown_mm` past
+    /// its surface. A support routed on the field keeps its clearance from
+    /// them grown by that much. Every distance known so far is forgotten.
+    pub fn with_obstacles(
+        self,
+        obstacles: impl IntoIterator<Item = (Arc<MeshBvh>, Matrix4)>,
+        grown_mm: f64,
+    ) -> Self {
+        self.with_placed_obstacles(
+            obstacles.into_iter().map(|(bvh, matrix)| {
+                let bounds = mesh_bounds(&bvh, &matrix);
+                (bvh, matrix, bounds)
+            }),
+            grown_mm,
         )
-        .apply_matrix4(&matrix_world);
+    }
+
+    /// [`Self::with_obstacles`], each obstacle's box in the world known
+    /// already.
+    pub fn with_placed_obstacles(
+        mut self,
+        obstacles: impl IntoIterator<Item = (Arc<MeshBvh>, Matrix4, Box3)>,
+        grown_mm: f64,
+    ) -> Self {
+        let grown = js_max(0.0, grown_mm);
+        let mut list: Vec<Obstacle> = self.obstacles.iter().cloned().collect();
+        for (bvh, matrix, mut bounds) in obstacles {
+            if bounds.is_empty() {
+                continue;
+            }
+            let g = Vec3::new(grown, grown, grown);
+            bounds.min = bounds.min.sub(g);
+            bounds.max = bounds.max.add(g);
+            let s = matrix.decompose_scale();
+            list.push(Obstacle {
+                bvh,
+                inverse: matrix.invert(),
+                bounds,
+                scale: (s.x + s.y + s.z) / 3.0,
+                grown,
+            });
+        }
+        self.obstacles = list.into();
+        self.cells.get_mut().clear();
+        self.prefetched.get_mut().clear();
+        self.normals.get_mut().clear();
+        self.place(self.matrix);
+        self
+    }
+
+    /// The field without column maps: a field that routes a few supports
+    /// (#725) marches instead of building a map over every vertex of the
+    /// model for each clearance.
+    pub fn without_column_maps(mut self) -> Self {
+        self.no_column_maps = true;
+        self.columns = None;
+        self
+    }
+
+    /// How many other models the field reads (#725).
+    pub fn obstacle_count(&self) -> usize {
+        self.obstacles.len()
+    }
+
+    /// The signed distance from a world point to the other models alone
+    /// (#725), each grown as the field grows it, worked out to `bound`:
+    /// infinite when none is within it. Not cached.
+    pub fn obstacle_distance(&self, p: Vec3, bound: f64) -> f64 {
+        let s = SdfCache::snapshot(self);
+        obstacles_distance(&s, p, bound, f64::INFINITY, |k, face| {
+            face_normal(&s.obstacles[k].bvh, face)
+        })
+    }
+
+    /// Whether a capsule of `clearance` round `a..b` reaches another model
+    /// (#725), grown as the field grows it; the model's own surface is not
+    /// asked. Sphere traced on [`Self::obstacle_distance`], uncached.
+    pub fn obstacles_block(&self, a: Vec3, b: Vec3, clearance: f64) -> bool {
+        let reach = |o: &Obstacle| {
+            let c = clearance;
+            !(a.x.max(b.x) < o.bounds.min.x - c
+                || a.x.min(b.x) > o.bounds.max.x + c
+                || a.y.max(b.y) < o.bounds.min.y - c
+                || a.y.min(b.y) > o.bounds.max.y + c
+                || a.z.max(b.z) < o.bounds.min.z - c
+                || a.z.min(b.z) > o.bounds.max.z + c)
+        };
+        if !self.obstacles.iter().any(reach) {
+            return false;
+        }
+        let length = b.sub(a).length();
+        let least = 0.02;
+        let bound = clearance + MARCH_DISTANCE_BOUND_MM;
+        let mut t: f64 = 0.0;
+        loop {
+            let along = js_min(t, length);
+            let p = if length > 0.0 {
+                a.add(b.sub(a).multiply_scalar(along / length))
+            } else {
+                a
+            };
+            let d = self.obstacle_distance(p, bound);
+            if d < clearance {
+                return true;
+            }
+            if along >= length {
+                return false;
+            }
+            t = along + js_max(least, d - clearance);
+        }
     }
 
     /// Moves the field to `matrix_world`, forgetting every distance, when the
@@ -215,8 +363,7 @@ impl SdfCache {
 
     /// The signed distance at the point itself, mm: no cell, no cache.
     pub fn exact_signed_distance_at(&self, wx: f64, wy: f64, wz: f64) -> f64 {
-        let local = Vec3::new(wx, wy, wz).apply_matrix4(&self.inverse);
-        self.closest(local, f64::INFINITY)
+        self.closest(Vec3::new(wx, wy, wz), f64::INFINITY)
     }
 
     /// Whether a capsule of `clearance` round the segment reaches the model.
@@ -243,6 +390,9 @@ impl SdfCache {
     /// (cells of `cell_mm`), built once per clearance and kept; false when
     /// the map would be too big.
     pub fn enable_column_map(&mut self, clearance_mm: f64, cell_mm: f64) -> bool {
+        if self.no_column_maps {
+            return false;
+        }
         if self
             .columns
             .as_ref()
@@ -301,8 +451,19 @@ impl SdfCache {
             bounds: &self.bounds,
             scale: self.scale,
             columns: self.columns.as_ref().map(|(c, m)| (*c, m)),
+            obstacles: &self.obstacles,
         }
     }
+}
+
+/// The box of `bvh`'s vertices placed by `matrix`.
+fn mesh_bounds(bvh: &MeshBvh, matrix: &Matrix4) -> Box3 {
+    Box3::set_from_points(
+        bvh.positions()
+            .iter()
+            .map(|p| Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]))),
+    )
+    .apply_matrix4(matrix)
 }
 
 impl CollisionField for SdfCache {
@@ -365,6 +526,7 @@ struct Snapshot<'a> {
     bounds: &'a Box3,
     scale: f64,
     columns: Option<(f64, &'a ColumnClearanceMap)>,
+    obstacles: &'a [Obstacle],
 }
 
 /// The cells and the closest-point query the march runs on: the field, or
@@ -373,8 +535,8 @@ trait Store {
     fn snapshot(&self) -> Snapshot<'_>;
     fn read(&self, cell: (f64, f64, f64)) -> Option<f64>;
     fn write(&self, cell: (f64, f64, f64), value: f64);
-    /// The signed distance at a local point, worked out to `bound`.
-    fn closest(&self, local: Vec3, bound: f64) -> f64;
+    /// The signed distance at a world point, worked out to `bound`.
+    fn closest(&self, world: Vec3, bound: f64) -> f64;
 }
 
 impl Store for SdfCache {
@@ -391,22 +553,26 @@ impl Store for SdfCache {
         self.cells.borrow_mut().put(key_of(cell), value);
     }
 
-    fn closest(&self, local: Vec3, bound: f64) -> f64 {
+    fn closest(&self, world: Vec3, bound: f64) -> f64 {
         self.bvh_queries.set(self.bvh_queries.get() + 1);
         {
             let kept = self.prefetched.borrow();
             if !kept.is_empty()
-                && let Some(&d) = kept.get(&query_key(local, bound))
+                && let Some(&d) = kept.get(&query_key(world, bound))
             {
                 return d;
             }
         }
-        signed_distance(&SdfCache::snapshot(self), local, bound, |face| {
+        let s = SdfCache::snapshot(self);
+        signed_distance(&s, world, bound, |body, face| {
             *self
                 .normals
                 .borrow_mut()
-                .entry(face)
-                .or_insert_with(|| face_normal(&self.bvh, face))
+                .entry((body, face))
+                .or_insert_with(|| match body {
+                    0 => face_normal(&self.bvh, face),
+                    k => face_normal(&s.obstacles[k - 1].bvh, face),
+                })
         })
     }
 }
@@ -462,13 +628,15 @@ impl Store for Guess<'_> {
             .insert(key_of(cell), f64::from(value as f32));
     }
 
-    fn closest(&self, local: Vec3, bound: f64) -> f64 {
-        let key = query_key(local, bound);
+    fn closest(&self, world: Vec3, bound: f64) -> f64 {
+        let key = query_key(world, bound);
         if let Some(&d) = self.memo.shard(&key).get(&key) {
             return d;
         }
-        let d = signed_distance(&self.snapshot, local, bound, |face| {
-            face_normal(self.snapshot.bvh, face)
+        let s = self.snapshot;
+        let d = signed_distance(&s, world, bound, |body, face| match body {
+            0 => face_normal(s.bvh, face),
+            k => face_normal(&s.obstacles[k - 1].bvh, face),
         });
         self.memo.shard(&key).insert(key, d);
         d
@@ -485,7 +653,7 @@ impl CollisionField for Guess<'_> {
     }
 
     fn exact_signed_distance_at(&self, point: Vec3) -> f64 {
-        self.closest(point.apply_matrix4(self.snapshot.inverse), f64::INFINITY)
+        self.closest(point, f64::INFINITY)
     }
 }
 
@@ -505,11 +673,76 @@ fn face_normal(bvh: &MeshBvh, face: usize) -> Vec3 {
     )
 }
 
-/// The world distance from `local` to the model, negative on the inner side
-/// of the nearest triangle; infinite when nothing is within `bound` (world
-/// mm).
+/// The world distance from `world` to the model and the obstacles (the
+/// least), negative on the inner side of the nearest triangle; infinite when
+/// nothing is within `bound` (world mm). `normal` gives a face's normal by
+/// body (0 the model, then each obstacle) and face.
 fn signed_distance(
     s: &Snapshot<'_>,
+    world: Vec3,
+    bound: f64,
+    mut normal: impl FnMut(usize, usize) -> Vec3,
+) -> f64 {
+    let own = body_distance(
+        s.bvh,
+        s.scale,
+        world.apply_matrix4(s.inverse),
+        bound,
+        |face| normal(0, face),
+    );
+    if s.obstacles.is_empty() {
+        return own;
+    }
+    obstacles_distance(s, world, bound, own, |k, face| normal(k + 1, face))
+}
+
+/// The least of `best` and the obstacles' signed distances at `world`, each
+/// less its growth, worked out to `bound`. An obstacle that cannot come
+/// closer than `best` is not asked; once inside one (`best` negative), only
+/// another the point lies in could. `normal` gives a face's normal by
+/// obstacle and face.
+fn obstacles_distance(
+    s: &Snapshot<'_>,
+    world: Vec3,
+    bound: f64,
+    mut best: f64,
+    mut normal: impl FnMut(usize, usize) -> Vec3,
+) -> f64 {
+    for (k, o) in s.obstacles.iter().enumerate() {
+        let off = box_distance(&o.bounds, world);
+        let limit = if best < 0.0 { 0.0 } else { js_min(best, bound) };
+        if off > limit {
+            continue;
+        }
+        let reach = if limit == f64::INFINITY {
+            f64::INFINITY
+        } else {
+            limit + o.grown
+        };
+        let d = body_distance(
+            &o.bvh,
+            o.scale,
+            world.apply_matrix4(&o.inverse),
+            if best < 0.0 { f64::INFINITY } else { reach },
+            |face| normal(k, face),
+        );
+        if d == f64::INFINITY {
+            continue;
+        }
+        let d = d - o.grown;
+        if d < best {
+            best = d;
+        }
+    }
+    best
+}
+
+/// The world distance from `local` (in `bvh`'s frame, scaled into the world
+/// by `scale`) to its mesh, negative on the inner side of the nearest
+/// triangle; infinite when nothing is within `bound` (world mm).
+fn body_distance(
+    bvh: &MeshBvh,
+    scale: f64,
     local: Vec3,
     bound: f64,
     normal: impl FnOnce(usize) -> Vec3,
@@ -517,12 +750,12 @@ fn signed_distance(
     let local_bound = if bound == f64::INFINITY {
         f64::INFINITY
     } else {
-        bound / js_max(0.000001, s.scale)
+        bound / js_max(0.000001, scale)
     };
-    let Some(hit) = s.bvh.closest_point_to_point(local, 0.0, local_bound) else {
+    let Some(hit) = bvh.closest_point_to_point(local, 0.0, local_bound) else {
         return f64::INFINITY;
     };
-    let d = hit.distance * s.scale;
+    let d = hit.distance * scale;
     if d > 1e-6 {
         let n = normal(hit.face_index);
         let (dx, dy, dz) = (
@@ -540,8 +773,7 @@ fn signed_distance(
 /// The distance at a cell's centre, worked out to `bound`.
 fn cell_distance<S: Store + ?Sized>(store: &S, (qx, qy, qz): (f64, f64, f64), bound: f64) -> f64 {
     let s = store.snapshot();
-    let local = Vec3::new(qx * s.cell, qy * s.cell, qz * s.cell).apply_matrix4(s.inverse);
-    store.closest(local, bound)
+    store.closest(Vec3::new(qx * s.cell, qy * s.cell, qz * s.cell), bound)
 }
 
 /// A distance worked out to `bound`, with nothing found read as `bound`.
@@ -590,7 +822,7 @@ fn room<S: Store + ?Sized>(store: &S, p: Vec3, clearance: f64) -> f64 {
         return near - gap - clearance;
     }
     let bound = clearance + 0.001;
-    let exact = capped(store.closest(p.apply_matrix4(s.inverse), bound), bound);
+    let exact = capped(store.closest(p, bound), bound);
     if exact < clearance {
         -1.0
     } else {

@@ -120,6 +120,12 @@ impl MeshBvh {
             .then(|| (0..self.triangle_count() as u32).collect())
     }
 
+    /// The box of every triangle, `[min xyz, max xyz]`, in the tree's own
+    /// frame; `None` for a tree of no triangle.
+    pub fn bounds(&self) -> Option<[f32; 6]> {
+        self.nodes.first().map(|root| root.bounds)
+    }
+
     /// Triangles in the geometry.
     pub fn triangle_count(&self) -> usize {
         self.index.len() / 3

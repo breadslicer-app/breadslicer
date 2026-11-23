@@ -20,6 +20,10 @@ use bread_support_geom::geom::math_utils::{js_max, js_min};
 pub struct BraceMesh<'a> {
     pub bvh: &'a MeshBvh,
     pub matrix: Matrix4,
+    /// How far past its surface a brace keeps from it besides its radius,
+    /// mm: 0 for a model's own, the neighbours' clearance for a model
+    /// standing near it (#725).
+    pub grown_mm: f64,
 }
 
 impl BraceMesh<'_> {
@@ -81,6 +85,22 @@ pub fn line_stays_off_mesh(
             mesh.bvh
                 .closest_point_to_point(on_axis.apply_matrix4(&world_to_model), 0.0, radius);
         nearest.is_none_or(|hit| hit.distance >= radius)
+    })
+}
+
+/// True when a brace of `diameter_mm` from `pos_a` to `pos_b` keeps clear of
+/// every model of `meshes` (both tests): its own, its group's and the models
+/// standing near it on the plate that the caller registered (#725).
+pub fn line_clear_of_meshes(
+    pos_a: Vec3,
+    pos_b: Vec3,
+    meshes: &BraceMeshes<'_>,
+    diameter_mm: f64,
+) -> bool {
+    meshes.values().all(|mesh| {
+        let wide = diameter_mm + 2.0 * mesh.grown_mm;
+        line_passes_mesh_clearance(pos_a, pos_b, Some(mesh), wide)
+            && line_stays_off_mesh(pos_a, pos_b, Some(mesh), wide)
     })
 }
 
@@ -158,6 +178,7 @@ mod tests {
         let mesh = BraceMesh {
             bvh,
             matrix: Matrix4::IDENTITY,
+            grown_mm: 0.0,
         };
         let (a, b) = (Vec3::new(0.0, 0.0, 0.0), Vec3::new(10.0, 0.0, 0.0));
         (

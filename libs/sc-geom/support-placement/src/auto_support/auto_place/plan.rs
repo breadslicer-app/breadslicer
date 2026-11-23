@@ -16,11 +16,11 @@ use super::fan::{
 };
 use super::helpers::{
     HostedBranchInput, MAX_FANNING_PASSES, OrphanInfo, OrphanReason, PlanCtx,
-    branch_collides_with_sdf, build_hosted_branch, collect_contact_positions,
+    branch_collides_with_sdf, build_hosted_branch, collect_contact_positions_of,
     collect_fan_shaft_points, collect_fan_shaft_points_near, collect_host_entities,
-    count_attachments_on_host, filter_already_supported, host_segment_span,
+    count_attachments_on_host, filter_already_supported_on, host_segment_span,
     is_host_at_attachment_capacity, member_max_angle_from_vertical_deg, rehost_legacy_knots,
-    resolve_surface_normal, sync_contact_cone_diameters_with, validate_and_cull_orphans,
+    resolve_surface_normal, sync_contact_cone_diameters_with, validate_and_cull_orphans_of,
 };
 use super::place::{PlaceArgs, grid_join_height, place_one_candidate};
 use super::report::{CavityFallback, ForestReport, PlacementDiagnostics};
@@ -445,7 +445,9 @@ fn make_members(
             let Some(trunk) = run.draft.collections.trunks.get(&host_id).cloned() else {
                 continue;
             };
-            if !live.auto_support.share_hosts && trunk.base.model_id != model_id {
+            // Only this model's lone trunks: another's is its own plan's
+            // (with `share_hosts` they may hang from any model's, #725).
+            if trunk.base.model_id != model_id {
                 continue;
             }
             let off_node = live.grid.enabled
@@ -902,12 +904,17 @@ fn cover_flat_islands(
 /// go through a model; what it took, reported.
 fn check_and_place_again(
     run: &mut Run,
+    model_id: &str,
     meshes: &BraceMeshes<'_>,
     ctx: &PlanCtx<'_>,
 ) -> Vec<OrphanInfo> {
     let mesh = ctx.mesh.as_ref();
     let before = run.draft.clone();
-    let (checked, mut taken) = validate_and_cull_orphans(&run.draft, mesh, &HashSet::new());
+    // Only this model's supports: the others' (a group's, #475) were
+    // checked on their own model, and the field holds theirs as a
+    // neighbour (#725).
+    let (checked, mut taken) =
+        validate_and_cull_orphans_of(&run.draft, mesh, &HashSet::new(), Some(model_id));
     if taken.is_empty() {
         return taken;
     }
@@ -917,6 +924,7 @@ fn check_and_place_again(
         .enumerate()
         .filter(|(_, o)| matches!(o.reason, OrphanReason::HostCulled | OrphanReason::Blocked))
         .filter_map(|(i, o)| contact_again(&before, &run.placed_from, &o.id).map(|c| (i, c)))
+        .filter(|(_, c)| c.model_id == model_id)
         .collect();
     if again.is_empty() {
         return taken;
@@ -938,7 +946,8 @@ fn check_and_place_again(
         .filter(|(_, id)| crosses_a_model(&run.draft, id, meshes))
         .map(|(_, id)| id.clone())
         .collect();
-    let (rechecked, taken_again) = validate_and_cull_orphans(&run.draft, mesh, &crossing);
+    let (rechecked, taken_again) =
+        validate_and_cull_orphans_of(&run.draft, mesh, &crossing, Some(model_id));
     let taken_again_ids: HashSet<String> = if rechecked != run.draft {
         run.draft = rechecked;
         taken_again.iter().map(|o| o.id.clone()).collect()
@@ -1018,7 +1027,9 @@ pub fn compute_auto_support_plan(
     if candidates.is_empty() {
         return nothing(input.state);
     }
-    candidates = filter_already_supported(candidates, input.state);
+    // Held already by a tip of this model: another model's holds nothing
+    // of it (#725).
+    candidates = filter_already_supported_on(candidates, input.state, model_id);
     if candidates.is_empty() {
         return nothing(input.state);
     }
@@ -1076,7 +1087,7 @@ pub fn compute_auto_support_plan(
 
     perf::mark("auto:fanning");
     let Coverage { mut covered, .. } =
-        Coverage::of(islands, &collect_contact_positions(&run.draft));
+        Coverage::of(islands, &collect_contact_positions_of(&run.draft, model_id));
     let bare = islands.len() as i64 - covered.len() as i64;
     // How placement went, before the islands are hung and the check runs.
     let placement = run.diagnostics.clone();
@@ -1091,7 +1102,7 @@ pub fn compute_auto_support_plan(
     if changed {
         perf::mark("auto:resize-report");
         run.draft = rehost_legacy_knots(&run.draft);
-        let taken = check_and_place_again(&mut run, input.brace_meshes, ctx);
+        let taken = check_and_place_again(&mut run, model_id, input.brace_meshes, ctx);
         run.draft = sync_contact_cone_diameters_with(&run.draft, auto.member_host_shaft_ratio);
         forest_report = Some(ForestReport {
             orphans: (!taken.is_empty()).then_some(taken),
@@ -1105,7 +1116,7 @@ pub fn compute_auto_support_plan(
     }
 
     // What the plan hands back covers (the check may have taken tips).
-    let end = Coverage::of(islands, &collect_contact_positions(&run.draft));
+    let end = Coverage::of(islands, &collect_contact_positions_of(&run.draft, model_id));
     let analytics = AutoPlaceAnalytics {
         islands_covered: end.covered.len() as i64,
         islands_uncovered: islands.len() as i64 - end.covered.len() as i64,
