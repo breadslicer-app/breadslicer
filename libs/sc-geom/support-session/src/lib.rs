@@ -34,6 +34,7 @@ mod compare;
 mod document;
 mod hand_log;
 mod options;
+mod pixels;
 mod session;
 mod shift;
 /// The zone presets that ship, and how one is applied.
@@ -57,6 +58,7 @@ pub use document::{
 };
 pub use hand_log::{HandEditKind, KeptEdits, LostEdit, LostWhy};
 pub use options::{DEFAULT_SUPPORT_LIFT_MM, RaftMode, SupportOptions, recommended_lift_mm};
+pub use pixels::{MIN_TIP_PIXELS, narrowest_tip_mm};
 pub use session::{
     AddNote, AddOptions, BraceEnd, COVERED_AGREEMENT, COVERED_SURFACE_MM, EditError, EditPreview,
     HandShape, ImportedPlan, PartSizes, REVIEW_NUDGE_MM, SupportContact, SupportJoint,
@@ -1216,6 +1218,10 @@ impl SettingsRecipe {
             ..PipelineSettings::defaults(self.layer_height_mm)
         };
         self.options.apply(&mut settings);
+        // No tip thinner than the printer's screen draws (#724).
+        if let Some(pitch) = self.pixel_pitch_mm {
+            pixels::widen_tips(&mut settings, narrowest_tip_mm(pitch));
+        }
         settings
     }
 }

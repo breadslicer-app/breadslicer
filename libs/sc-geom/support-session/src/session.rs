@@ -607,7 +607,22 @@ struct Placed {
 /// limits on hanging from a support eased (and eased further for a forced
 /// attach) and the size `how` names. Returns that size's index among the
 /// zone sizes, `None` for the run's own.
-fn hand_settings(settings: &mut PipelineSettings, how: &AddOptions) -> Option<usize> {
+fn hand_settings(
+    settings: &mut PipelineSettings,
+    how: &AddOptions,
+    narrowest_tip: Option<f64>,
+) -> Option<usize> {
+    let zone = hand_size(settings, how);
+    // A size of the person's own is no thinner than the screen draws (#724).
+    if let Some(narrowest) = narrowest_tip {
+        crate::pixels::widen_tips(settings, narrowest);
+    }
+    zone
+}
+
+/// The size `how` names among the zone sizes of `settings`, added when the
+/// run has none like it.
+fn hand_size(settings: &mut PipelineSettings, how: &AddOptions) -> Option<usize> {
     let max_angle = if how.attach {
         FORCED_MAX_ANGLE_DEG
     } else {
@@ -1065,6 +1080,13 @@ impl SupportSession {
     /// settings.
     pub fn options(&self) -> Option<&crate::SupportOptions> {
         self.recipe.as_deref().map(|r| &r.options)
+    }
+
+    /// The narrowest tip the printer the run was made for draws (#724);
+    /// `None` when the run did not say which printer.
+    fn narrowest_tip(&self) -> Option<f64> {
+        let pitch = self.recipe.as_deref()?.pixel_pitch_mm?;
+        Some(crate::narrowest_tip_mm(pitch))
     }
 
     /// The session on the raft of `options` (#519): its kind, thickness and
@@ -1607,7 +1629,7 @@ impl SupportSession {
         };
         let bvh = self.bvh(i);
         let mut settings = (*self.settings).clone();
-        let zone = hand_settings(&mut settings, how);
+        let zone = hand_settings(&mut settings, how, self.narrowest_tip());
         let model_id = self.models[i].id.clone();
         let before = all_ids(&self.state.collections);
         let pooled = self.sdfs[i].0.lock().ok().and_then(|mut slot| slot.take());
@@ -2081,7 +2103,7 @@ impl SupportSession {
         // Of the size asked for (#564: a red one showed the run's size, not
         // the one a click would place).
         let mut settings = (*self.settings).clone();
-        if let Some(zone) = hand_settings(&mut settings, how) {
+        if let Some(zone) = hand_settings(&mut settings, how, self.narrowest_tip()) {
             let rules = settings.supports.auto_support.zone_rules.clone();
             apply_zone_size(&mut settings.supports, &rules, zone);
         }
@@ -4595,6 +4617,58 @@ pub(crate) mod session_tests {
         assert!(dist(tips[0].1, [30.0, 5.0, 12.0]) < 0.5);
         assert_eq!(session.tip_diameter(&tips[0].0), Some(0.5));
         assert_eq!(session.shape_of(&tips[0].0), Some(shape));
+    }
+
+    /// #724: on a printer with coarse pixels no tip is thinner than three of
+    /// them, whatever size the preset or the person asks for; on a fine one
+    /// the sizes stay as they are.
+    #[test]
+    fn no_tip_is_thinner_than_the_screen_draws() {
+        let coarse = [0.137, 0.137];
+        let narrowest = crate::narrowest_tip_mm(coarse);
+        assert!((narrowest - 0.411).abs() < 1e-9);
+        let made = |pitch| {
+            crate::settings_for(&crate::SupportRequest {
+                pixel_pitch_mm: pitch,
+                ..crate::SupportRequest::default()
+            })
+        };
+        let plain = made(None);
+        let fine = made(Some([0.034, 0.034]));
+        assert_eq!(
+            plain.supports, fine.supports,
+            "a fine screen draws every tip of the preset"
+        );
+        let widened = made(Some(coarse));
+        let sizes = &widened.supports.auto_support.zone_rules.sizes;
+        assert!(!sizes.is_empty());
+        for size in sizes {
+            assert!(size.tip_diameter_mm >= narrowest - 1e-12, "{size:?}");
+            assert!(size.trunk_diameter_mm >= size.tip_diameter_mm);
+            if let Some(base) = size.base_tip {
+                assert!(base.diameter_mm >= narrowest - 1e-12);
+            }
+        }
+        assert!(widened.supports.tip.contact_diameter_mm >= narrowest - 1e-12);
+
+        // A size of the person's own, by hand.
+        let mut session = bare_slab(
+            12.0,
+            crate::SupportRequest {
+                pixel_pitch_mm: Some(coarse),
+                ..crate::SupportRequest::default()
+            },
+        );
+        let mut shape = crate::zone_presets::support_sizes().remove(0);
+        shape.tip_diameter_mm = 0.18;
+        let how = AddOptions {
+            shape: Some(HandShape(shape)),
+            ..AddOptions::default()
+        };
+        session.add_at([5.0, 5.0, 12.0], &how).unwrap();
+        let tip = session.tip_near([5.0, 5.0, 12.0], 1.0).unwrap();
+        let drawn = session.tip_diameter(&tip).unwrap();
+        assert!(drawn >= narrowest - 1e-12, "{drawn}");
     }
 
     /// #377: a support hung from another is routed again on its own, and

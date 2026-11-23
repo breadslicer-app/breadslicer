@@ -6489,6 +6489,10 @@ msgctxt "Review"
 msgid "Left by Fix All: more tips here are placed by hand, in the Supports tab."
 msgstr "Corregir todo lo dejó: las puntas de más se ubican a mano, en la pestaña Soportes."
 
+msgctxt "Review"
+msgid "Left by Fix All: generate the supports again for this printer, or widen these tips."
+msgstr "Corregir todo lo dejó: generá de nuevo los soportes para esta impresora, o ensanchá estas puntas."
+
 #: ui/message-layer.slint
 msgctxt "AddSupportsDialog"
 msgid "Yes"
