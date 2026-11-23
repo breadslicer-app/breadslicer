@@ -637,6 +637,7 @@ export component MainWindow inherits Window {
     // What the supports' colours tell: over the print, or as the layer on
     // show peels (#245).
     in property <string> slice-timeline-supports-caption;
+    in property <string> slice-timeline-imported-note;
     // What the frame check of the supports found (#244).
     in property <string> slice-timeline-frame-note;
     in-out property <bool> stress-paint: true;
@@ -2552,6 +2553,7 @@ export component MainWindow inherits Window {
                         holds-at: root.slice-timeline-holds-at;
                         support-note: root.slice-timeline-support-note;
                         supports-caption: root.slice-timeline-supports-caption;
+                        imported-note: root.slice-timeline-imported-note;
                         frame-note: root.slice-timeline-frame-note;
                         frame <=> root.stress-frame;
                         frame-toggled(on) => {

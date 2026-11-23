@@ -97,7 +97,9 @@ pub fn clashes(ctx: &ReviewContext<'_>, options: &RaftOptions) -> Vec<RaftClash>
         .unwrap_or(spans[zone - 1].top_mm);
     let cover = input.lift_layers().clamp(zone, input.layer_count());
     let mut clashes = Vec::new();
-    for leaf in input.leaves() {
+    // Supports read as geometry stand on their own raft: no model in it
+    // (#754).
+    for leaf in input.leaves().iter().filter(|leaf| !leaf.supports) {
         let mut range: Option<(usize, usize)> = None;
         let mut footprint = [
             f64::INFINITY,

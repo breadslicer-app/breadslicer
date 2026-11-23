@@ -11200,3 +11200,7 @@ msgid "Click a point on the circle: {n} support."
 msgid_plural "Click a point on the circle: {n} supports."
 msgstr[0] "Hacé clic en un punto del borde: {n} soporte."
 msgstr[1] "Hacé clic en un punto del borde: {n} soportes."
+
+msgctxt "StressCard"
+msgid "Imported supports: not painted, their tips are not known"
+msgstr "Soportes importados: sin pintar, no se conocen sus puntas"

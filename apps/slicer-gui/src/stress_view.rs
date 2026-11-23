@@ -446,6 +446,29 @@ impl StressView {
         self.layer_asked.set(Some((generation, at)));
         if let Some(ui) = self.ui.upgrade() {
             ui.set_slice_timeline_supports_caption(supports_caption(at).into());
+            // Supports that came with a model have no tips the loads know:
+            // they stay unpainted, and the card says why (#755).
+            let imported = self
+                .ctrl
+                .document()
+                .with_scene(|spatial| {
+                    (0..).map_while(|i| spatial.leaf_id_at_index(i)).any(|id| {
+                        spatial
+                            .graph()
+                            .leaf_mesh_arc(id)
+                            .is_some_and(|mesh| sc_geom::supports::is_imported_supports(mesh))
+                    })
+                })
+                .unwrap_or(false);
+            ui.set_slice_timeline_imported_note(if imported {
+                ctr!(
+                    "StressCard",
+                    "Imported supports: not painted, their tips are not known"
+                )
+                .into()
+            } else {
+                Default::default()
+            });
         }
         let (shares, sets) = {
             let held = self.held.borrow();

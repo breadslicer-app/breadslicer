@@ -96,6 +96,11 @@ pub(crate) struct SupportSet {
     pub(crate) tip_diameter_mm: f64,
     /// Where its supports stand on the model (#244), world mm.
     pub(crate) feet: Vec<[f64; 3]>,
+    /// Supports no session drew (those that came with an imported model):
+    /// their tips are not known, so they are reviewed by their geometry,
+    /// holding what they touch as the model does, and are no model in the
+    /// raft (#754).
+    pub(crate) geometry: bool,
 }
 
 /// The leaves the review reads: every sliced leaf but those `sets` know as
@@ -106,8 +111,13 @@ pub(crate) fn review_leaves<'l>(
 ) -> Vec<ReviewLeaf<'l>> {
     leaves
         .iter()
-        .filter(|slices| !sets.iter().any(|set| set.leaf == slices.leaf()))
-        .map(ReviewLeaf::from_slices)
+        .filter_map(
+            |slices| match sets.iter().find(|set| set.leaf == slices.leaf()) {
+                None => Some(ReviewLeaf::from_slices(slices)),
+                Some(set) if set.geometry => Some(ReviewLeaf::from_slices(slices).as_supports()),
+                Some(_) => None,
+            },
+        )
         .collect()
 }
 
@@ -171,7 +181,10 @@ impl TipHold {
 fn support_layers(leaves: &[LeafSlices], sets: &[SupportSet]) -> Range<usize> {
     leaves
         .iter()
-        .filter(|slices| sets.iter().any(|set| set.leaf == slices.leaf()))
+        .filter(|slices| {
+            sets.iter()
+                .any(|set| !set.geometry && set.leaf == slices.leaf())
+        })
         .filter_map(|slices| {
             let lit = |layer: &ContourLayer| !layer.polygons().is_empty();
             let layers = slices.stack().layers();
@@ -468,7 +481,10 @@ pub(crate) fn support_resin_for_test(plate: &SlicedPlate, sets: &[SupportSet]) -
     plate
         .leaves()
         .iter()
-        .filter(|slices| sets.iter().any(|set| set.leaf == slices.leaf()))
+        .filter(|slices| {
+            sets.iter()
+                .any(|set| !set.geometry && set.leaf == slices.leaf())
+        })
         .flat_map(|slices| slices.stack().layers().iter().enumerate())
         .map(|(index, layer)| {
             let height = tops[index] - index.checked_sub(1).map_or(0.0, |below| tops[below]);
@@ -600,16 +616,23 @@ mod review_tests {
         for (leaf, slices) in all.iter().zip(&leaves) {
             assert!(std::ptr::eq(leaf.stack, slices.stack()));
         }
-        let sets = [SupportSet {
+        let mut sets = [SupportSet {
             leaf: leaves[1].leaf(),
             contacts: Vec::new(),
             tip_diameter_mm: 0.3,
             feet: Vec::new(),
+            geometry: false,
         }];
         let models = review_leaves(&leaves, &sets);
         assert_eq!(models.len(), 1);
         assert!(std::ptr::eq(models[0].stack, leaves[0].stack()));
         assert_eq!(support_layers(&leaves, &sets), 0..4);
+        // Supports read as geometry (#754): reviewed, as supports.
+        sets[0].geometry = true;
+        let read = review_leaves(&leaves, &sets);
+        assert_eq!(read.len(), 2);
+        assert!(!read[0].supports && read[1].supports);
+        assert_eq!(support_layers(&leaves, &sets), 0..0);
     }
 
     #[test]

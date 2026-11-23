@@ -53,7 +53,11 @@ pub(crate) struct Hints {
     pub(crate) visited: Option<[f64; 3]>,
     /// The models whose face adjacency a worker was started on, for the
     /// islands' paint (#542).
-    pub(crate) priming: Vec<sc_scene::NodeId>,
+    /// Each with whether its job is done: a model still waiting once its
+    /// job is done had its caches made anew (an edit), and is primed again
+    /// (#756: before, it waited for ever and the marks were drawn again
+    /// every moment).
+    pub(crate) priming: Vec<(sc_scene::NodeId, Arc<std::sync::atomic::AtomicBool>)>,
     /// What the marks on show were drawn from: the places, the islands and
     /// the scene as it stood.
     pub(crate) shown: Option<(usize, usize, SceneRevision)>,

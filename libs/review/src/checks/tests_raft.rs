@@ -126,6 +126,33 @@ fn a_model_lifted_above_the_raft_is_clear() {
     assert!(raft(&fixture, Some(RAFT_TOP_MM)).is_empty());
 }
 
+/// Supports read as geometry (those that came with an imported model)
+/// stand on their own raft: they are no model inside it (#754).
+#[test]
+fn supports_read_as_geometry_are_not_a_model_in_the_raft() {
+    let on_plate = model_on_the_plate().build();
+    let lifted = FixtureBuilder::new(12)
+        .model(5..12, Shape::rect(20.0, 20.0, 60.0, 50.0))
+        .build();
+    let stack = on_plate.input().leaves()[0].stack;
+    let check = |extra: crate::input::ReviewLeaf<'_>| {
+        let input = lifted
+            .input_with(extra)
+            .with_raft_top_mm(Some(RAFT_TOP_MM))
+            .with_support_lift_mm(Some(LIFT_MM))
+            .with_support_extent(0..12, None);
+        let regions = PlateRegions::compute(&input, &SweepOptions::default());
+        run(
+            &ReviewContext::new(&input, &regions),
+            &RaftOptions::default(),
+        )
+        .len()
+    };
+    let leaf = || crate::input::ReviewLeaf::new(Some("Imported supports"), stack);
+    assert_eq!(check(leaf()), 1, "read as a model, it is in the raft");
+    assert_eq!(check(leaf().as_supports()), 0);
+}
+
 #[test]
 fn without_a_raft_nothing_is_reported() {
     let fixture = model_on_the_plate().build();

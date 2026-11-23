@@ -3560,18 +3560,32 @@ impl SupportRun {
                 }
             }
         });
+        use std::sync::atomic::{AtomicBool, Ordering};
+        // Primed and done, a model that is no longer waiting is let go of.
+        hints
+            .priming
+            .retain(|(leaf, done)| waiting.contains(leaf) || !done.load(Ordering::Acquire));
         for leaf in &waiting {
-            if hints.priming.contains(leaf) {
-                continue;
+            if let Some(k) = hints.priming.iter().position(|(id, _)| id == leaf) {
+                if !hints.priming[k].1.load(Ordering::Acquire) {
+                    continue;
+                }
+                // Done, and still waiting: its caches were made anew.
+                hints.priming.swap_remove(k);
             }
-            hints.priming.push(*leaf);
-            if let Some(job) = self
+            let Some(job) = self
                 .document
                 .with_scene(|spatial| spatial.adjacency_job(*leaf))
                 .flatten()
-            {
-                std::thread::spawn(move || job.run());
-            }
+            else {
+                continue;
+            };
+            let done = Arc::new(AtomicBool::new(false));
+            hints.priming.push((*leaf, done.clone()));
+            std::thread::spawn(move || {
+                job.run();
+                done.store(true, Ordering::Release);
+            });
         }
         let painted = |corners: Vec<[f32; 3]>, tint: OverlayTint| {
             let indices = (0..corners.len() as u32).collect();
@@ -3602,7 +3616,13 @@ impl SupportRun {
                 OverlayTint::IslandDot,
             )));
         }
-        (hints.left.len(), !waiting.is_empty())
+        // Drawn again once a job in flight is done; a model no job can be
+        // made for is not waited on.
+        let in_flight = hints
+            .priming
+            .iter()
+            .any(|(leaf, _)| waiting.contains(leaf));
+        (hints.left.len(), in_flight)
     }
 
     /// The recommended places for the models as they stand, once worked out;
