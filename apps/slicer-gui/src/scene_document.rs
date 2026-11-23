@@ -3223,12 +3223,42 @@ impl SceneDocument {
     /// `widget.stl`), used as the window title. `None` when no scene is loaded
     /// or the path has no final component.
     pub(crate) fn source_file_name(&self) -> Option<String> {
-        self.with_source_path(|p| {
+        self.with_named_source(|p| {
             p.file_name()
                 .and_then(|name| name.to_str())
                 .map(|name| name.to_owned())
         })
         .flatten()
+    }
+
+    /// Whether the scene still stands for the file it came from (#748): a
+    /// project always does; a scene of models read from a file does while it
+    /// holds a model, and one emptied of them stands for no file (Undo brings
+    /// the name back with the models).
+    pub(crate) fn stands_for_its_file(&self) -> bool {
+        self.is_project()
+            || self
+                .with_scene(|spatial| {
+                    (0..)
+                        .map_while(|i| spatial.leaf_id_at_index(i))
+                        .any(|leaf| {
+                            spatial
+                                .leaf(leaf)
+                                .is_some_and(|q| !sc_geom::supports::is_any_support_mesh(q.mesh()))
+                        })
+                })
+                .unwrap_or(false)
+    }
+
+    /// [`Self::with_source_path`] for what names the scene to the person
+    /// (the title, the name an export takes): nothing once the scene no
+    /// longer stands for its file ([`Self::stands_for_its_file`]).
+    pub(crate) fn with_named_source<R>(&self, f: impl FnOnce(&Path) -> R) -> Option<R> {
+        if self.stands_for_its_file() {
+            self.with_source_path(f)
+        } else {
+            None
+        }
     }
 
     /// Runs `f` against the loaded [`SceneSpatial`], if any. Returns `None`
@@ -3508,11 +3538,23 @@ mod scene_document_tests {
     fn source_file_name_is_the_basename_with_extension() {
         let doc = SceneDocument::new();
         assert_eq!(doc.source_file_name(), None);
-        doc.install_graph(empty_graph(), fixture_path());
+        let mut graph = empty_graph();
+        let model = graph
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(IndexedMesh::new(None, Vec::new(), Vec::new()))),
+            )
+            .expect("a leaf");
+        graph.add_root(model).expect("a root");
+        doc.install_graph(graph, fixture_path());
         assert_eq!(
             doc.source_file_name().as_deref(),
             Some("scene_document_fixture.obj")
         );
+        // A scene of models with none left stands for no file (#748).
+        doc.install_graph(empty_graph(), fixture_path());
+        assert_eq!(doc.source_file_name(), None);
     }
 
     #[test]

@@ -860,6 +860,9 @@ impl ViewportController {
                 if let Some(ui) = self.ui.upgrade() {
                     self.refresh_object_list_on(&ui);
                 }
+                // The last model gone, the scene no longer stands for its
+                // file; Undo brings the name back (#748).
+                self.mirror_title_to_ui();
                 self.mirror_plates_to_ui();
                 self.mirror_prep_layers_to_ui();
                 self.mirror_slice_current_to_ui();

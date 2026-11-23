@@ -64,7 +64,7 @@ impl NameParts {
         every_plate: bool,
     ) -> Self {
         let mut parts = Self::now();
-        parts.project = project_of(document.with_source_path(|p| p.to_path_buf()));
+        parts.project = project_of(document.with_named_source(|p| p.to_path_buf()));
         let names = document.plate_names();
         let params = document.slice_params();
         if every_plate || names.len() > 1 {

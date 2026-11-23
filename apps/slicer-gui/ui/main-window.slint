@@ -660,6 +660,8 @@ export component MainWindow inherits Window {
     in-out property <bool> slice-cost-open: true;
     in-out property <string> slice-price-text;
     in-out property <string> slice-price-currency;
+    in property <[string]> slice-price-currencies;
+    in-out property <int> slice-price-currency-index;
     in-out property <string> slice-price-amount;
     in-out property <string> slice-price-losses;
     in-out property <string> slice-price-weighed;
@@ -2994,6 +2996,8 @@ export component MainWindow inherits Window {
                                 cost-open <=> root.slice-cost-open;
                                 price-text <=> root.slice-price-text;
                                 price-currency <=> root.slice-price-currency;
+                                price-currencies: root.slice-price-currencies;
+                                price-currency-index <=> root.slice-price-currency-index;
                                 price-amount <=> root.slice-price-amount;
                                 price-losses <=> root.slice-price-losses;
                                 price-weighed <=> root.slice-price-weighed;

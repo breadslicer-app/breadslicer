@@ -453,29 +453,26 @@ mod settings_file_tests {
     }
 
     #[test]
-    fn compact_menu_layout_round_trips() {
+    fn bar_menu_layout_round_trips() {
         let tmp = TempDir::new().unwrap();
         let file = settings_file_in(&tmp);
         let mut s = AppSettings::default();
-        s.set_menu_layout(MenuLayout::Compact);
+        s.set_menu_layout(MenuLayout::Bar);
         file.save(&s).unwrap();
 
         let loaded = file.load().settings();
-        assert_eq!(loaded.menu_layout(), MenuLayout::Compact);
+        assert_eq!(loaded.menu_layout(), MenuLayout::Bar);
 
         // Written as a plain lowercase string so an external tool or a
         // hand-edit can find it.
         let written = fs::read_to_string(&file.path).unwrap();
-        assert!(
-            written.contains("menu_layout = \"compact\""),
-            "got:\n{written}"
-        );
+        assert!(written.contains("menu_layout = \"bar\""), "got:\n{written}");
     }
 
     #[test]
     fn saved_toml_omits_default_menu_layout() {
-        // Bar (the default) is `skip_serializing_if`; a fresh config shouldn't
-        // carry a redundant `menu_layout = "bar"` line.
+        // Compact (the default) is `skip_serializing_if`; a fresh config
+        // shouldn't carry a redundant `menu_layout = "compact"` line.
         let tmp = TempDir::new().unwrap();
         let file = settings_file_in(&tmp);
         file.save(&AppSettings::default()).unwrap();

@@ -3069,6 +3069,10 @@ msgctxt "Workspace"
 msgid "Supports regenerated for the model's new pose."
 msgstr "Soportes regenerados para la pose nueva del modelo."
 
+msgctxt "Workspace"
+msgid "Slicing starts as soon as the supports are ready."
+msgstr "El laminado arranca apenas estén listos los soportes."
+
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
 msgid "ARRANGE"

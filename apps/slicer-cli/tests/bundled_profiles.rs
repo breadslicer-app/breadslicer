@@ -279,12 +279,12 @@ fn the_mars_5_builds_no_taller_than_elegoo_publishes() {
 }
 
 /// Every format the Mars 5 Ultra takes, in the order its profile
-/// lists them.
+/// lists them: goo first, the format the printer is made for (#751).
 ///
 /// Pinned here because the catalogue the converter reads stated a
 /// single format per machine as of 2026-09-10, so a re-import would
 /// drop whichever it does not name.
-const MARS_5_ULTRA_OUTPUT_FORMATS: [&str; 2] = ["ctb", "goo"];
+const MARS_5_ULTRA_OUTPUT_FORMATS: [&str; 2] = ["goo", "ctb"];
 
 #[test]
 fn the_mars_5_ultra_keeps_every_format_we_bind_it_to() {

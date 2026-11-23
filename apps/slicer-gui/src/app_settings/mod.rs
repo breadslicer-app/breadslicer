@@ -62,16 +62,17 @@ impl From<ThemeSetting> for ThemePreference {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 enum MenuLayoutSetting {
-    #[default]
     Bar,
+    /// The folded menu, the default since #749: the bar is a choice.
+    #[default]
     Compact,
 }
 
 impl MenuLayoutSetting {
-    /// `Bar` is the default; skipped when serializing so a fresh config stays
-    /// minimal.
-    fn is_bar(&self) -> bool {
-        matches!(self, MenuLayoutSetting::Bar)
+    /// `Compact` is the default; skipped when serializing so a fresh config
+    /// stays minimal.
+    fn is_compact(&self) -> bool {
+        matches!(self, MenuLayoutSetting::Compact)
     }
 }
 
@@ -185,8 +186,8 @@ pub(crate) struct Appearance {
     /// config stays minimal.
     #[serde(default, skip_serializing_if = "LanguageSetting::is_system")]
     language: LanguageSetting,
-    /// Omitted in TOML when the user is on `Bar` (the default).
-    #[serde(default, skip_serializing_if = "MenuLayoutSetting::is_bar")]
+    /// Omitted in TOML when the user is on `Compact` (the default).
+    #[serde(default, skip_serializing_if = "MenuLayoutSetting::is_compact")]
     menu_layout: MenuLayoutSetting,
 }
 
@@ -1122,8 +1123,8 @@ mod app_settings_tests {
     }
 
     #[test]
-    fn default_menu_layout_is_bar() {
-        assert_eq!(AppSettings::default().menu_layout(), MenuLayout::Bar);
+    fn default_menu_layout_is_compact() {
+        assert_eq!(AppSettings::default().menu_layout(), MenuLayout::Compact);
     }
 
     #[test]

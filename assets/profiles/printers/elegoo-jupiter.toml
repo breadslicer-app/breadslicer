@@ -29,6 +29,10 @@ two_stage_lift = true
 has_camera = false
 
 [[capabilities.output_formats]]
+format = "goo"
+version = "v3.0"
+
+[[capabilities.output_formats]]
 format = "ctb"
 version = "v5enc"
 

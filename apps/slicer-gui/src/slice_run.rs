@@ -251,8 +251,12 @@ pub(crate) struct SliceRun {
     // delay. Restarted on each unchanged press so repeated presses keep it
     // visible; stopped when a real slice starts.
     tooltip_timer: Rc<slint::Timer>,
-    // Looks whether the Supports tab's forces need measuring (#245).
+    // Looks whether the Supports tab's forces need measuring (#245), and
+    // whether a Slice press that waited can go (#750).
     forces_timer: slint::Timer,
+    // The Slice button pressed while the supports were being made, or a
+    // quiet run held the slicer (#750): it slices once they are done.
+    press_waits: Cell<bool>,
     // The scene and plate the Supports tab has stood still on, since when.
     forces_still: Cell<Option<(SceneRevision, u32, std::time::Instant)>>,
     // The scene and plate last measured on their own: a slice that fails is
@@ -301,6 +305,7 @@ impl SliceRun {
             plates_watch: RefCell::new(None),
             tooltip_timer: Rc::new(slint::Timer::default()),
             forces_timer: slint::Timer::default(),
+            press_waits: Cell::new(false),
             forces_still: Cell::new(None),
             forces_tried: Cell::new(None),
             forces_launched: Cell::new(None),
@@ -527,6 +532,19 @@ impl SliceRun {
         {
             self.cancel();
             self.after_forces.set(Some((trigger, self.quiet.get())));
+            return true;
+        }
+        // The Slice button while supports are being made, or while a quiet
+        // run (the islands after Generate, Fix All) holds the slicer: it
+        // slices once they are done, and says so (#750).
+        if trigger == SliceTrigger::Button && self.press_must_wait(&ui) {
+            if !self.press_waits.replace(true) {
+                crate::breadcrumbs::note("slice: the press waits for the supports");
+            }
+            ui.set_status_notice(ctr!(
+                "Workspace",
+                "Slicing starts as soon as the supports are ready."
+            ));
             return true;
         }
         // While Fix All runs, the Slice button and a Repair wait: the slices
@@ -1170,15 +1188,38 @@ impl SliceRun {
 }
 
 impl SliceRun {
+    /// Whether a Slice press has to wait (#750): models whose supports are
+    /// on their way (a move that makes them again, a Generate), or a quiet
+    /// run holding the slicer that is not the forces (those give way).
+    fn press_must_wait(&self, ui: &MainWindow) -> bool {
+        let quiet_slice = ui.get_slicing_in_progress()
+            && !matches!(
+                self.trigger.get(),
+                SliceTrigger::Button | SliceTrigger::EveryPlate | SliceTrigger::Forces
+            );
+        quiet_slice
+            || self.review.fixing()
+            || ui.get_support_gen_in_progress()
+            || self.document.supports_wanted().is_some()
+    }
+
     /// Measures the forces of the Supports tab on their own (#245): once the
     /// scene stood still for [`FORCES_SETTLE`], with supports in force, a
     /// FORCES card to fill and nothing else working, a quiet slice of the
     /// plate when the one held is not the scene as it stands. A change, or
     /// leaving the tab, cancels it while it runs.
-    fn forces_tick(self: &Rc<Self>) {
+    pub(crate) fn forces_tick(self: &Rc<Self>) {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
+        // A Slice press that waited for the supports (#750).
+        if self.press_waits.get() && !self.press_must_wait(&ui) {
+            self.press_waits.set(false);
+            ui.set_status_notice(Default::default());
+            crate::breadcrumbs::note("slice: the press that waited goes");
+            self.start_with(SliceTrigger::Button);
+            return;
+        }
         let revision = self.document.scene_revision();
         let plate = self.document.slice_plate();
         let in_supports = ui.get_workspace_section() == crate::WorkspaceSection::Supports;

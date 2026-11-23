@@ -3747,6 +3747,8 @@ export component SliceInspector inherits VerticalLayout {
     in-out property <bool> cost-open: true;
     in-out property <string> price-text;
     in-out property <string> price-currency;
+    in property <[string]> price-currencies;
+    in-out property <int> price-currency-index;
     in-out property <string> price-amount;
     in-out property <string> price-losses;
     in-out property <string> price-weighed;
@@ -4374,12 +4376,12 @@ export component SliceInspector inherits VerticalLayout {
             }
             Field {
                 label: @tr("Inspector" => "Currency");
-                width: 76px;
-                currency-input := PushedEdit {
-                    pushed: root.price-currency;
-                    placeholder-text: "$";
-                    edited(t) => {
-                        root.price-edited(1, t);
+                width: 104px;
+                currency-combo := ComboBox {
+                    model: root.price-currencies;
+                    current-index <=> root.price-currency-index;
+                    selected(label) => {
+                        root.price-edited(1, label);
                     }
                 }
             }

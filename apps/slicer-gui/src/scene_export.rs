@@ -29,7 +29,7 @@ const DEFAULT_EXPORT_EXTENSION: &str = "stl";
 /// original load path's stem (for example `gear.obj` -> `gear`). `None` when no
 /// scene is loaded or the source path has no recognisable stem.
 pub(crate) fn default_export_stem(doc: &SceneDocument) -> Option<String> {
-    doc.with_source_path(|p| p.file_stem().and_then(|s| s.to_str()).map(|s| s.to_owned()))
+    doc.with_named_source(|p| p.file_stem().and_then(|s| s.to_str()).map(|s| s.to_owned()))
         .flatten()
 }
 

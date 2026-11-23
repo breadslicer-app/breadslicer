@@ -960,6 +960,13 @@ fn a_scene_emptied_and_filled_again_is_named_after_the_new_file() {
         document.apply_edit(gone.clone()).expect("removed");
         document.push_edit(gone);
         assert!(leaves(&document).is_empty());
+        // Emptied, the scene stands for no file: the title and an export's
+        // name no longer take the old one (#748); Undo brings it back.
+        assert_eq!(document.source_file_name(), None);
+        assert!(document.undo().expect("undoes"));
+        assert_eq!(document.source_file_name().as_deref(), Some("base.stl"));
+        assert!(document.redo().expect("redoes"));
+        assert_eq!(document.source_file_name(), None);
 
         ctrl.open_models(vec![goblin]);
         finish_loads(&ctrl);
