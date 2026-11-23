@@ -377,7 +377,7 @@ fn tip_chain(graph: &mut SupportGraph, contact: &SupportContact, owner: usize) -
             if node == surface {
                 (surface, contact.surface)
             } else {
-                graph.member(surface, node, d_tip, d_tip, NECK_KT, owner);
+                graph.tip_member(surface, node, d_tip, d_tip, NECK_KT, owner);
                 (node, neck)
             }
         }
@@ -393,7 +393,7 @@ fn tip_chain(graph: &mut SupportGraph, contact: &SupportContact, owner: usize) -
         let d = d_tip + (d_socket - d_tip) * t;
         let node = graph.node(p);
         if node != from {
-            graph.member(from, node, d_from, d, kt, owner);
+            graph.tip_member(from, node, d_from, d, kt, owner);
             kt = 1.0;
             d_from = d;
             from = node;

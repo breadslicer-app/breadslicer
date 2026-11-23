@@ -29,7 +29,7 @@ fn trunk(g: &mut SupportGraph, name: &str, x: f64, y: f64, z: f64) -> usize {
     );
     g.fix(nodes[0]);
     let surface = g.node([x, y, z]);
-    g.member(nodes[2], surface, 0.3, 0.3, NECK_KT, owner);
+    g.tip_member(nodes[2], surface, 0.3, 0.3, NECK_KT, owner);
     g.contact(surface, [x, y, z + 0.1], owner);
     nodes[1]
 }
@@ -58,6 +58,11 @@ fn two_trunks_under_a_body_share_its_pull() {
     );
     let check = check_layer(&[g], 10.0, &[pulled], &OPTIONS).unwrap();
     assert_eq!((check.tips_found, check.tips_missed), (2, 0));
+    assert_eq!(
+        check.parts[0],
+        vec![crate::Part::Tip; 2],
+        "the neck is worst off"
+    );
     let [a, b] = [check.owners[0][0], check.owners[0][1]];
     assert!((a - b).abs() < 1e-9 * a, "{a} against {b}");
     // Half a newton on a 0.3 mm neck, twice for its shoulder, over 8 MPa.

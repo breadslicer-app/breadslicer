@@ -10,7 +10,7 @@
 // tabs. Rust (`layer_timeline`, `stress_view`) drives it.
 
 import { Theme } from "../kit/theme.slint";
-import { DisclosureChevron, Note, ScCheckBox } from "../kit/controls.slint";
+import { DisclosureChevron, Note, ScButton, ScCheckBox } from "../kit/controls.slint";
 import { LayerTimeline, TimelineMark } from "layer-timeline.slint";
 
 // The colours of the load, as the 3D view paints them: green for little,
@@ -54,6 +54,8 @@ export component StressCard inherits Rectangle {
     in property <string> frame-note;
     // The supports checked as a beam frame on the critical layers.
     in-out property <bool> frame: true;
+    // How many supports the frame found past what they hold (#247).
+    in property <int> weak-supports;
     // The 3D view painted by load.
     in-out property <bool> paint: true;
     // Unfolded or folded to its heading.
@@ -62,6 +64,7 @@ export component StressCard inherits Rectangle {
     callback layer-picked(int);
     callback paint-toggled(bool);
     callback frame-toggled(bool);
+    callback reinforce();
 
     height: root.open ? card-layout.preferred-height : 36px;
     clip: true;
@@ -178,6 +181,17 @@ export component StressCard inherits Rectangle {
                     vertical-alignment: center;
                     horizontal-stretch: 1;
                     overflow: elide;
+                }
+            }
+            // Reinforce weak spots (#247): the supports past what they hold,
+            // their tips or shafts made wider, one step to undo.
+            if root.has-force-image && root.frame && root.weak-supports > 0: HorizontalLayout {
+                alignment: start;
+                ScButton {
+                    text: @tr("StressCard" => "Reinforce {n} weak support" | "Reinforce {n} weak supports" % root.weak-supports);
+                    clicked => {
+                        root.reinforce();
+                    }
                 }
             }
         }

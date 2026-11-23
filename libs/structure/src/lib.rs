@@ -55,7 +55,8 @@ pub use check::{MemberCheck, Sections, buckling_runs, member_check};
 pub use frame::{Body, Frame, Hold, MERGE_MM, Member, Point};
 pub use solve::{Load, Loads, Material, MemberForces, SolveError, Solved, Target, solve};
 pub use supports::{
-    BodyLoad, CheckOptions, GraphContact, GraphFoot, LayerCheck, NECK_KT, SupportGraph, check_layer,
+    BodyLoad, CheckOptions, GraphContact, GraphFoot, LayerCheck, NECK_KT, Part, SupportGraph,
+    check_layer,
 };
 
 #[cfg(test)]

@@ -18,11 +18,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use bread_review::PlateLoads;
-use bread_structure::{BodyLoad, CheckOptions, LayerCheck, Material, SupportGraph, check_layer};
+use bread_structure::{
+    BodyLoad, CheckOptions, LayerCheck, Material, Part, SupportGraph, check_layer,
+};
 use rayon::prelude::*;
 use sc_print_glue::PlateFrame;
 
 use crate::support_persist::DrawnSet;
+
+/// A support whose frame utilisation passes 1 by more than this is a weak
+/// spot to reinforce (#247).
+pub(crate) const WEAK_FROM: f64 = 1.0;
 
 /// Each support's utilisation, per set, by id: as [`crate::stress_view`]
 /// paints them.
@@ -35,6 +41,8 @@ pub(crate) struct FrameShares {
     pub(crate) layers: Vec<(usize, Shares)>,
     /// Each support's worst over those layers.
     pub(crate) worst: Shares,
+    /// Per set, the part of each support worst off then.
+    pub(crate) parts: Vec<std::collections::HashMap<String, Part>>,
     /// The highest utilisation and its layer.
     pub(crate) peak: Option<(f64, usize)>,
     /// How long it took.
@@ -42,6 +50,22 @@ pub(crate) struct FrameShares {
 }
 
 impl FrameShares {
+    /// The supports past [`WEAK_FROM`], per set: id, utilisation and the
+    /// part worst off.
+    pub(crate) fn weak(&self) -> Vec<Vec<(String, f64, Part)>> {
+        self.worst
+            .iter()
+            .zip(&self.parts)
+            .map(|(shares, parts)| {
+                shares
+                    .iter()
+                    .filter(|(_, u)| *u >= WEAK_FROM)
+                    .map(|(id, u)| (id.clone(), *u, parts.get(id).copied().unwrap_or_default()))
+                    .collect()
+            })
+            .collect()
+    }
+
     /// What layer `layer` does to the supports, when it is one checked.
     pub(crate) fn at(&self, layer: usize) -> Option<&Shares> {
         self.layers
@@ -132,22 +156,38 @@ pub(crate) fn frame_shares(
         return None;
     }
     let mut out = FrameShares::default();
-    let mut worst: Vec<std::collections::BTreeMap<String, f64>> =
+    let mut worst: Vec<std::collections::BTreeMap<String, (f64, Part)>> =
         vec![Default::default(); graphs.len()];
     for (layer, check) in &checks {
         if out.peak.is_none_or(|(u, _)| check.worst > u) && check.worst > 0.0 {
             out.peak = Some((check.worst, *layer));
         }
-        let shares = shares_of(&graphs, check);
-        for (set, list) in shares.iter().enumerate() {
-            for (id, u) in list {
-                let slot = worst[set].entry(id.clone()).or_insert(0.0);
-                *slot = slot.max(*u);
+        for (set, graph) in graphs.iter().enumerate() {
+            for (owner, id) in graph.owners().iter().enumerate() {
+                let u = check.owners[set][owner];
+                if u <= 0.0 {
+                    continue;
+                }
+                let slot = worst[set].entry(id.clone()).or_insert((0.0, Part::Shaft));
+                if u > slot.0 {
+                    *slot = (u, check.parts[set][owner]);
+                }
             }
         }
-        out.layers.push((*layer, shares));
+        out.layers.push((*layer, shares_of(&graphs, check)));
     }
-    out.worst = worst.into_iter().map(|m| m.into_iter().collect()).collect();
+    out.parts = worst
+        .iter()
+        .map(|m| {
+            m.iter()
+                .map(|(id, (_, part))| (id.clone(), *part))
+                .collect()
+        })
+        .collect();
+    out.worst = worst
+        .into_iter()
+        .map(|m| m.into_iter().map(|(id, (u, _))| (id, u)).collect())
+        .collect();
     out.took = start.elapsed();
     Some(out)
 }

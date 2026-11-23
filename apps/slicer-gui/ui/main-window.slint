@@ -627,6 +627,9 @@ export component MainWindow inherits Window {
     in-out property <bool> stress-paint: true;
     in-out property <bool> stress-frame: true;
     callback stress-frame-toggled(bool);
+    // How many supports the frame found weak (#247), and the button.
+    in property <int> slice-timeline-weak-supports;
+    callback stress-reinforce();
     in-out property <bool> stress-open: true;
     callback stress-paint-toggled(bool);
     // The card shows in the Slice tab with a slice held, and in the Supports
@@ -2514,6 +2517,10 @@ export component MainWindow inherits Window {
                         frame <=> root.stress-frame;
                         frame-toggled(on) => {
                             root.stress-frame-toggled(on);
+                        }
+                        weak-supports: root.slice-timeline-weak-supports;
+                        reinforce => {
+                            root.stress-reinforce();
                         }
                         readout(layer, generation) => {
                             return root.slice-timeline-readout(layer, generation);

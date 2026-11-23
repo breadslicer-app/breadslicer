@@ -384,6 +384,7 @@ impl StressView {
         let Some((loads, frame)) = loads else {
             self.stop_check();
             ui.set_slice_timeline_frame_note(Default::default());
+            ui.set_slice_timeline_weak_supports(0);
             *self.held.borrow_mut() = None;
             *self.paint.borrow_mut() = StressPaint::default();
             ui.set_slice_timeline_has_image(false);
@@ -497,6 +498,7 @@ impl StressView {
                     .then(|| (held.loads.clone(), held.frame.clone(), held.sets.clone()))
             })
         };
+        ui.set_slice_timeline_weak_supports(0);
         let Some((loads, frame, sets)) = job else {
             let had = self.checked.borrow_mut().take().is_some();
             ui.set_slice_timeline_frame_note(Default::default());
@@ -512,6 +514,7 @@ impl StressView {
             .is_some_and(|(checked_for, _)| *checked_for == generation)
         {
             ui.set_slice_timeline_frame_note(self.frame_note().into());
+            ui.set_slice_timeline_weak_supports(self.weak_count() as i32);
             return;
         }
         ui.set_slice_timeline_frame_note(
@@ -590,8 +593,36 @@ impl StressView {
             None => *self.checked.borrow_mut() = None,
         }
         ui.set_slice_timeline_frame_note(self.frame_note().into());
+        ui.set_slice_timeline_weak_supports(self.weak_count() as i32);
         self.layer_asked.set(None);
         self.draw_supports(self.paint_layer(&ui));
+    }
+
+    fn weak_count(&self) -> usize {
+        self.checked
+            .borrow()
+            .as_ref()
+            .filter(|(checked_for, _)| *checked_for == self.generation.get())
+            .map_or(0, |(_, found)| found.weak().iter().map(Vec::len).sum())
+    }
+
+    /// The supports the frame found weak (#247), by the leaf of their set:
+    /// id, utilisation and the part worst off.
+    pub(crate) fn weak_supports(&self) -> Vec<(NodeId, Vec<(String, f64, bread_structure::Part)>)> {
+        let held = self.held.borrow();
+        let checked = self.checked.borrow();
+        let (Some(held), Some((checked_for, found))) = (held.as_ref(), checked.as_ref()) else {
+            return Vec::new();
+        };
+        if *checked_for != self.generation.get() {
+            return Vec::new();
+        }
+        held.sets
+            .iter()
+            .zip(found.weak())
+            .filter(|(_, weak)| !weak.is_empty())
+            .map(|(drawn, weak)| (drawn.leaf, weak))
+            .collect()
     }
 
     /// What the card says of the frame check.

@@ -36,6 +36,16 @@ pub struct GraphContact {
     pub owner: usize,
 }
 
+/// Which part of a support a beam is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Part {
+    /// Its shaft, a brace, a root.
+    #[default]
+    Shaft,
+    /// Its tip: the cone and the neck to the model.
+    Tip,
+}
+
 /// Where a support stands on the model instead of the plate: its root.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GraphFoot {
@@ -53,6 +63,7 @@ pub struct GraphFoot {
 pub struct SupportGraph {
     frame: Frame,
     owner_of: Vec<usize>,
+    part_of: Vec<Part>,
     owners: Vec<String>,
     contacts: Vec<GraphContact>,
     feet: Vec<GraphFoot>,
@@ -82,10 +93,30 @@ impl SupportGraph {
         self.frame.fix(node);
     }
 
-    /// A beam of support `owner` (see [`Frame::member`]).
+    /// A beam of support `owner`'s shaft (see [`Frame::member`]).
     pub fn member(&mut self, a: usize, b: usize, d_a: f64, d_b: f64, kt: f64, owner: usize) {
+        self.part_member(a, b, d_a, d_b, kt, owner, Part::Shaft);
+    }
+
+    /// A beam of support `owner`'s tip.
+    pub fn tip_member(&mut self, a: usize, b: usize, d_a: f64, d_b: f64, kt: f64, owner: usize) {
+        self.part_member(a, b, d_a, d_b, kt, owner, Part::Tip);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn part_member(
+        &mut self,
+        a: usize,
+        b: usize,
+        d_a: f64,
+        d_b: f64,
+        kt: f64,
+        owner: usize,
+        part: Part,
+    ) {
         if self.frame.member(a, b, d_a, d_b, kt).is_some() {
             self.owner_of.push(owner);
+            self.part_of.push(part);
         }
     }
 
@@ -124,6 +155,11 @@ impl SupportGraph {
         &self.owner_of
     }
 
+    /// The part of its support each beam is.
+    pub fn part_of(&self) -> &[Part] {
+        &self.part_of
+    }
+
     pub fn owners(&self) -> &[String] {
         &self.owners
     }
@@ -144,8 +180,14 @@ impl SupportGraph {
                 out.fix(nodes[i]);
             }
         }
-        for (m, owner) in self.frame.members().iter().zip(&self.owner_of) {
-            out.member(nodes[m.a], nodes[m.b], m.d_a, m.d_b, m.kt, *owner);
+        for ((m, owner), part) in self
+            .frame
+            .members()
+            .iter()
+            .zip(&self.owner_of)
+            .zip(&self.part_of)
+        {
+            out.part_member(nodes[m.a], nodes[m.b], m.d_a, m.d_b, m.kt, *owner, *part);
         }
         out.contacts = self
             .contacts
@@ -204,6 +246,8 @@ pub struct LayerCheck {
     /// stress over the strength or the squeeze over what buckles it,
     /// whichever is worse; 0 for one the layer does not reach.
     pub owners: Vec<Vec<f64>>,
+    /// Per graph, per support: the part of it that is worst off.
+    pub parts: Vec<Vec<Part>>,
     /// The highest of them.
     pub worst: f64,
     /// Tips of the bodies found in the graphs, and not.
@@ -227,8 +271,8 @@ pub fn check_layer(
 ) -> Result<LayerCheck, SolveError> {
     let top = z_mm + CLIP_SLACK_MM;
     let mut frame = Frame::new();
-    // Each beam kept: its graph and support.
-    let mut kept: Vec<(usize, usize)> = Vec::new();
+    // Each beam kept: its graph, support and part.
+    let mut kept: Vec<(usize, usize, Part)> = Vec::new();
     // Each graph's node in the frame.
     let mut node_maps: Vec<Vec<Option<usize>>> = Vec::with_capacity(graphs.len());
     for (g, graph) in graphs.iter().enumerate() {
@@ -247,7 +291,12 @@ pub fn check_layer(
                 })
             })
             .collect();
-        for (m, &owner) in source.members().iter().zip(graph.owner_of()) {
+        for ((m, &owner), &part) in source
+            .members()
+            .iter()
+            .zip(graph.owner_of())
+            .zip(graph.part_of())
+        {
             let (a, b) = match (map[m.a], map[m.b]) {
                 (Some(a), Some(b)) => (a, b),
                 (None, None) => continue,
@@ -271,7 +320,7 @@ pub fn check_layer(
                 (m.d_a, m.d_b)
             };
             if frame.member(a, b, d_a, d_b, m.kt).is_some() {
-                kept.push((g, owner));
+                kept.push((g, owner, part));
             }
         }
         node_maps.push(map);
@@ -314,6 +363,10 @@ pub fn check_layer(
     };
     let mut check = LayerCheck {
         owners: graphs.iter().map(|g| vec![0.0; g.owners().len()]).collect(),
+        parts: graphs
+            .iter()
+            .map(|g| vec![Part::Shaft; g.owners().len()])
+            .collect(),
         ..LayerCheck::default()
     };
     let mut pulled: Vec<(usize, f64, Point)> = Vec::new();
@@ -359,7 +412,7 @@ pub fn check_layer(
     check.bodies_unheld = pulled.iter().filter(|(b, _, _)| !held_bodies[*b]).count();
     let critical = buckling_runs(&frame, &options.material);
     let directions = options.directions.max(1);
-    for (k, &(g, owner)) in kept.iter().enumerate() {
+    for (k, &(g, owner, part)) in kept.iter().enumerate() {
         let (Some(up), Some(x), Some(y)) = (
             solved.forces[0][k],
             solved.forces[1][k],
@@ -377,7 +430,10 @@ pub fn check_layer(
                 .max(m.buckling);
         }
         let slot = &mut check.owners[g][owner];
-        *slot = slot.max(worst);
+        if worst > *slot {
+            *slot = worst;
+            check.parts[g][owner] = part;
+        }
         check.worst = check.worst.max(worst);
     }
     Ok(check)
