@@ -285,8 +285,8 @@ fn several_files_join_together_as_one_undo_step() {
         let now = leaves(&document);
         assert_eq!(now.len(), 4, "the STL and both objects of the 3MF");
         let names: Vec<String> = rows(&document).into_iter().map(|r| r.0).collect();
-        // Named after their files, whatever the files call them.
-        assert_eq!(names, ["Object 1", "goblin", "pair 1", "pair 2"]);
+        // The 3MF's parts keep the names it gives them (#731).
+        assert_eq!(names, ["Object 1", "goblin", "Knight", "Horse"]);
         assert_eq!(
             document.selection(),
             Selection::of(now[1..].iter().copied().map(LeafId)),
@@ -726,6 +726,92 @@ pub(crate) fn gap_between(a: [f32; 4], b: [f32; 4]) -> f32 {
         .max(a[0] - b[2])
         .max(b[1] - a[3])
         .max(a[1] - b[3])
+}
+
+/// #731: the parts of a file of several keep the names it gives them; one
+/// it gives none, or one any part could have, or its exporter's header, is
+/// numbered after the file; two parts of one name are told apart. A file of
+/// a single model gives it the file's name.
+#[test]
+fn the_parts_of_a_file_keep_their_own_names() {
+    use sc_mesh_core::MeshMetadata;
+
+    let named = |name: Option<&str>| {
+        let mut mesh = sc_mesh_fixtures::unit_cube_mesh();
+        mesh.meta = name.map(|n| MeshMetadata {
+            name: Some(n.to_owned()),
+            ..MeshMetadata::default()
+        });
+        mesh
+    };
+    let scene_of = |names: &[Option<&str>]| {
+        let mut scene = Scene::new();
+        for name in names {
+            let leaf = scene
+                .add_leaf(
+                    None,
+                    Transform3D::Identity,
+                    LeafPayload::Mesh(Arc::new(named(*name))),
+                )
+                .unwrap();
+            scene.add_root(leaf).unwrap();
+        }
+        scene
+    };
+    let names_of = |scene: &Scene| -> Vec<String> {
+        scene
+            .roots()
+            .iter()
+            .map(|id| {
+                let node = scene.node(*id).unwrap();
+                node.meta.as_ref().unwrap().name.clone().unwrap()
+            })
+            .collect()
+    };
+
+    let mut scene = scene_of(&[
+        Some("Knight"),
+        Some("Object 2"),
+        None,
+        Some("Exported from Blender-3.3.1"),
+        Some("Mesh.002"),
+        Some("Arm"),
+        Some("arm"),
+        Some("chess"),
+    ]);
+    crate::model_import::name_models_after_file(&mut scene, Path::new("C:/minis/chess.3mf"));
+    assert_eq!(
+        names_of(&scene),
+        [
+            "Knight", "chess 2", "chess 3", "chess 4", "chess 5", "Arm", "arm 2", "chess 8"
+        ]
+    );
+
+    let mut single = scene_of(&[Some("Knight")]);
+    crate::model_import::name_models_after_file(&mut single, Path::new("C:/minis/rook.3mf"));
+    assert_eq!(names_of(&single), ["rook"]);
+
+    for generic in [
+        "",
+        "  ",
+        "Object",
+        "Body_3",
+        "Part (2)",
+        "solid ascii",
+        "Untitled",
+        "123",
+    ] {
+        assert!(
+            crate::model_import::is_generic_name(generic, "rook"),
+            "{generic:?}"
+        );
+    }
+    for own in ["Knight", "Objective marker", "Bodyguard", "Dragón 2"] {
+        assert!(
+            !crate::model_import::is_generic_name(own, "rook"),
+            "{own:?}"
+        );
+    }
 }
 
 /// #420: the model of a file a scene opens from is named after the file,
