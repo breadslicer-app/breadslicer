@@ -37,8 +37,11 @@ mod fill;
 mod footprint;
 mod grid;
 mod plate;
+mod scene_file;
 mod search;
 mod separate;
+
+pub use scene_file::SceneJob;
 
 pub use cache::{kept_bytes, kept_parts, kept_parts_of};
 pub use fill::{FillCopy, Filled, fill};
@@ -731,5 +734,7 @@ impl Parking {
     }
 }
 
+#[cfg(test)]
+mod bench;
 #[cfg(test)]
 mod tests;

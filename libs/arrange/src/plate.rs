@@ -126,6 +126,20 @@ impl Occupancy {
     }
 }
 
+#[cfg(test)]
+impl Occupancy {
+    /// The cells held in the fullest band, and in any band: what the
+    /// plate's bodies cover from above.
+    pub(crate) fn densest_and_shadow(&self) -> (usize, usize) {
+        let densest = self.bands.iter().flatten().map(BitGrid::count).max();
+        let mut shadow = BitGrid::new(self.width, self.height);
+        for grid in self.bands.iter().flatten() {
+            shadow.merge(grid);
+        }
+        (densest.unwrap_or(0), shadow.count())
+    }
+}
+
 /// How many cells `mask` with its body's frame at `at` shares with `grid`,
 /// counted up to `cap`.
 pub(crate) fn shared(grid: &BitGrid, mask: &BandMask, at: [i32; 2], cap: u32) -> u32 {
