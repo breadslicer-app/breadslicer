@@ -10975,3 +10975,19 @@ msgstr "Soportes: el tirón más fuerte de toda la impresión"
 msgctxt "StressCard"
 msgid "Supports: pull as layer {} peels"
 msgstr "Soportes: el tirón al despegar la capa {}"
+
+msgctxt "StressCard"
+msgid "As a frame"
+msgstr "Como pórtico"
+
+msgctxt "StressCard"
+msgid "Checking the supports as a frame…"
+msgstr "Calculando los soportes como pórtico…"
+
+msgctxt "StressCard"
+msgid "As a frame, {} layers: worst {}% at layer {} ({} s)"
+msgstr "Como pórtico, {} capas: lo peor {} % en la capa {} ({} s)"
+
+msgctxt "StressCard"
+msgid "As a frame, {} layers: nothing pulled ({} s)"
+msgstr "Como pórtico, {} capas: nada tira ({} s)"

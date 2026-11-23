@@ -301,3 +301,75 @@ fn a_tip_the_plate_relieves_has_no_curve() {
     assert!(loads.tip_curves[0].is_empty());
     assert!(loads.layer_utilization.iter().all(|&u| u == 0.0));
 }
+
+// Critical layers as frame cases (#244).
+
+#[test]
+fn a_critical_layer_records_what_holds_each_body() {
+    let fixture = slab()
+        .tip(50.0, 30.0, 5, 2.0)
+        .tip(110.0, 30.0, 5, 2.0)
+        .tip(50.0, 90.0, 5, 2.0)
+        .tip(110.0, 90.0, 5, 2.0)
+        .build();
+    let loads = straight_loads_of(&fixture);
+    let peak = loads.bodies[0].layer;
+    let case = loads
+        .cases
+        .iter()
+        .find(|case| case.layer == peak)
+        .expect("the body's worst layer is a case");
+    assert!(loads.cases.len() <= CASE_LAYERS);
+    assert_eq!(case.bodies.len(), 1);
+    let body = &case.bodies[0];
+    assert!(!body.held);
+    let mut tips = body.tips.clone();
+    tips.sort_unstable();
+    assert_eq!(tips, vec![0, 1, 2, 3]);
+    near(body.force_n.mid, pull(64.0));
+    assert!((case.z_mm - fixture.input().layers()[peak].top_mm).abs() < 1e-12);
+}
+
+#[test]
+fn a_body_the_plate_comes_to_hold_is_held_in_later_cases() {
+    let fixture = FixtureBuilder::new(14)
+        .model(0..14, Shape::rect(150.0, 40.0, 170.0, 60.0))
+        .model(5..8, Shape::rect(40.0, 20.0, 120.0, 100.0))
+        .model(8..14, Shape::rect(40.0, 20.0, 160.0, 100.0))
+        .tip(80.0, 60.0, 5, 2.0)
+        .build();
+    let loads = straight_loads_of(&fixture);
+    assert!(!loads.cases.is_empty());
+    for case in &loads.cases {
+        let body = case
+            .bodies
+            .iter()
+            .find(|b| b.tips == vec![0])
+            .expect("the tip's body");
+        assert_eq!(body.held, case.layer >= 8, "layer {}", case.layer);
+    }
+}
+
+#[test]
+fn feet_join_the_body_they_stand_on() {
+    let fixture = slab()
+        .tip(50.0, 30.0, 5, 2.0)
+        .tip(110.0, 90.0, 5, 2.0)
+        .build();
+    let foot = {
+        let input = fixture.input();
+        let top = input.layers()[7].top_mm;
+        let [x, y] = input.pixel_to_plate([80.0, 60.0]);
+        [x, y, top]
+    };
+    let input = fixture.input().with_feet(vec![foot]);
+    let regions = PlateRegions::compute(&input, &SweepOptions::default());
+    let loads = plate_loads(
+        &ReviewContext::new(&input, &regions),
+        &LoadOptions::default(),
+    );
+    let last = loads.cases.iter().max_by_key(|c| c.layer).expect("a case");
+    assert!(last.layer >= 7);
+    assert_eq!(last.bodies.len(), 1);
+    assert_eq!(last.bodies[0].feet, vec![foot]);
+}

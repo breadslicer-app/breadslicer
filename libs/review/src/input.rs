@@ -135,6 +135,7 @@ pub struct ReviewInput<'a> {
     raft_top_mm: Option<f64>,
     support_lift_mm: Option<f64>,
     tips: Vec<TipCone>,
+    feet: Vec<[f64; 3]>,
     support_layers: Range<usize>,
     support_box_mm: Option<[f64; 5]>,
 }
@@ -194,6 +195,7 @@ impl<'a> ReviewInput<'a> {
             raft_top_mm: None,
             support_lift_mm: None,
             tips: Vec::new(),
+            feet: Vec::new(),
             support_layers: 0..0,
             support_box_mm: None,
         })
@@ -248,6 +250,15 @@ impl<'a> ReviewInput<'a> {
         self
     }
 
+    /// The same input, with where the supports made here stand on the model
+    /// instead of the plate (#244): their roots, in printer-frame
+    /// millimetres.
+    #[must_use]
+    pub fn with_feet(mut self, feet: Vec<[f64; 3]>) -> Self {
+        self.feet = feet;
+        self
+    }
+
     /// The same input, knowing that the supports made here stand on `layers`
     /// and take `box_mm`: `[min x, min y, max x, max y, top]` in plate
     /// millimetres, `None` when that is not known.
@@ -262,6 +273,12 @@ impl<'a> ReviewInput<'a> {
     #[inline]
     pub fn tips(&self) -> &[TipCone] {
         &self.tips
+    }
+
+    /// Where the supports made here stand on the model.
+    #[inline]
+    pub fn feet(&self) -> &[[f64; 3]] {
+        &self.feet
     }
 
     /// Whether supports made here stand on layer `layer`.

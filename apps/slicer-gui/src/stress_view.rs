@@ -26,6 +26,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -37,6 +38,7 @@ use slint::{ComponentHandle, Image, Rgba8Pixel, SharedPixelBuffer};
 use crate::MainWindow;
 use crate::i18n::ctr;
 use crate::mesh_render::{Overlay, OverlayMesh, STRESS_BANDS, StressBands, StressPaint, load_tint};
+use crate::support_frame::{FrameShares, Shares, frame_shares};
 use crate::support_persist::{DrawnSet, sets_in_force};
 use crate::viewport::ViewportController;
 
@@ -254,6 +256,29 @@ struct Held {
     /// Which support each tip is.
     owners: Vec<Option<(usize, String)>>,
     sets: Vec<DrawnSet>,
+    /// The slice's plate frame.
+    frame: PlateFrame,
+}
+
+/// The frame check running (#244): the review it is for, its cancel flag,
+/// and where it leaves what it found.
+struct Checking {
+    generation: u64,
+    cancel: Arc<AtomicBool>,
+    slot: Arc<Mutex<Option<Option<FrameShares>>>>,
+}
+
+/// Each support's utilisation in `extra` raises its share in `shares`.
+fn raise(shares: &mut [Vec<(String, f64)>], extra: &Shares) {
+    for (list, more) in shares.iter_mut().zip(extra) {
+        for (id, u) in more {
+            match list.iter_mut().find(|(own, _)| own == id) {
+                Some(slot) => slot.1 = slot.1.max(*u),
+                None => list.push((id.clone(), *u)),
+            }
+        }
+        list.sort_by(|a, b| a.0.cmp(&b.0));
+    }
 }
 
 /// The stress view of one window.
@@ -281,6 +306,10 @@ pub(crate) struct StressView {
     /// The review and the layer seen at the last look: the paint is drawn
     /// again once the slider rests.
     layer_seen: Cell<Option<(u64, Option<usize>)>>,
+    /// The frame check running, and what the last one found (#244).
+    checking: RefCell<Option<Checking>>,
+    checked: RefCell<Option<(u64, Arc<FrameShares>)>>,
+    check_poll: slint::Timer,
 }
 
 impl std::fmt::Debug for StressView {
@@ -304,6 +333,15 @@ impl StressView {
             layer_poll: slint::Timer::default(),
             layer_asked: Cell::new(None),
             layer_seen: Cell::new(None),
+            checking: RefCell::new(None),
+            checked: RefCell::new(None),
+            check_poll: slint::Timer::default(),
+        });
+        let weak = Rc::downgrade(&view);
+        ui.on_stress_frame_toggled(move |_| {
+            if let Some(view) = weak.upgrade() {
+                view.check_frame();
+            }
         });
         let weak = Rc::downgrade(&view);
         ui.on_stress_paint_toggled(move |_| {
@@ -344,6 +382,8 @@ impl StressView {
         self.generation.set(self.generation.get() + 1);
         let document = self.ctrl.document();
         let Some((loads, frame)) = loads else {
+            self.stop_check();
+            ui.set_slice_timeline_frame_note(Default::default());
             *self.held.borrow_mut() = None;
             *self.paint.borrow_mut() = StressPaint::default();
             ui.set_slice_timeline_has_image(false);
@@ -375,10 +415,12 @@ impl StressView {
             loads,
             owners,
             sets,
+            frame,
         });
         self.layer_seen.set(None);
         let at = self.paint_layer(&ui);
         self.draw_supports(at);
+        self.check_frame();
         self.show_picked(&ui);
         self.push_paint();
     }
@@ -406,10 +448,23 @@ impl StressView {
             let Some(held) = held.as_ref() else {
                 return;
             };
-            (
-                support_shares(&held.loads, &held.owners, held.sets.len(), at),
-                held.sets.clone(),
-            )
+            let mut shares = support_shares(&held.loads, &held.owners, held.sets.len(), at);
+            // The frame's worst, where it was checked (#244).
+            if let Some((_, found)) = self
+                .checked
+                .borrow()
+                .as_ref()
+                .filter(|(checked_for, _)| *checked_for == generation)
+            {
+                let extra = match at {
+                    None => Some(&found.worst),
+                    Some(layer) => found.at(layer),
+                };
+                if let Some(extra) = extra {
+                    raise(&mut shares, extra);
+                }
+            }
+            (shares, held.sets.clone())
         };
         let slot = Arc::new(Mutex::new(None));
         *self.drawing.borrow_mut() = Some(slot.clone());
@@ -423,6 +478,146 @@ impl StressView {
             });
         if spawned.is_ok() {
             self.watch_drawing();
+        }
+    }
+
+    /// Checks the supports of the review on show as a frame (#244), off the
+    /// UI thread, when the card's box asks for it; drops what an older
+    /// review found.
+    fn check_frame(self: &Rc<Self>) {
+        self.stop_check();
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let generation = self.generation.get();
+        let job = {
+            let held = self.held.borrow();
+            held.as_ref().and_then(|held| {
+                (ui.get_stress_frame() && !held.loads.cases.is_empty() && !held.sets.is_empty())
+                    .then(|| (held.loads.clone(), held.frame.clone(), held.sets.clone()))
+            })
+        };
+        let Some((loads, frame, sets)) = job else {
+            let had = self.checked.borrow_mut().take().is_some();
+            ui.set_slice_timeline_frame_note(Default::default());
+            if had {
+                self.draw_supports(self.paint_layer(&ui));
+            }
+            return;
+        };
+        if self
+            .checked
+            .borrow()
+            .as_ref()
+            .is_some_and(|(checked_for, _)| *checked_for == generation)
+        {
+            ui.set_slice_timeline_frame_note(self.frame_note().into());
+            return;
+        }
+        ui.set_slice_timeline_frame_note(
+            ctr!("StressCard", "Checking the supports as a frame…").into(),
+        );
+        let cancel = Arc::new(AtomicBool::new(false));
+        let slot = Arc::new(Mutex::new(None));
+        *self.checking.borrow_mut() = Some(Checking {
+            generation,
+            cancel: cancel.clone(),
+            slot: slot.clone(),
+        });
+        let spawned = std::thread::Builder::new()
+            .name("support-frame".to_owned())
+            .spawn(move || {
+                let found = frame_shares(&loads, &frame, &sets, &cancel);
+                if let Ok(mut slot) = slot.lock() {
+                    *slot = Some(found);
+                }
+            });
+        if spawned.is_err() {
+            *self.checking.borrow_mut() = None;
+            return;
+        }
+        let weak = Rc::downgrade(self);
+        self.check_poll.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(60),
+            move || {
+                if let Some(view) = weak.upgrade() {
+                    view.check_tick();
+                }
+            },
+        );
+    }
+
+    /// Stops the frame check running, if any.
+    fn stop_check(&self) {
+        if let Some(checking) = self.checking.borrow_mut().take() {
+            checking.cancel.store(true, Ordering::Relaxed);
+        }
+        self.check_poll.stop();
+    }
+
+    /// Takes what the frame check found, once it has.
+    fn check_tick(self: &Rc<Self>) {
+        let done = {
+            let checking = self.checking.borrow();
+            let Some(checking) = checking.as_ref() else {
+                self.check_poll.stop();
+                return;
+            };
+            let found = checking.slot.lock().ok().and_then(|mut slot| slot.take());
+            found.map(|found| (checking.generation, found))
+        };
+        let Some((generation, found)) = done else {
+            return;
+        };
+        self.check_poll.stop();
+        *self.checking.borrow_mut() = None;
+        if generation != self.generation.get() {
+            return;
+        }
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        match found {
+            Some(found) => {
+                crate::breadcrumbs::note(&format!(
+                    "forces: frame on {} layers in {} ms",
+                    found.layers.len(),
+                    found.took.as_millis()
+                ));
+                *self.checked.borrow_mut() = Some((generation, Arc::new(found)));
+            }
+            None => *self.checked.borrow_mut() = None,
+        }
+        ui.set_slice_timeline_frame_note(self.frame_note().into());
+        self.layer_asked.set(None);
+        self.draw_supports(self.paint_layer(&ui));
+    }
+
+    /// What the card says of the frame check.
+    fn frame_note(&self) -> String {
+        let checked = self.checked.borrow();
+        let Some((_, found)) = checked.as_ref() else {
+            return String::new();
+        };
+        let seconds = format!("{:.1}", found.took.as_secs_f64());
+        match found.peak {
+            Some((worst, layer)) => ctr!(
+                "StressCard",
+                "As a frame, {} layers: worst {}% at layer {} ({} s)",
+                found.layers.len(),
+                (worst * 100.0).round() as i64,
+                layer + 1,
+                seconds
+            )
+            .to_string(),
+            None => ctr!(
+                "StressCard",
+                "As a frame, {} layers: nothing pulled ({} s)",
+                found.layers.len(),
+                seconds
+            )
+            .to_string(),
         }
     }
 

@@ -622,7 +622,11 @@ export component MainWindow inherits Window {
     // What the supports' colours tell: over the print, or as the layer on
     // show peels (#245).
     in property <string> slice-timeline-supports-caption;
+    // What the frame check of the supports found (#244).
+    in property <string> slice-timeline-frame-note;
     in-out property <bool> stress-paint: true;
+    in-out property <bool> stress-frame: true;
+    callback stress-frame-toggled(bool);
     in-out property <bool> stress-open: true;
     callback stress-paint-toggled(bool);
     // The card shows in the Slice tab with a slice held, and in the Supports
@@ -2506,6 +2510,11 @@ export component MainWindow inherits Window {
                         holds-at: root.slice-timeline-holds-at;
                         support-note: root.slice-timeline-support-note;
                         supports-caption: root.slice-timeline-supports-caption;
+                        frame-note: root.slice-timeline-frame-note;
+                        frame <=> root.stress-frame;
+                        frame-toggled(on) => {
+                            root.stress-frame-toggled(on);
+                        }
                         readout(layer, generation) => {
                             return root.slice-timeline-readout(layer, generation);
                         }

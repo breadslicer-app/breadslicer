@@ -35,6 +35,7 @@ sc-print-profiles = { workspace = true }
 sc-project-formats = { workspace = true }
 bread-peel = { workspace = true }
 bread-review = { workspace = true }
+bread-structure = { workspace = true }
 sc-scene = { workspace = true }
 sc-scene-edit = { workspace = true }
 sc-sl1cer = { workspace = true }

@@ -11427,6 +11427,76 @@ mod hand_edit_tests {
         });
     }
 
+    /// The supports checked as a frame (#244): each cube's set carries its
+    /// cube's pull, every support a peel reaches is painted, a stop stops.
+    #[test]
+    fn a_critical_layer_checks_the_supports_as_a_frame() {
+        use std::sync::atomic::AtomicBool;
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (_document, run, _leaves) =
+                supported(&window, &[[20.0, 20.0, 8.0], [50.0, 20.0, 8.0]]);
+            let sets = run.sets_in_force();
+            let frame = sc_print_glue::PlateFrame::default();
+            let mut loads = bread_review::PlateLoads::default();
+            let mut bodies = Vec::new();
+            let mut top: f64 = 0.0;
+            for drawn in &sets {
+                let mut tips = Vec::new();
+                for piece in drawn.session.pieces() {
+                    for contact in &piece.contacts {
+                        let at_mm = frame.point_mm(drawn.leaf, contact.tip);
+                        top = top.max(at_mm[2]);
+                        tips.push(loads.tips.len());
+                        loads.tips.push(bread_review::TipLoad {
+                            at_mm,
+                            radius_mm: contact.tip_radius_mm,
+                            layer: 10,
+                            worst_n: 0.0,
+                            worst_layer: 10,
+                            capacity_n: bread_peel::Band::new(1.0, 1.0, 1.0),
+                        });
+                    }
+                }
+                let c = loads.tips[tips[0]].at_mm;
+                bodies.push(bread_review::BodyCase {
+                    force_n: bread_peel::Band::new(1.0, 2.0, 3.0),
+                    at_mm: [c[0], c[1]],
+                    held: false,
+                    tips,
+                    feet: Vec::new(),
+                });
+            }
+            loads.cases = vec![bread_review::LayerCase {
+                layer: 40,
+                z_mm: top + 0.2,
+                bodies,
+            }];
+            let found = crate::support_frame::frame_shares(
+                &loads,
+                &frame,
+                &sets,
+                &AtomicBool::new(false),
+            )
+            .expect("checked");
+            let (worst, layer) = found.peak.expect("pulled");
+            assert!(worst > 0.0 && worst.is_finite());
+            assert_eq!(layer, 40);
+            assert_eq!(found.worst.len(), sets.len());
+            for (set, shares) in found.worst.iter().enumerate() {
+                assert!(!shares.is_empty(), "set {set} carries its cube");
+            }
+            assert!(found.at(40).is_some() && found.at(41).is_none());
+            let overlay = crate::stress_view::support_overlay(&sets, &found.worst);
+            assert!(!overlay.is_empty());
+            assert!(
+                crate::support_frame::frame_shares(&loads, &frame, &sets, &AtomicBool::new(true))
+                    .is_none(),
+                "a stop stops"
+            );
+        });
+    }
+
     /// The session in force of the scene's first support set.
     fn in_force_session(run: &SupportRun) -> Option<Arc<SupportSession>> {
         run.sets_in_force()

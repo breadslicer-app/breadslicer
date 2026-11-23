@@ -6311,6 +6311,7 @@ dependencies = [
  "bread-printer-link",
  "bread-review",
  "bread-sla-formats-uvtools",
+ "bread-structure",
  "bytemuck",
  "chrono",
  "float-cmp 0.10.0",

@@ -7,7 +7,7 @@ use bread_structure::{NECK_KT, Point, SupportGraph};
 use bread_support_geom::geom::Vec3;
 use bread_support_model::bezier::get_bezier_point_at_t;
 use bread_support_model::shafts::{EndpointHosts, ShaftEntity, resolve_segment_endpoints};
-use bread_support_model::types::{Segment, SegmentShape};
+use bread_support_model::types::{Segment, SegmentShape, SupportCollections};
 
 use super::SupportSession;
 use super::pieces::{SupportContact, SupportPieceKind};
@@ -78,7 +78,36 @@ fn place_on(line: &Line, p: Point) -> Option<(usize, f64)> {
     best.map(|(_, k, t)| (k, t))
 }
 
+/// Whether a root at a height stands on the plate or the raft: as low as
+/// the set's lowest root, give or take [`ON_PLATE_MM`].
+fn plate_rule(c: &SupportCollections) -> impl Fn(f64) -> bool + Copy {
+    let lowest = c
+        .roots
+        .values()
+        .map(|r| r.transform.pos.z)
+        .fold(f64::INFINITY, f64::min);
+    move |z: f64| z <= lowest + ON_PLATE_MM && z <= PLATE_ROOT_MAX_MM
+}
+
 impl SupportSession {
+    /// Where supports stand on the model instead of the plate (#244): the
+    /// roots of trunks, stumps and kickstands that are not on it, world mm.
+    pub fn feet_on_model(&self) -> Vec<Point> {
+        let c = &self.state.collections;
+        let on_plate = plate_rule(c);
+        let roots = c
+            .trunks
+            .values()
+            .map(|t| &t.root_id)
+            .chain(c.kickstands.values().map(|k| &k.root_id))
+            .filter_map(|id| c.roots.get(id))
+            .map(|r| at(r.transform.pos));
+        roots
+            .chain(c.stumps.values().map(|s| at(s.root_pos)))
+            .filter(|p| !on_plate(p[2]))
+            .collect()
+    }
+
     /// The supports as a beam frame (#243), in world mm: every trunk,
     /// branch, stick, twig, stump and kickstand a run of beams along its
     /// segments (curves in straight spans), every tip a cone and a neck
@@ -214,13 +243,7 @@ impl SupportSession {
             *line = out;
         }
 
-        // The lowest root: what stands this close over it is on the plate.
-        let lowest = c
-            .roots
-            .values()
-            .map(|r| r.transform.pos.z)
-            .fold(f64::INFINITY, f64::min);
-        let on_plate = |z: f64| z <= lowest + ON_PLATE_MM && z <= PLATE_ROOT_MAX_MM;
+        let on_plate = plate_rule(c);
 
         // The shafts, in order of id so that the graph is the same each time.
         let mut ids: Vec<&String> = lines.keys().collect();
@@ -336,20 +359,46 @@ fn stand(
     }
 }
 
+/// How many beams a tip's cone is read as, shorter towards its thin end: its
+/// taper concentrates the bending there, which one beam of even section
+/// misses (measured on a real set: within 4 % of 8 even steps).
+const CONE_SPANS: u32 = 4;
+
 /// The beams of a tip, from its socket to where it enters the model: a neck
-/// of the tip's width when it has one, a cone up to it. Returns the socket's
-/// node.
+/// of the tip's width when it has one, then a cone in [`CONE_SPANS`] steps
+/// up to the socket. Returns the socket's node.
 fn tip_chain(graph: &mut SupportGraph, contact: &SupportContact, owner: usize) -> usize {
     let surface = graph.node(contact.surface);
-    let socket = graph.node(contact.socket);
     let (d_tip, d_socket) = (2.0 * contact.tip_radius_mm, 2.0 * contact.socket_radius_mm);
-    match contact.neck.map(|p| graph.node(p)) {
-        Some(neck) if neck != surface && neck != socket => {
-            graph.member(surface, neck, d_tip, d_tip, NECK_KT, owner);
-            graph.member(neck, socket, d_tip, d_socket, 1.0, owner);
+    // Where the cone starts: the top of the neck, or the surface.
+    let (mut from, cone_from) = match contact.neck {
+        Some(neck) => {
+            let node = graph.node(neck);
+            if node == surface {
+                (surface, contact.surface)
+            } else {
+                graph.member(surface, node, d_tip, d_tip, NECK_KT, owner);
+                (node, neck)
+            }
         }
-        _ => graph.member(surface, socket, d_tip, d_socket, NECK_KT, owner),
+        None => (surface, contact.surface),
+    };
+    let mut kt = if from == surface { NECK_KT } else { 1.0 };
+    let mut d_from = d_tip;
+    for k in 1..=CONE_SPANS {
+        // Shorter steps near the thin end, where it bends.
+        let t = (f64::from(k) / f64::from(CONE_SPANS)).powi(2);
+        let p: Point =
+            std::array::from_fn(|i| cone_from[i] + (contact.socket[i] - cone_from[i]) * t);
+        let d = d_tip + (d_socket - d_tip) * t;
+        let node = graph.node(p);
+        if node != from {
+            graph.member(from, node, d_from, d, kt, owner);
+            kt = 1.0;
+            d_from = d;
+            from = node;
+        }
     }
     graph.contact(surface, contact.tip, owner);
-    socket
+    from
 }
