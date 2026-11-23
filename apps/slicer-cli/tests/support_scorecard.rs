@@ -1939,6 +1939,38 @@ fn run_scene(
             "  neighbours: {inside} support vertices inside another model, in {sets_hit} of {} sets",
             outcome.sets.len()
         );
+        // Which pieces go through a neighbour: their line, sampled every
+        // 0.25 mm, inside a model not their own.
+        let mut by_kind: HashMap<String, usize> = HashMap::new();
+        for set in &outcome.sets {
+            let own = leaves.iter().position(|(leaf, _)| *leaf == set.model);
+            for piece in set.session.pieces() {
+                let mut points: Vec<[f64; 3]> = piece.line.iter().map(|j| j.at).collect();
+                for c in &piece.contacts {
+                    points.insert(0, c.surface);
+                }
+                let hit = points.windows(2).any(|w| {
+                    let d = (0..3).map(|k| (w[1][k] - w[0][k]).powi(2)).sum::<f64>().sqrt();
+                    let n = ((d / 0.25).ceil() as usize).max(1);
+                    (0..=n).any(|i| {
+                        let t = i as f64 / n as f64;
+                        let q = Vec3::new(
+                            w[0][0] + (w[1][0] - w[0][0]) * t,
+                            w[0][1] + (w[1][1] - w[0][1]) * t,
+                            w[0][2] + (w[1][2] - w[0][2]) * t,
+                        );
+                        geoms
+                            .iter()
+                            .enumerate()
+                            .any(|(i, g)| Some(i) != own && g.holds(q))
+                    })
+                });
+                if hit {
+                    *by_kind.entry(format!("{:?}", piece.kind)).or_default() += 1;
+                }
+            }
+        }
+        eprintln!("  neighbours by piece: {by_kind:?}");
     }
     let mut stages: Vec<(String, f64)> = outcome
         .timings
