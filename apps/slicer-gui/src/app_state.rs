@@ -887,6 +887,18 @@ impl AppState {
                     stress.set_picked(picked);
                 }
             });
+            // Reinforce weak spots (#247): what the frame found, widened.
+            let stress = Rc::downgrade(layer_timeline.stress());
+            let supports = Rc::downgrade(&support_run);
+            let window = ui.as_weak();
+            ui.on_stress_reinforce(move || {
+                let (Some(stress), Some(supports), Some(ui)) =
+                    (stress.upgrade(), supports.upgrade(), window.upgrade())
+                else {
+                    return;
+                };
+                supports.reinforce(&ui, stress.weak_supports());
+            });
         }
         WindowDrivers {
             _send_to_printer: send_to_printer,

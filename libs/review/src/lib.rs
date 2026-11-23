@@ -64,7 +64,10 @@ pub use finding::{
     CheckKind, Finding, MAX_FOOTPRINT_LAYERS, PlatePoint, RoleScope, Severity, SuggestedFix,
 };
 pub use input::{LayerSpan, ReviewInput, ReviewInputError, ReviewLeaf};
-pub use loads::{BodyPeak, CupLoad, LoadOptions, PlateLoads, TipLoad, plate_loads};
+pub use loads::{
+    BIRTH_LAYERS, BodyCase, BodyPeak, CASE_LAYERS, CupLoad, LayerCase, LoadOptions, PlateLoads,
+    TipLoad, plate_loads,
+};
 pub use regions::{
     AIR_CONNECTIVITY, Connectivity, DEFAULT_MIN_LINK_MM2, LayerLinks, LayerPixels, LayerRegions,
     Overlap, PartStart, PixelBox, PlateRegions, Region, SOLID_CONNECTIVITY, SweepOptions,

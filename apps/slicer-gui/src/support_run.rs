@@ -697,6 +697,64 @@ enum EditOp {
     /// Places these supports of an imported set made editable (#261), each
     /// with its numbers and on its route where it may take it.
     Imported(Vec<ImportedPlan>),
+    /// Gives each of these supports its widths (#247), its route as it is.
+    Reinforce(Vec<(String, PartSizes)>),
+}
+
+/// How much more a weak spot is made to hold than the frame asked (#247).
+const REINFORCE_MARGIN: f64 = 1.2;
+
+/// The most a reinforcement widens a part at once (#247): a support far
+/// past what it holds takes another press.
+const REINFORCE_MOST: f64 = 1.6;
+
+/// The widest a tip is against its shaft (#247): the session refuses a tip
+/// as wide as its shaft.
+const TIP_OF_SHAFT: f64 = 0.9;
+
+/// The widths that make support `id` of `session` hold `utilization` times
+/// what it does now, at its `part` worst off (#247): the stress at a part
+/// falls with its width cubed in bending and squared when pulled, so its
+/// width grows by the cube root, with a margin, at most
+/// [`REINFORCE_MOST`]. A tip that would reach its shaft widens the shaft
+/// too. `None` for a support with no part to widen (a brace, a twig).
+pub(crate) fn reinforced_sizes(
+    session: &SupportSession,
+    id: &str,
+    utilization: f64,
+    part: bread_structure::Part,
+) -> Option<PartSizes> {
+    let parts = session.parts_of(id)?;
+    let grow = (utilization * REINFORCE_MARGIN)
+        .cbrt()
+        .clamp(1.05, REINFORCE_MOST);
+    match part {
+        bread_structure::Part::Tip => {
+            let mut tip = parts.tip_mm * grow;
+            let mut trunk_mm = None;
+            if let Some(shaft) = parts.trunk_mm
+                && tip > shaft * TIP_OF_SHAFT
+            {
+                let wider = (tip / TIP_OF_SHAFT).min(shaft * REINFORCE_MOST);
+                if wider > shaft {
+                    trunk_mm = Some(wider);
+                }
+                tip = tip.min(wider * TIP_OF_SHAFT);
+            }
+            (tip > parts.tip_mm * 1.001 || trunk_mm.is_some()).then_some(PartSizes {
+                tip_mm: Some(tip),
+                trunk_mm,
+                foot_mm: None,
+            })
+        }
+        bread_structure::Part::Shaft => {
+            let shaft = parts.trunk_mm?;
+            Some(PartSizes {
+                trunk_mm: Some(shaft * grow),
+                ..PartSizes::default()
+            })
+        }
+    }
 }
 
 /// The numbers supports made from imported ones are drawn with (#261): the
@@ -876,7 +934,8 @@ fn compute_edit(
         | EditOp::MovePart(..)
         | EditOp::Join(..)
         | EditOp::Resize(..)
-        | EditOp::Imported(_) => 0,
+        | EditOp::Imported(_)
+        | EditOp::Reinforce(_) => 0,
     };
     watch
         .total
@@ -1029,6 +1088,13 @@ fn compute_job(
             }
             (EditOp::Resize(ids, sizes), false) => {
                 for id in ids {
+                    if one(edited.resize_parts(id, *sizes)) {
+                        took = true;
+                    }
+                }
+            }
+            (EditOp::Reinforce(plan), false) => {
+                for (id, sizes) in plan {
                     if one(edited.resize_parts(id, *sizes)) {
                         took = true;
                     }
@@ -6643,6 +6709,77 @@ impl SupportRun {
     /// The edit of a drag (#3) on `drawn`'s set, made off the UI thread as
     /// a click is, or after the edit being made; `previewed` is the session
     /// its preview left, the edit in it.
+    /// Reinforces the supports the frame found weak (#247): each one's tip
+    /// or shaft, whichever is worst off, made wider in place, as one step to
+    /// undo. Tells how many it took on, and how many it could not.
+    pub(crate) fn reinforce(
+        self: &Rc<Self>,
+        ui: &MainWindow,
+        weak: crate::stress_view::WeakSupports,
+    ) {
+        if self.pending_click.borrow().is_some() || self.handle.borrow().is_some() {
+            ui.set_supports_last_run(ctr!(
+                "SupportDialog",
+                "Wait for the supports being made, then reinforce them."
+            ));
+            return;
+        }
+        let in_force = self.sets_in_force();
+        let (mut sets, mut jobs, mut planned, mut skipped) = (Vec::new(), Vec::new(), 0, 0);
+        for (leaf, list) in weak {
+            let Some(drawn) = in_force.iter().find(|drawn| drawn.leaf == leaf) else {
+                skipped += list.len();
+                continue;
+            };
+            let plan: Vec<(String, PartSizes)> = list
+                .iter()
+                .filter_map(|(id, u, part)| {
+                    let sizes = reinforced_sizes(&drawn.session, id, *u, *part);
+                    if sizes.is_none() {
+                        skipped += 1;
+                    }
+                    sizes.map(|sizes| (id.clone(), sizes))
+                })
+                .collect();
+            if plan.is_empty() {
+                continue;
+            }
+            planned += plan.len();
+            jobs.push(EditJob {
+                start: EditStart::Base(drawn.session.clone()),
+                op: EditOp::Reinforce(plan),
+                leaf,
+                plans: PointPlans::default(),
+            });
+            sets.push(drawn.clone());
+        }
+        crate::breadcrumbs::note(&format!(
+            "supports: reinforce {planned}, {skipped} with nothing to widen"
+        ));
+        if jobs.is_empty() {
+            ui.set_supports_last_run(ctr!(
+                "SupportDialog",
+                "Nothing to reinforce: the weak spots are braces or bars between parts."
+            ));
+            return;
+        }
+        ui.set_supports_last_run(ctr!(
+            "SupportDialog",
+            "Reinforcing {} supports: their tips or shafts made wider.",
+            planned
+        ));
+        let _ = self.launch_edit(
+            ui,
+            sets,
+            Vec::new(),
+            jobs,
+            HandTool::Remove,
+            AddOptions::default(),
+            None,
+            None,
+        );
+    }
+
     fn start_gesture(
         self: &Rc<Self>,
         ui: &MainWindow,
@@ -11424,6 +11561,147 @@ mod hand_edit_tests {
             let (set, id, at) = &tips[1];
             let picked = support_picked_at(&sets[*set].session, *at).expect("its support");
             assert_eq!(&picked, id);
+        });
+    }
+
+    /// Loads that pull each set's cube with `force_n` on one layer just
+    /// over every tip (#244), held by all its tips.
+    fn one_layer_pull(
+        sets: &[DrawnSet],
+        frame: &sc_print_glue::PlateFrame,
+        force_n: f64,
+    ) -> bread_review::PlateLoads {
+        let mut loads = bread_review::PlateLoads::default();
+        let mut bodies = Vec::new();
+        let mut top: f64 = 0.0;
+        for drawn in sets {
+            let mut tips = Vec::new();
+            for piece in drawn.session.pieces() {
+                for contact in &piece.contacts {
+                    let at_mm = frame.point_mm(drawn.leaf, contact.tip);
+                    top = top.max(at_mm[2]);
+                    tips.push(loads.tips.len());
+                    loads.tips.push(bread_review::TipLoad {
+                        at_mm,
+                        radius_mm: contact.tip_radius_mm,
+                        layer: 10,
+                        worst_n: 0.0,
+                        worst_layer: 10,
+                        capacity_n: bread_peel::Band::new(1.0, 1.0, 1.0),
+                    });
+                }
+            }
+            let c = loads.tips[tips[0]].at_mm;
+            bodies.push(bread_review::BodyCase {
+                force_n: bread_peel::Band::new(force_n * 0.5, force_n, force_n * 1.5),
+                at_mm: [c[0], c[1]],
+                held: false,
+                tips,
+                feet: Vec::new(),
+            });
+        }
+        loads.cases = vec![bread_review::LayerCase {
+            layer: 40,
+            z_mm: top + 0.2,
+            bodies,
+        }];
+        loads
+    }
+
+    /// The supports checked as a frame (#244): each cube's set carries its
+    /// cube's pull, every support a peel reaches is painted, a stop stops.
+    #[test]
+    fn a_critical_layer_checks_the_supports_as_a_frame() {
+        use std::sync::atomic::AtomicBool;
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (_document, run, _leaves) =
+                supported(&window, &[[20.0, 20.0, 8.0], [50.0, 20.0, 8.0]]);
+            let sets = run.sets_in_force();
+            let frame = sc_print_glue::PlateFrame::default();
+            let loads = one_layer_pull(&sets, &frame, 2.0);
+            let found = crate::support_frame::frame_shares(
+                &loads,
+                &frame,
+                &sets,
+                &AtomicBool::new(false),
+            )
+            .expect("checked");
+            let (worst, layer) = found.peak.expect("pulled");
+            assert!(worst > 0.0 && worst.is_finite());
+            assert_eq!(layer, 40);
+            assert_eq!(found.worst.len(), sets.len());
+            for (set, shares) in found.worst.iter().enumerate() {
+                assert!(!shares.is_empty(), "set {set} carries its cube");
+            }
+            assert!(found.at(40).is_some() && found.at(41).is_none());
+            let overlay = crate::stress_view::support_overlay(&sets, &found.worst);
+            assert!(!overlay.is_empty());
+            assert!(
+                crate::support_frame::frame_shares(&loads, &frame, &sets, &AtomicBool::new(true))
+                    .is_none(),
+                "a stop stops"
+            );
+        });
+    }
+
+    /// Reinforce weak spots (#247): every support the frame finds past what
+    /// it holds gets its part worst off made wider, in place, as one step
+    /// to undo; checked again, it is less loaded.
+    #[test]
+    fn reinforcing_widens_the_weak_supports_in_one_step() {
+        use std::sync::atomic::AtomicBool;
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (document, run, _leaves) = supported(&window, &[[20.0, 20.0, 8.0]]);
+            let frame = sc_print_glue::PlateFrame::default();
+            let check = |run: &Rc<SupportRun>| {
+                let sets = run.sets_in_force();
+                let loads = one_layer_pull(&sets, &frame, 40.0);
+                let found =
+                    crate::support_frame::frame_shares(&loads, &frame, &sets, &AtomicBool::new(false))
+                        .expect("checked");
+                (sets, found)
+            };
+            let (sets, found) = check(&run);
+            let weak = found.weak();
+            assert!(!weak[0].is_empty(), "40 N is past what a cube's tips hold");
+            let before: Vec<(String, sc_geom::supports::SupportParts)> = weak[0]
+                .iter()
+                .filter_map(|(id, _, _)| Some((id.clone(), sets[0].session.parts_of(id)?)))
+                .collect();
+            assert!(!before.is_empty());
+            for (id, u, part) in &weak[0] {
+                if let Some(sizes) = reinforced_sizes(&sets[0].session, id, *u, *part) {
+                    assert!(
+                        sizes.tip_mm.is_some() || sizes.trunk_mm.is_some(),
+                        "{id}: something widens"
+                    );
+                }
+            }
+            let peak = found.peak.expect("pulled").0;
+
+            run.reinforce(&window, vec![(sets[0].leaf, weak[0].clone())]);
+            settle_click(&run);
+            let (after_sets, after) = check(&run);
+            let mut wider = 0;
+            for (id, old) in &before {
+                let new = after_sets[0].session.parts_of(id).expect("still there");
+                if new.tip_mm > old.tip_mm + 1e-9
+                    || new.trunk_mm.zip(old.trunk_mm).is_some_and(|(n, o)| n > o + 1e-9)
+                {
+                    wider += 1;
+                }
+            }
+            assert!(wider > 0, "the weak supports are wider");
+            let reinforced = after.peak.expect("pulled").0;
+            assert!(reinforced < peak, "less loaded: {reinforced} against {peak}");
+
+            document.undo().expect("one step");
+            let undone = run.sets_in_force();
+            for (id, old) in &before {
+                assert_eq!(undone[0].session.parts_of(id).as_ref(), Some(old));
+            }
         });
     }
 

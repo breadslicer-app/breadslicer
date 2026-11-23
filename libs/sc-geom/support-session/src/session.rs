@@ -131,6 +131,8 @@ const SAME_TIP_MM: f64 = 1e-6;
 mod part_edit;
 #[path = "pieces.rs"]
 mod pieces;
+#[path = "structure.rs"]
+mod structure;
 
 pub use part_edit::{ImportedPlan, PartSizes, SupportParts};
 

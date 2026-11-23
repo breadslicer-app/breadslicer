@@ -439,6 +439,7 @@ pub(crate) fn review_sets(
             leaf,
             tip_diameter_mm: 0.0,
             contacts: Vec::new(),
+            feet: Vec::new(),
         });
     sets_in_force(spatial, sessions)
         .into_iter()
@@ -451,6 +452,7 @@ pub(crate) fn review_sets(
                 .into_iter()
                 .flat_map(|piece| piece.contacts)
                 .collect(),
+            feet: drawn.session.feet_on_model(),
         })
         .chain(rafts)
         .collect()

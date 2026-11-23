@@ -94,6 +94,8 @@ pub(crate) struct SupportSet {
     /// The contact diameter of a tip added to it; 0 for the one raft for
     /// all of a plate, which takes no tip.
     pub(crate) tip_diameter_mm: f64,
+    /// Where its supports stand on the model (#244), world mm.
+    pub(crate) feet: Vec<[f64; 3]>,
 }
 
 /// The leaves the review reads: every sliced leaf but those `sets` know as
@@ -125,6 +127,13 @@ fn contact_cones(
 }
 
 /// The tips of `sets`, each point where `frame` says its leaf's point lands.
+/// Where the supports of `sets` stand on the model, in the plate's frame.
+fn support_feet(sets: &[SupportSet], frame: &PlateFrame) -> Vec<[f64; 3]> {
+    sets.iter()
+        .flat_map(|set| set.feet.iter().map(|p| frame.point_mm(set.leaf, *p)))
+        .collect()
+}
+
 fn support_tips(sets: &[SupportSet], frame: &PlateFrame) -> Vec<TipCone> {
     sets.iter()
         .flat_map(|set| {
@@ -294,6 +303,7 @@ fn review_stacks(
             .with_raft_top_mm(raft_top_mm)
             .with_support_lift_mm(Some(recommended_lift_mm(None)))
             .with_tips(supports.tips.clone())
+            .with_feet(support_feet(supports.sets, &supports.frame))
             .with_support_extent(support_layers(leaves, supports.sets), supports.box_mm);
         Ok(
             match review_with(&input, &ReviewOptions::default(), watch)
@@ -594,6 +604,7 @@ mod review_tests {
             leaf: leaves[1].leaf(),
             contacts: Vec::new(),
             tip_diameter_mm: 0.3,
+            feet: Vec::new(),
         }];
         let models = review_leaves(&leaves, &sets);
         assert_eq!(models.len(), 1);

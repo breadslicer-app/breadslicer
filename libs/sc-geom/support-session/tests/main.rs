@@ -16,6 +16,7 @@ mod support_follow;
 mod detail_paint;
 mod supports_scene;
 mod raft_shapes;
+mod support_graph;
 
 /// A file in `tests/` that is not declared above would never be compiled or
 /// run, because `autotests = false`.

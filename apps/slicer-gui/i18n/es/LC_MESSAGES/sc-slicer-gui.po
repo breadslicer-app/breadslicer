@@ -10975,3 +10975,37 @@ msgstr "Soportes: el tirón más fuerte de toda la impresión"
 msgctxt "StressCard"
 msgid "Supports: pull as layer {} peels"
 msgstr "Soportes: el tirón al despegar la capa {}"
+
+msgctxt "StressCard"
+msgid "Full analysis"
+msgstr "Análisis completo"
+
+msgctxt "StressCard"
+msgid "Analysing trunks and braces…"
+msgstr "Analizando troncos y riostras…"
+
+msgctxt "StressCard"
+msgid "{} layers: worst {}% at layer {} ({} s)"
+msgstr "{} capas: lo peor {} % en la capa {} ({} s)"
+
+msgctxt "StressCard"
+msgid "{} layers: nothing pulled ({} s)"
+msgstr "{} capas: nada tira ({} s)"
+
+msgctxt "StressCard"
+msgid "Reinforce {n} weak support"
+msgid_plural "Reinforce {n} weak supports"
+msgstr[0] "Reforzar {n} soporte débil"
+msgstr[1] "Reforzar {n} soportes débiles"
+
+msgctxt "SupportDialog"
+msgid "Wait for the supports being made, then reinforce them."
+msgstr "Esperá a que terminen los soportes y reforzalos después."
+
+msgctxt "SupportDialog"
+msgid "Nothing to reinforce: the weak spots are braces or bars between parts."
+msgstr "Nada para reforzar: lo débil son refuerzos o barras entre partes."
+
+msgctxt "SupportDialog"
+msgid "Reinforcing {} supports: their tips or shafts made wider."
+msgstr "Reforzando {} soportes: más gruesa la punta o el tronco."

@@ -102,6 +102,42 @@ pub struct PlateLoads {
     /// How many layers each point of a tip's curve stands for: one up to
     /// [`TIP_CURVE_POINTS`] layers.
     pub curve_layers: usize,
+    /// The critical layers (#244): each body's worst and the plate's
+    /// hardest, at most [`CASE_LAYERS`], and the first layer of each body
+    /// tips hold, at most [`BIRTH_LAYERS`], with what holds what on each.
+    pub cases: Vec<LayerCase>,
+}
+
+/// The most critical layers kept (#244).
+pub const CASE_LAYERS: usize = 12;
+
+/// The most first layers of bodies kept besides (#244): where a body's
+/// tips have just taken hold and nothing else helps them yet.
+pub const BIRTH_LAYERS: usize = 12;
+
+/// A critical layer as it peels: every body printed so far that tips or
+/// feet tie to the supports.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LayerCase {
+    pub layer: usize,
+    /// Its top, mm.
+    pub z_mm: f64,
+    pub bodies: Vec<BodyCase>,
+}
+
+/// A body on a critical layer.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BodyCase {
+    /// What the layer pulls it with: 0 when it has no region there.
+    pub force_n: Band,
+    /// Where the pull centres, plate mm.
+    pub at_mm: [f64; 2],
+    /// The plate or the raft holds it.
+    pub held: bool,
+    /// The tips that end in it, by index in [`PlateLoads::tips`].
+    pub tips: Vec<usize>,
+    /// Where supports stand on it, plate mm.
+    pub feet: Vec<[f64; 3]>,
 }
 
 /// The most points a tip's curve has (#245): a chart of the print is drawn
@@ -283,8 +319,56 @@ pub fn plate_loads(ctx: &ReviewContext<'_>, options: &LoadOptions) -> PlateLoads
             .sum();
         loads.region_cup_mm2[layer] = cups;
     }
-    share(ctx, options, &mut loads, &centres);
+    let walked = loads.clone();
+    share(ctx, options, &mut loads, &centres, &BTreeSet::new());
+    let layers = critical_layers(&loads);
+    loads.cases = share(ctx, options, &mut walked.clone(), &centres, &layers);
     loads
+}
+
+/// The layers worth checking as a frame (#244): each body's worst, then the
+/// plate's hardest peaks, at most [`CASE_LAYERS`]; and the first layer of
+/// each body tips hold, the worst off first, at most [`BIRTH_LAYERS`].
+fn critical_layers(loads: &PlateLoads) -> BTreeSet<usize> {
+    let mut by_worst: Vec<(f64, usize)> = loads
+        .bodies
+        .iter()
+        .map(|body| (body.utilization, body.layer))
+        .collect();
+    let u = &loads.layer_utilization;
+    by_worst.extend((0..u.len()).filter_map(|l| {
+        let peak = u[l] > 0.0
+            && l.checked_sub(1).is_none_or(|below| u[l] >= u[below])
+            && u.get(l + 1).is_none_or(|above| u[l] > *above);
+        peak.then_some((u[l] * 0.999, l))
+    }));
+    by_worst.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+    let mut chosen = BTreeSet::new();
+    for (_, layer) in by_worst {
+        if chosen.len() >= CASE_LAYERS {
+            break;
+        }
+        chosen.insert(layer);
+    }
+    let mut births: Vec<(f64, usize)> = loads
+        .bodies
+        .iter()
+        .filter_map(|body| {
+            let first = body.starts.iter().map(|(layer, _)| *layer).min()?;
+            Some((body.utilization, first))
+        })
+        .collect();
+    births.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+    let mut added = 0;
+    for (_, layer) in births {
+        if added >= BIRTH_LAYERS {
+            break;
+        }
+        if chosen.insert(layer) {
+            added += 1;
+        }
+    }
+    chosen
 }
 
 /// Where a tip ends and how wide its contact is.
@@ -363,6 +447,8 @@ struct Body {
     anchored: bool,
     sums: TipSums,
     tips: Vec<usize>,
+    /// The feet standing on it, by index in [`ReviewInput::feet`].
+    feet: Vec<usize>,
     starts: Vec<(usize, u32)>,
 }
 
@@ -371,6 +457,7 @@ impl Body {
         self.anchored |= other.anchored;
         self.sums.merge(&other.sums);
         self.tips.extend(other.tips);
+        self.feet.extend(other.feet);
         self.starts.extend(other.starts);
     }
 }
@@ -388,14 +475,20 @@ struct LayerPull {
     cup_moment: [f64; 2],
 }
 
+/// How far a foot reaches to the region it stands on, mm.
+const FOOT_REACH_MM: f64 = 0.5;
+
 /// The walk of #241: bodies from the plate up, each layer's pull shared
-/// among the tips of each body.
+/// among the tips of each body. With `record` given, it only records what
+/// holds what on those layers (#244), and returns it.
 fn share(
     ctx: &ReviewContext<'_>,
     options: &LoadOptions,
     loads: &mut PlateLoads,
     centres: &[Vec<(u32, [f64; 2])>],
-) {
+    record: &BTreeSet<usize>,
+) -> Vec<LayerCase> {
+    let mut cases = Vec::new();
     let (input, regions) = (ctx.input, ctx.regions);
     let model = &options.model;
     let pixel_mm2 = input.pixel_area_mm2();
@@ -426,6 +519,18 @@ fn share(
         });
     }
 
+    // Feet, each on the region it stands on.
+    let mut feet_at: Vec<Vec<usize>> = vec![Vec::new(); total];
+    for (k, foot) in input.feet().iter().enumerate() {
+        let contact = Contact {
+            at: *foot,
+            radius: FOOT_REACH_MM,
+        };
+        if let Some(region) = region_of(input, regions, &contact) {
+            feet_at[offsets[region.layer] + region.index as usize].push(k);
+        }
+    }
+
     let held_below = PLATE_LAYERS.max(input.raft_layers());
     let ends = regions.group_solid(|_, _| true);
     let mut peaks: Vec<Option<BodyPeak>> = vec![None; ends.len()];
@@ -444,6 +549,7 @@ fn share(
                 body.sums.add([at[0], at[1]], at[2]);
                 body.tips.push(tip);
             }
+            body.feet.extend(&feet_at[id]);
         }
         for link in regions.solid_links(layer) {
             let a = offsets[layer - 1] + link.lower as usize;
@@ -492,6 +598,16 @@ fn share(
                     pulls.push(pull);
                 }
             }
+        }
+
+        if !record.is_empty() {
+            if record.contains(&layer) {
+                cases.push(layer_case(ctx, layer, &offsets, &mut sets, &bodies, &pulls));
+            }
+            if record.last().is_some_and(|&last| layer >= last) {
+                break;
+            }
+            continue;
         }
 
         for pull in pulls {
@@ -582,7 +698,55 @@ fn share(
             });
         }
     }
-    loads.bodies = peaks.into_iter().flatten().collect();
+    if record.is_empty() {
+        loads.bodies = peaks.into_iter().flatten().collect();
+    }
+    cases
+}
+
+/// What holds what on `layer`: every body printed so far with tips or feet,
+/// and what the layer pulls each with.
+fn layer_case(
+    ctx: &ReviewContext<'_>,
+    layer: usize,
+    offsets: &[usize],
+    sets: &mut UnionFind,
+    bodies: &[Body],
+    pulls: &[LayerPull],
+) -> LayerCase {
+    let input = ctx.input;
+    let zero = Band::new(0.0, 0.0, 0.0);
+    let mut out = Vec::new();
+    for (id, body) in bodies.iter().enumerate().take(offsets[layer + 1]) {
+        if sets.find(id) != id {
+            continue;
+        }
+        if body.tips.is_empty() && body.feet.is_empty() {
+            continue;
+        }
+        let pull = pulls.iter().find(|p| p.root == id);
+        let (force_n, at_mm) = match pull {
+            Some(pull) if !body.anchored => {
+                let at_px = pull
+                    .moment
+                    .map(|v| v / pull.force.mid.max(f64::MIN_POSITIVE));
+                (pull.force, input.pixel_to_plate(at_px))
+            }
+            _ => (zero, [0.0, 0.0]),
+        };
+        out.push(BodyCase {
+            force_n,
+            at_mm,
+            held: body.anchored,
+            tips: body.tips.clone(),
+            feet: body.feet.iter().map(|&k| input.feet()[k]).collect(),
+        });
+    }
+    LayerCase {
+        layer,
+        z_mm: input.layers()[layer].top_mm,
+        bodies: out,
+    }
 }
 
 /// Which air regions of every layer drain: open air, or air linked through

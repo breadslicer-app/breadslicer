@@ -59,6 +59,7 @@ mod layer_keys;
 mod layer_pixels;
 mod layer_timeline;
 mod stress_view;
+mod support_frame;
 mod load_progress;
 #[cfg(target_os = "macos")]
 mod macos_open_documents;
