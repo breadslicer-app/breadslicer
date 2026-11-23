@@ -247,6 +247,10 @@ pub(crate) fn wire_viewport_input(
     }
     {
         let ctrl = ctrl.clone();
+        ui.on_object_reload(move |i| ctrl.reload_row(i));
+    }
+    {
+        let ctrl = ctrl.clone();
         ui.on_toggle_projection_requested(move || {
             remember_projection(&prefs, ctrl.on_toggle_projection())
         });

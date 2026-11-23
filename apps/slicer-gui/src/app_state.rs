@@ -245,6 +245,7 @@ struct WindowDrivers {
     _presupported_import: Rc<crate::presupported_import::PresupportedImport>,
     /// Repairs the models that come in and do not slice (#677).
     _repair_on_import: Rc<crate::repair_on_import::RepairOnImport>,
+    _reload_from_disk: Rc<crate::reload_from_disk::ReloadRun>,
     /// The Slice tab's layer keys (#501).
     _layer_keys: Rc<crate::layer_keys::LayerKeys>,
     _support_run: Rc<SupportRun>,
@@ -409,6 +410,7 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_export_name_template(&snap.export_name_template);
     settings.set_show_start_dialog(snap.show_start_dialog);
     settings.set_repair_on_import(snap.repair_on_import);
+    settings.set_reload_on_change(snap.reload_on_change);
     settings.set_recent_files(snap.recent_files.clone());
     settings.set_resin_prices(snap.resin_prices.clone());
 }
@@ -586,6 +588,7 @@ impl AppState {
             export_name_template: settings.export_name_template(),
             show_start_dialog: settings.show_start_dialog(),
             repair_on_import: settings.repair_on_import(),
+            reload_on_change: settings.reload_on_change(),
             recent_files: settings.recent_files(),
             resin_prices: settings.resin_prices(),
         };
@@ -869,6 +872,13 @@ impl AppState {
             repair_run.clone(),
             Some(presupported_import.clone()),
         );
+        let reload_from_disk = crate::reload_from_disk::ReloadRun::install(
+            ui,
+            ctrl.document(),
+            hollow_run.clone(),
+            self.prefs.clone(),
+            ctrl.clone(),
+        );
         let layer_keys = crate::layer_keys::LayerKeys::install(ui);
         let layer_pixels = crate::layer_pixels::LayerPixels::install(
             ui,
@@ -913,6 +923,7 @@ impl AppState {
             _split_bodies: split_bodies,
             _presupported_import: presupported_import,
             _repair_on_import: repair_on_import,
+            _reload_from_disk: reload_from_disk,
             _layer_keys: layer_keys,
             _slice_panel: slice_panel,
             _slice_run: slice_run,
@@ -2917,6 +2928,7 @@ mod subscribe_window_preferences_tests {
             PreferencesChange::LastOpenDir,
             PreferencesChange::StartDialog,
             PreferencesChange::RepairOnImport,
+            PreferencesChange::ReloadOnChange,
             PreferencesChange::RecentFiles,
         ] {
             let build_volume = on_fresh_slint_thread(move || {

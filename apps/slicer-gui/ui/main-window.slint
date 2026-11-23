@@ -191,6 +191,7 @@ export component MainWindow inherits Window {
     callback object-lock-toggled(int);
     // A model's file in its folder (#732), by its index.
     callback object-show-in-folder(int);
+    callback object-reload(int);
     in property <[int]> object-row-of: [];
     in-out property <int> selected-object-index: -1;
     // Every selected row (#13), indexed like `object-list`, and how many
@@ -2111,6 +2112,9 @@ export component MainWindow inherits Window {
                     }
                     object-show-in-folder(i) => {
                         root.object-show-in-folder(i);
+                    }
+                    object-reload(i) => {
+                        root.object-reload(i);
                     }
                     plate-picked(i) => {
                         root.plate-picked(i);

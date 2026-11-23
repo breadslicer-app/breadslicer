@@ -11212,3 +11212,47 @@ msgstr "Diseñado por {}"
 msgctxt "Workspace"
 msgid "View source"
 msgstr "Ver fuente"
+
+msgctxt "MeshViewer"
+msgid "Reload from disk"
+msgstr "Recargar desde el disco"
+
+msgctxt "Inspector"
+msgid "Reload from disk"
+msgstr "Recargar desde el disco"
+
+msgctxt "PreferencesLayer"
+msgid "Reload when the file changes"
+msgstr "Recargar cuando cambia el archivo"
+
+msgctxt "PreferencesLayer"
+msgid "When a model's file is saved again, in a sculpting or CAD program, it reloads at the same place, hollowed and supported again. One undo takes it back."
+msgstr "Cuando el archivo de un modelo se vuelve a guardar, en un programa de escultura o de CAD, se recarga en el mismo lugar, ahuecado y con soportes otra vez. Un Deshacer lo vuelve atrás."
+
+msgctxt "Reload"
+msgid "it is a project, not a model's file"
+msgstr "es un proyecto, no el archivo de un modelo"
+
+msgctxt "Reload"
+msgid "This model came from no file it can be read again from."
+msgstr "Este modelo no vino de un archivo que se pueda volver a leer."
+
+msgctxt "Reload"
+msgid "{} could not be read again."
+msgstr "No se pudo volver a leer {}."
+
+msgctxt "Reload"
+msgid "{} no longer holds the models it gave, so they stay as they are."
+msgstr "{} ya no tiene los modelos que dio, así que quedan como están."
+
+msgctxt "Reload"
+msgid "{} could not be reloaded."
+msgstr "No se pudo recargar {}."
+
+msgctxt "Reload"
+msgid "Reloaded {} from disk; hollowing it again."
+msgstr "{} recargado desde el disco; ahuecándolo otra vez."
+
+msgctxt "Reload"
+msgid "Reloaded {} from disk."
+msgstr "{} recargado desde el disco."

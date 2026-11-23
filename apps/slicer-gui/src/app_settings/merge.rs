@@ -48,6 +48,7 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
         export_name_template,
         show_start_dialog,
         repair_on_import,
+        reload_on_change,
         recent_files,
         resin_prices,
     } = theirs;
@@ -141,6 +142,11 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
             &base.repair_on_import,
             &ours.repair_on_import,
             repair_on_import,
+        ),
+        reload_on_change: pick(
+            &base.reload_on_change,
+            &ours.reload_on_change,
+            reload_on_change,
         ),
         recent_files: crate::recent_files::merge(
             &base.recent_files,

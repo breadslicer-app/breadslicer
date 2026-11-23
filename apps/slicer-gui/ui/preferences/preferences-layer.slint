@@ -65,6 +65,7 @@ export global Prefs {
     in-out property <int> current-language-index: 0;
     in-out property <bool> show-start-dialog: true;
     in-out property <bool> repair-on-import: true;
+    in-out property <bool> reload-on-change: true;
     in property <int> silenced-message-count: 0;
     // The template printer files are named by (#730), and a name it gives.
     in-out property <string> export-name-template;
@@ -122,6 +123,7 @@ export global Prefs {
     callback language-changed(int);
     callback show-start-dialog-changed(bool);
     callback repair-on-import-changed(bool);
+    callback reload-on-change-changed(bool);
     callback export-name-template-edited(string);
     callback show-all-messages-again();
 
@@ -349,6 +351,19 @@ component GeneralPage inherits VerticalLayout {
             toggled => {
                 Prefs.repair-on-import = self.checked;
                 Prefs.repair-on-import-changed(self.checked);
+            }
+        }
+    }
+    PrefRow {
+        title: @tr("PreferencesLayer" => "Reload when the file changes");
+        hint: @tr("PreferencesLayer" => "When a model's file is saved again, in a sculpting or CAD program, it reloads at the same place, hollowed and supported again. One undo takes it back.");
+        ScCheckBox {
+            text: "";
+            checked: Prefs.reload-on-change;
+            accessible-label: @tr("PreferencesLayer" => "Reload when the file changes");
+            toggled => {
+                Prefs.reload-on-change = self.checked;
+                Prefs.reload-on-change-changed(self.checked);
             }
         }
     }

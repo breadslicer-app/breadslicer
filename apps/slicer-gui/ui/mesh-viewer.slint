@@ -757,6 +757,13 @@ export component MeshViewer inherits Rectangle {
                         }
                     }
                 }
+                // The model's file read again (#721).
+                if (root.context-can-copy): MenuItem {
+                    title: @tr("MeshViewer" => "Reload from disk");
+                    activated => {
+                        root.edit-key("reload", root.context-anchor-x, root.context-anchor-y);
+                    }
+                }
                 // A copy next to it, with its hollow and supports (#613).
                 if (root.context-can-copy): MenuItem {
                     title: @tr("MeshViewer" => "Duplicate");

@@ -3206,6 +3206,54 @@ impl SceneDocument {
             .or_else(|| self.source_path.borrow().clone())
     }
 
+    /// The file model `leaf` can be read again from (#721): the one it was
+    /// imported from, else the model's file the scene opened from. Never a
+    /// project: its models came from no file of their own.
+    pub(crate) fn reloadable_file(&self, leaf: NodeId) -> Option<PathBuf> {
+        if let Some(path) = self.model_files.borrow().get(&leaf) {
+            return Some(path.clone());
+        }
+        if self.is_project() {
+            return None;
+        }
+        let source = self.source_path.borrow().clone()?;
+        let model = self
+            .with_scene(|spatial| {
+                spatial
+                    .leaf(leaf)
+                    .is_some_and(|q| !sc_geom::supports::is_any_support_mesh(q.mesh()))
+            })
+            .unwrap_or(false);
+        model.then_some(source)
+    }
+
+    /// The models that came from `path` (#721), in the scene's order.
+    pub(crate) fn models_from_file(&self, path: &Path) -> Vec<NodeId> {
+        let leaves: Vec<NodeId> = self
+            .with_scene(|spatial| (0..).map_while(|i| spatial.leaf_id_at_index(i)).collect())
+            .unwrap_or_default();
+        leaves
+            .into_iter()
+            .filter(|&leaf| self.reloadable_file(leaf).as_deref() == Some(path))
+            .collect()
+    }
+
+    /// Every file the scene's models can be read again from (#721).
+    pub(crate) fn model_file_paths(&self) -> Vec<PathBuf> {
+        let leaves: Vec<NodeId> = self
+            .with_scene(|spatial| (0..).map_while(|i| spatial.leaf_id_at_index(i)).collect())
+            .unwrap_or_default();
+        let mut paths: Vec<PathBuf> = Vec::new();
+        for leaf in leaves {
+            if let Some(path) = self.reloadable_file(leaf)
+                && !paths.contains(&path)
+            {
+                paths.push(path);
+            }
+        }
+        paths
+    }
+
     /// Returns the path the current scene was loaded from. `None` when no scene
     /// is loaded; cloned out so the caller doesn't extend the borrow.
     #[cfg(test)]

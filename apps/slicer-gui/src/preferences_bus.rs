@@ -161,6 +161,8 @@ pub(crate) struct PreferencesSnapshot {
     pub show_start_dialog: bool,
     /// Whether models that come in and do not slice are repaired (#677).
     pub repair_on_import: bool,
+    /// Whether a model reloads when its file is saved again (#721).
+    pub reload_on_change: bool,
     /// The files last opened or saved, newest first (`recent_files`).
     pub recent_files: Vec<RecentFile>,
     /// What the user pays for each resin (#101).
@@ -233,6 +235,7 @@ impl PreferencesSnapshot {
             export_name_template: crate::file_name_template::DEFAULT_TEMPLATE.to_owned(),
             show_start_dialog: true,
             repair_on_import: true,
+            reload_on_change: true,
             recent_files: Vec::new(),
             resin_prices: BTreeMap::new(),
         }
@@ -283,6 +286,8 @@ pub(crate) enum PreferencesChange {
     StartDialog,
     /// Repair on import (#677).
     RepairOnImport,
+    /// Reload a model when its file changes (#721).
+    ReloadOnChange,
     /// A file was opened or saved, or taken off the recent list (#381).
     RecentFiles,
     /// A resin's price (#101).

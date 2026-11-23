@@ -275,6 +275,8 @@ pub(crate) struct ViewportController {
     queued_imports: RefCell<Vec<PathBuf>>,
     /// Runs when Delete takes the scene's last object (#397).
     on_emptied: RefCell<Option<Rc<dyn Fn()>>>,
+    /// What reloads models from their files (#721).
+    on_reload: RefCell<Option<Rc<dyn Fn(Vec<sc_scene::NodeId>)>>>,
     /// The drag tool armed, for tests that run without a window.
     #[cfg(test)]
     drag_tool_for_test: Cell<Option<SupportDragKind>>,
@@ -454,6 +456,7 @@ impl ViewportController {
             right_dropped_drag: Cell::new(false),
             queued_imports: RefCell::new(Vec::new()),
             on_emptied: RefCell::new(None),
+            on_reload: RefCell::new(None),
             #[cfg(test)]
             drag_tool_for_test: Cell::new(None),
             surface_brush: RefCell::new(None),
@@ -543,6 +546,7 @@ impl ViewportController {
             right_dropped_drag: Cell::new(false),
             queued_imports: RefCell::new(Vec::new()),
             on_emptied: RefCell::new(None),
+            on_reload: RefCell::new(None),
             #[cfg(test)]
             drag_tool_for_test: Cell::new(None),
             surface_brush: RefCell::new(None),
@@ -3118,6 +3122,36 @@ impl ViewportController {
         *self.on_emptied.borrow_mut() = Some(emptied);
     }
 
+    /// Sets what reloads models from their files (#721).
+    pub(crate) fn set_on_reload(&self, reload: Rc<dyn Fn(Vec<sc_scene::NodeId>)>) {
+        *self.on_reload.borrow_mut() = Some(reload);
+    }
+
+    /// Reloads `models` from their files (#721).
+    fn reload_models(&self, models: Vec<sc_scene::NodeId>) {
+        let reload = self.on_reload.borrow().clone();
+        if let Some(reload) = reload
+            && !models.is_empty()
+        {
+            reload(models);
+        }
+    }
+
+    /// Reloads the model of the object list's row `index` (#721).
+    pub(crate) fn reload_row(&self, index: i32) {
+        let document = self.session.document();
+        let Ok(index) = usize::try_from(index) else {
+            return;
+        };
+        let model = document
+            .with_scene(|spatial| {
+                let id = spatial.leaf_id_at_index(index)?;
+                (!shows_supports(spatial, id)).then_some(id)
+            })
+            .flatten();
+        self.reload_models(model.into_iter().collect());
+    }
+
     /// Whether the window's scene holds at least 1 object.
     pub(crate) fn holds_objects(&self) -> bool {
         self.session
@@ -5489,6 +5523,19 @@ impl ViewportController {
             "ungroup" => self.group_selection(false),
             "mirror-x" => self.mirror_selection(crate::mirror::MirrorAxis::X),
             "mirror-y" => self.mirror_selection(crate::mirror::MirrorAxis::Y),
+            "reload" => {
+                let document = self.session.document();
+                let models: Vec<sc_scene::NodeId> = document
+                    .selection_node_ids()
+                    .into_iter()
+                    .filter(|&id| {
+                        document
+                            .with_scene(|spatial| !shows_supports(spatial, id))
+                            .unwrap_or(false)
+                    })
+                    .collect();
+                self.reload_models(models);
+            }
             _ => {}
         }
     }

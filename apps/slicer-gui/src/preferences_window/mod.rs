@@ -179,6 +179,7 @@ pub(crate) fn apply_preferences(prefs: &Prefs, snap: &PreferencesSnapshot) {
     prefs.set_controls_summary(snap.controls_layout.summary().into());
     prefs.set_show_start_dialog(snap.show_start_dialog);
     prefs.set_repair_on_import(snap.repair_on_import);
+    prefs.set_reload_on_change(snap.reload_on_change);
     if prefs.get_export_name_template().as_str() != snap.export_name_template {
         prefs.set_export_name_template(snap.export_name_template.as_str().into());
     }
@@ -218,6 +219,15 @@ fn wire_general(prefs: &Prefs, bus: &Rc<PreferencesBus>, _weak: &slint::Weak<Mai
             bus.update(move |snap| {
                 snap.repair_on_import = on;
                 PreferencesChange::RepairOnImport
+            });
+        }
+    });
+    prefs.on_reload_on_change_changed({
+        let bus = bus.clone();
+        move |on| {
+            bus.update(move |snap| {
+                snap.reload_on_change = on;
+                PreferencesChange::ReloadOnChange
             });
         }
     });
@@ -494,6 +504,12 @@ fn restore_defaults(bus: &PreferencesBus, page: i32) {
                 bus.update(move |snap| {
                     snap.repair_on_import = shipped().repair_on_import();
                     PreferencesChange::RepairOnImport
+                });
+            }
+            if now.reload_on_change != shipped().reload_on_change() {
+                bus.update(move |snap| {
+                    snap.reload_on_change = shipped().reload_on_change();
+                    PreferencesChange::ReloadOnChange
                 });
             }
             if now.show_start_dialog != shipped().show_start_dialog() {

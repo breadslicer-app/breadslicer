@@ -1113,7 +1113,7 @@ impl HollowRun {
     }
 
     /// The record of the hollow `mesh` (by identity), made or drilled here.
-    fn record_of(&self, mesh: &Arc<IndexedMesh>) -> Option<Hollowed> {
+    pub(crate) fn record_of(&self, mesh: &Arc<IndexedMesh>) -> Option<Hollowed> {
         self.hollowed
             .borrow()
             .iter()
@@ -1979,6 +1979,40 @@ impl HollowRun {
                     })
             })
             .flatten()
+    }
+
+    /// Hollows `leaf`, which shows `mesh`, again as `record` was made (#721):
+    /// its settings, drains and solid areas; the tab takes those settings.
+    /// A model that came hollow is not hollowed here. Whether it started.
+    pub(crate) fn hollow_again(
+        self: &Rc<Self>,
+        leaf: NodeId,
+        mesh: Arc<IndexedMesh>,
+        record: &Hollowed,
+    ) -> bool {
+        if record.drilled || self.job.borrow().is_some() {
+            return false;
+        }
+        let Some(world) = self
+            .document
+            .with_scene(|spatial| spatial.graph().world_transform_of(leaf).ok())
+            .flatten()
+        else {
+            return false;
+        };
+        *self.options.borrow_mut() = record.options;
+        if let Some(ui) = self.ui.upgrade() {
+            self.push_options(&ui);
+        }
+        self.launch_with(
+            leaf,
+            mesh.clone(),
+            mesh,
+            record.drains.clone(),
+            record.solids.clone(),
+            &world,
+        );
+        self.job.borrow().is_some()
     }
 
     /// Hollows `original` into the leaf showing `before`, with `drains` and

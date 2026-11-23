@@ -442,6 +442,15 @@ fn is_default_repair_on_import(on: &bool) -> bool {
     *on
 }
 
+/// A model whose file is saved again reloads by default (#721).
+fn default_reload_on_change() -> bool {
+    true
+}
+
+fn is_default_reload_on_change(on: &bool) -> bool {
+    *on
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub(crate) struct AppSettings {
     /// On-disk schema version. Files predating this field are read with the
@@ -599,6 +608,13 @@ pub(crate) struct AppSettings {
         skip_serializing_if = "is_default_repair_on_import"
     )]
     repair_on_import: bool,
+    /// Whether a model reloads when its file is saved again (#721).
+    /// Omitted in TOML while on (the default).
+    #[serde(
+        default = "default_reload_on_change",
+        skip_serializing_if = "is_default_reload_on_change"
+    )]
+    reload_on_change: bool,
     /// The files last opened or saved, newest first (#381). User data: the
     /// diagnostics file leaves them out. Omitted in TOML while empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -643,6 +659,7 @@ impl Default for AppSettings {
             export_name_template: None,
             show_start_dialog: default_show_start_dialog(),
             repair_on_import: default_repair_on_import(),
+            reload_on_change: default_reload_on_change(),
             recent_files: Vec::new(),
             resin_prices: BTreeMap::new(),
         }
@@ -1077,6 +1094,14 @@ impl AppSettings {
 
     pub(crate) fn set_repair_on_import(&mut self, on: bool) {
         self.repair_on_import = on;
+    }
+
+    pub(crate) fn reload_on_change(&self) -> bool {
+        self.reload_on_change
+    }
+
+    pub(crate) fn set_reload_on_change(&mut self, on: bool) {
+        self.reload_on_change = on;
     }
 
     pub(crate) fn recent_files(&self) -> Vec<RecentFile> {
