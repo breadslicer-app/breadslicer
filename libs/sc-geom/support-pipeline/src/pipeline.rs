@@ -691,12 +691,31 @@ fn run_pipeline(
                 BraceMesh {
                     bvh,
                     matrix: identity,
+                    // Models planned together keep their braces clear of
+                    // each other's by the neighbours' margin (#725); a
+                    // model's own takes it too, the map being one.
+                    grown_mm: if n > 1 {
+                        crate::plate::NEIGHBOUR_CLEARANCE_MM
+                    } else {
+                        0.0
+                    },
                 },
             )
         })
         .collect();
     let bands = SizingBands::factory().with_zone_sizes(&settings.supports.auto_support.zone_rules);
     let angle = scan_angle(settings);
+    // Models planned together keep their supports clear of each other
+    // (#725): each one's field reads the others standing near it.
+    let plate: Vec<crate::plate::PlateModel> = if n > 1 {
+        models
+            .iter()
+            .zip(&bvhs)
+            .map(|(m, bvh)| crate::plate::PlateModel::new(m.id.clone(), bvh.clone(), identity))
+            .collect()
+    } else {
+        Vec::new()
+    };
 
     let mut current = state.clone();
     let mut outputs = Vec::with_capacity(n);
@@ -751,11 +770,17 @@ fn run_pipeline(
         check()?;
         step(progress, Stage::PlanSupports, i);
         let normals = soup_normals(soup);
-        let sdf = RefCell::new(SdfCache::new(
-            bvhs[i].clone(),
-            identity,
-            Some(settings.sdf_cell_mm),
-        ));
+        let mut field = SdfCache::new(bvhs[i].clone(), identity, Some(settings.sdf_cell_mm));
+        if let Some(me) = plate.get(i) {
+            let others = crate::plate::neighbours_of(me, &plate);
+            if !others.is_empty() {
+                field = field.with_placed_obstacles(
+                    others.iter().map(|o| (o.bvh.clone(), o.matrix, o.bounds)),
+                    crate::plate::NEIGHBOUR_CLEARANCE_MM,
+                );
+            }
+        }
+        let sdf = RefCell::new(field);
         let plan_mesh = PlanMesh {
             bvh: &bvhs[i],
             matrix: identity,
