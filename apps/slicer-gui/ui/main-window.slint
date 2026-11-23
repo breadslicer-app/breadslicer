@@ -485,6 +485,11 @@ export component MainWindow inherits Window {
     // of them.
     in property <int> support-picked-count;
     callback support-picked-clear();
+    // The picked supports hidden from the view (#728): H hides them, Alt+H
+    // shows every one again. View only.
+    in property <int> support-hidden-count;
+    callback support-picked-hide();
+    callback support-hidden-show();
     in property <bool> support-add-note-warns;
     // Remove's drag (#3): 0 a box, 1 a brush of this radius (logical px).
     in-out property <int> support-remove-mode: 0;
@@ -2175,6 +2180,16 @@ export component MainWindow inherits Window {
                                     root.arm-support-tool(7);
                                     return true;
                                 }
+                                // Pick: H hides the picked supports, Alt+H
+                                // shows them all again (#728).
+                                if root.support-tool == 5 && root.support-picked-count > 0 && (key == "h" || key == "H") {
+                                    root.support-picked-hide();
+                                    return true;
+                                }
+                                if key == "alt+h" && root.support-hidden-count > 0 {
+                                    root.support-hidden-show();
+                                    return true;
+                                }
                                 // Remove: B a box or a brush; [ and ] the brush.
                                 if root.support-tool == 2 && (key == "b" || key == "B") {
                                     root.support-remove-mode = root.support-remove-mode == 1 ? 0 : 1;
@@ -3369,6 +3384,13 @@ export component MainWindow inherits Window {
                                         root.support-picked-join();
                                     }
                                     picked-count: root.support-picked-count;
+                                    hidden-count: root.support-hidden-count;
+                                    picked-hide => {
+                                        root.support-picked-hide();
+                                    }
+                                    hidden-show => {
+                                        root.support-hidden-show();
+                                    }
                                     area-clear => {
                                         root.support-area-clear();
                                     }

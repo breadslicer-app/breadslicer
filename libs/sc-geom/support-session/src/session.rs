@@ -3524,6 +3524,20 @@ impl SupportSession {
         Ok(self.drawn()?.0)
     }
 
+    /// [`Self::mesh`] without supports `ids`, for a view that hides them
+    /// (#728). Their feet stay, so the raft is the one drawn with them;
+    /// `None` when nothing is left.
+    pub fn mesh_without(&self, ids: &[String]) -> Result<Option<IndexedMesh>, EditError> {
+        let hidden: HashSet<&String> = ids.iter().collect();
+        let state = SupportState {
+            collections: picked(&self.state.collections, |id| !hidden.contains(id)),
+            ..SupportState::default()
+        };
+        let sink = support_soup(&state, &self.models, &self.settings)
+            .map_err(|e| EditError::Tessellation(format!("{e:?}")))?;
+        Ok(weld_parts(&sink.floats, &sink.parts, SUPPORT_MESH_NAME))
+    }
+
     /// [`Self::mesh`], and whether its raft had to be drawn without its
     /// clearance around the models (#467).
     pub fn drawn(&self) -> Result<(Option<IndexedMesh>, bool), EditError> {

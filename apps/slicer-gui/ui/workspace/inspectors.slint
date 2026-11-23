@@ -2365,6 +2365,11 @@ export component SupportsInspector inherits VerticalLayout {
     // The supports picked after the first joined onto its trunk (#377).
     callback picked-join();
     in property <int> picked-count;
+    // The supports hidden from the view (#728), how to hide the picked ones
+    // and how to show them all again.
+    in property <int> hidden-count;
+    callback picked-hide();
+    callback hidden-show();
     in property <[int]> shape-choices;
     in property <[int]> shape-choice-defaults;
     in property <[string]> bracing-presets;
@@ -2590,6 +2595,24 @@ export component SupportsInspector inherits VerticalLayout {
             enabled: !root.running;
             clicked => {
                 root.picked-join();
+            }
+        }
+        if root.tool == 5 && (root.picked-count > 0 || root.hidden-count > 0): HorizontalLayout {
+            spacing: 8px;
+
+            if root.picked-count > 0: ScButton {
+                text: @tr("Inspector" => "Hide (H)");
+                icon: Icons.eye-off;
+                clicked => {
+                    root.picked-hide();
+                }
+            }
+            if root.hidden-count > 0: ScButton {
+                text: @tr("Inspector" => "Show {n} hidden (Alt+H)" | "Show {n} hidden (Alt+H)" % root.hidden-count);
+                icon: Icons.eye;
+                clicked => {
+                    root.hidden-show();
+                }
             }
         }
         if root.tool == 5: Note {

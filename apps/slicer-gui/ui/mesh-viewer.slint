@@ -357,6 +357,8 @@ export component MeshViewer inherits Rectangle {
                 let g = event.text == "g" || event.text == "G";
                 if (g && ctrl && !event.modifiers.shift) { root.edit-key("group", ta.mouse-x, ta.mouse-y); return accept; }
                 if (g && ctrl && event.modifiers.shift) { root.edit-key("ungroup", ta.mouse-x, ta.mouse-y); return accept; }
+                // Alt+H shows the supports hidden with H (#728).
+                if ((event.text == "h" || event.text == "H") && event.modifiers.alt && !ctrl && root.tab-tool-key("alt+h")) { return accept; }
             }
             // Plain keys only: never steal Save, reload, or modified shortcuts.
             if (!event.modifiers.control && !event.modifiers.meta && !event.modifiers.alt) {

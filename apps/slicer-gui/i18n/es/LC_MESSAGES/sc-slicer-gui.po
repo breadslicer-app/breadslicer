@@ -11045,3 +11045,17 @@ msgstr "Los archivos de impresora se envían, no se abren"
 msgctxt "ErrorDialog"
 msgid "A printer file goes to a printer from the Send to printer card of the Slice tab, which shows while the printer in use takes prints over the network."
 msgstr "Un archivo de impresora se manda a una impresora desde la tarjeta Enviar a la impresora de la pestaña Laminar, que aparece cuando la impresora en uso recibe impresiones por la red."
+
+msgctxt "Inspector"
+msgid "Hide (H)"
+msgstr "Ocultar (H)"
+
+msgctxt "Inspector"
+msgid "Show {n} hidden (Alt+H)"
+msgid_plural "Show {n} hidden (Alt+H)"
+msgstr[0] "Mostrar {n} oculto (Alt+H)"
+msgstr[1] "Mostrar {n} ocultos (Alt+H)"
+
+msgctxt "ShortcutsCard"
+msgid "Hide the picked, show them all"
+msgstr "Ocultar los elegidos, mostrar todos"
