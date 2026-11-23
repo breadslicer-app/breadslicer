@@ -126,6 +126,8 @@ export component MainWindow inherits Window {
     callback start-open-recent(int);
     callback start-reopen-last();
     callback start-remove-recent(int);
+    // A recent file in its folder (#732).
+    callback start-show-recent-in-folder(int);
     // Open project or Import model: File > Open's dialog, led by that kind.
     callback start-open-file(StartOpen);
     callback start-dont-show-changed(bool);
@@ -175,6 +177,8 @@ export component MainWindow inherits Window {
     // The scene panel's eye and padlock (#16), by the object's index.
     callback object-hide-toggled(int);
     callback object-lock-toggled(int);
+    // A model's file in its folder (#732), by its index.
+    callback object-show-in-folder(int);
     in property <[int]> object-row-of: [];
     in-out property <int> selected-object-index: -1;
     // Every selected row (#13), indexed like `object-list`, and how many
@@ -234,6 +238,9 @@ export component MainWindow inherits Window {
     // The selected object numbers for the Transform inspector, pushed by
     // Rust at most once per frame (`ViewportController::refresh_readout`).
     in property <bool> selection-valid: false;
+    // The selected model is larger than its plate (#733), and Scale to fit.
+    in property <bool> selection-too-large: false;
+    callback scale-to-fit-requested();
     in property <float> selection-size-x;
     // Size along the selected object's own axes, and whether a tilt makes
     // it differ from the world box (BS-393).
@@ -485,6 +492,11 @@ export component MainWindow inherits Window {
     // of them.
     in property <int> support-picked-count;
     callback support-picked-clear();
+    // The picked supports hidden from the view (#728): H hides them, Alt+H
+    // shows every one again. View only.
+    in property <int> support-hidden-count;
+    callback support-picked-hide();
+    callback support-hidden-show();
     in property <bool> support-add-note-warns;
     // Remove's drag (#3): 0 a box, 1 a brush of this radius (logical px).
     in-out property <int> support-remove-mode: 0;
@@ -754,6 +766,11 @@ export component MainWindow inherits Window {
     in property <bool> slice-send-naming-start: false;
     in-out property <string> slice-send-name;
     in property <string> slice-send-name-preview;
+    // A file already sliced, sent from the disk (#727): picked with Send
+    // from disk, or dropped on the window.
+    in property <string> slice-send-disk-file;
+    callback slice-send-from-disk();
+    callback slice-send-file-dropped(string);
     callback slice-send-search(bool);
     callback slice-send-address(string);
     callback slice-send-name-asked(bool);
@@ -2052,6 +2069,9 @@ export component MainWindow inherits Window {
                     object-lock-toggled(i) => {
                         root.object-lock-toggled(i);
                     }
+                    object-show-in-folder(i) => {
+                        root.object-show-in-folder(i);
+                    }
                     plate-picked(i) => {
                         root.plate-picked(i);
                     }
@@ -2172,6 +2192,16 @@ export component MainWindow inherits Window {
                                 }
                                 if key == "p" || key == "P" {
                                     root.arm-support-tool(7);
+                                    return true;
+                                }
+                                // Pick: H hides the picked supports, Alt+H
+                                // shows them all again (#728).
+                                if root.support-tool == 5 && root.support-picked-count > 0 && (key == "h" || key == "H") {
+                                    root.support-picked-hide();
+                                    return true;
+                                }
+                                if key == "alt+h" && root.support-hidden-count > 0 {
+                                    root.support-hidden-show();
                                     return true;
                                 }
                                 // Remove: B a box or a brush; [ and ] the brush.
@@ -2870,6 +2900,10 @@ export component MainWindow inherits Window {
                                 send-naming-start: root.slice-send-naming-start;
                                 send-name <=> root.slice-send-name;
                                 send-name-preview: root.slice-send-name-preview;
+                                send-disk-file: root.slice-send-disk-file;
+                                send-from-disk => {
+                                    root.slice-send-from-disk();
+                                }
                                 send-name-asked(start) => {
                                     root.slice-send-name-asked(start);
                                 }
@@ -3137,6 +3171,10 @@ export component MainWindow inherits Window {
                                     }
                                     selection-valid: root.selection-valid;
                                     size-x: root.selection-size-x;
+                                    too-large: root.selection-too-large;
+                                    scale-to-fit => {
+                                        root.scale-to-fit-requested();
+                                    }
                                     size-y: root.selection-size-y;
                                     size-z: root.selection-size-z;
                                     model-x: root.selection-model-x;
@@ -3368,6 +3406,13 @@ export component MainWindow inherits Window {
                                         root.support-picked-join();
                                     }
                                     picked-count: root.support-picked-count;
+                                    hidden-count: root.support-hidden-count;
+                                    picked-hide => {
+                                        root.support-picked-hide();
+                                    }
+                                    hidden-show => {
+                                        root.support-hidden-show();
+                                    }
                                     area-clear => {
                                         root.support-area-clear();
                                     }
@@ -4152,6 +4197,9 @@ export component MainWindow inherits Window {
         }
         remove-recent(row) => {
             root.start-remove-recent(row);
+        }
+        show-recent-in-folder(row) => {
+            root.start-show-recent-in-folder(row);
         }
         open-file(kind) => {
             root.start-open-file(kind);

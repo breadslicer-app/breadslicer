@@ -102,6 +102,45 @@ pub(crate) struct NameBeingEdited {
     pub(crate) anchor: usize,
 }
 
+/// The supports hidden from the view with H (#728).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct HiddenSupports {
+    /// Each by its set's leaf and its tip, as the Pick tool knows them.
+    pub(crate) tips: Vec<(sc_scene::NodeId, [f64; 3])>,
+    /// What each set with supports hidden is drawn as instead.
+    pub(crate) sets: Vec<HiddenSet>,
+}
+
+/// A support set drawn without the supports hidden from it (#728).
+#[derive(Clone, Debug)]
+pub(crate) struct HiddenSet {
+    pub(crate) leaf: sc_scene::NodeId,
+    /// The mesh the leaf held when this was drawn: with another one, the
+    /// set has changed since, and it shows whole.
+    pub(crate) from: Arc<sc_mesh_core::IndexedMesh>,
+    /// The set without its hidden supports; `None` with nothing left.
+    pub(crate) drawn: Option<Arc<sc_mesh_core::IndexedMesh>>,
+}
+
+impl PartialEq for HiddenSet {
+    /// The same meshes, not meshes alike: comparing a set's vertices would
+    /// cost what drawing it does.
+    fn eq(&self, other: &Self) -> bool {
+        let same = |a: &Option<Arc<_>>, b: &Option<Arc<_>>| match (a, b) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        self.leaf == other.leaf
+            && Arc::ptr_eq(&self.from, &other.from)
+            && same(&self.drawn, &other.drawn)
+    }
+}
+
+/// How far over its room a model may stand before Scale to fit is offered
+/// (#733), mm: what a print does not show.
+const FIT_SLACK_MM: f64 = 0.01;
+
 /// Told each time the held slice's estimate is worked out again.
 type EstimateListener = Rc<dyn Fn()>;
 
@@ -134,6 +173,9 @@ pub(crate) struct ViewportController {
     /// The selection the Slice tab put aside (#140): nothing is selected
     /// there, and leaving it brings back what is still in the scene.
     kept_out_of_slice: RefCell<Selection>,
+    /// The supports hidden from the view with H (#728). View only: the
+    /// scene keeps them; leaving the tab shows them again.
+    hidden_supports: RefCell<HiddenSupports>,
     /// The held slice's estimate as last shown, and who is told each time it
     /// is worked out again (the resin's cost, #101).
     last_estimate: Cell<Option<crate::export_print_file::PrintEstimate>>,
@@ -375,6 +417,7 @@ impl ViewportController {
             slice_current: Cell::new(false),
             paint_marks: Cell::new([None; 3]),
             kept_out_of_slice: RefCell::new(Selection::None),
+            hidden_supports: RefCell::new(HiddenSupports::default()),
             review_highlight: RefCell::new(None),
             highlight_generation: Cell::new(0),
             plate_printer_name: RefCell::new(None),
@@ -463,6 +506,7 @@ impl ViewportController {
             slice_current: Cell::new(false),
             paint_marks: Cell::new([None; 3]),
             kept_out_of_slice: RefCell::new(Selection::None),
+            hidden_supports: RefCell::new(HiddenSupports::default()),
             review_highlight: RefCell::new(None),
             highlight_generation: Cell::new(0),
             plate_printer_name: RefCell::new(None),
@@ -1414,12 +1458,14 @@ impl ViewportController {
     pub(crate) fn thumbnail_png(&self) -> Option<Vec<u8>> {
         const SIDE: u32 = 256;
         let build_volume = self.build_volume();
+        let hiding = self.hiding_supports();
         let mut cell = self.render.renderer_cell().borrow_mut();
         let renderer = cell.as_mut()?;
         // The scene reaches the GPU when the window paints: a save before that
         // paint would draw a scene the renderer does not hold, which shows the
-        // background alone.
-        if self.render.frame().upload_owed() {
+        // background alone. Supports hidden from the view (#728) are saved,
+        // so the picture shows them: the next paint hides them again.
+        if self.render.frame().upload_owed() || hiding {
             match self
                 .session
                 .document()
@@ -1431,6 +1477,10 @@ impl ViewportController {
                 }
                 _ => return None,
             }
+            renderer.set_hidden_nodes(&self.session.document().hidden_leaves());
+        }
+        if hiding {
+            self.upload_scene_again();
         }
         let mut rgba = self
             .session
@@ -1459,9 +1509,19 @@ impl ViewportController {
         // the installed buffers.
         let sizes = format.preview_sizes()?;
         let build_volume = self.build_volume();
+        let hiding = self.hiding_supports();
         let mut cell = self.render.renderer_cell().borrow_mut();
         let renderer = cell.as_mut()?;
         let document = self.session.document();
+        // Supports hidden from the view (#728) print: the pictures show them,
+        // and the next paint hides them again.
+        if hiding {
+            document
+                .with_scene(|spatial| renderer.upload_scene(spatial.graph()))?
+                .ok()?;
+            renderer.set_hidden_nodes(&document.hidden_leaves());
+            self.upload_scene_again();
+        }
         let plates = document.plates();
         // The plate the file prints, of several (#547).
         let plate = document.slice_params().map_or(0, |params| params.plate);
@@ -1558,6 +1618,8 @@ impl ViewportController {
             return;
         }
         crate::breadcrumbs::note(&format!("tab: {section:?}"));
+        // The supports hidden with H come back with another tab (#728).
+        self.set_hidden_supports(HiddenSupports::default());
         let document = self.session.document();
         if section == WorkspaceSection::Slice {
             *self.kept_out_of_slice.borrow_mut() = document.selection();
@@ -1878,6 +1940,92 @@ impl ViewportController {
         let lines =
             (view == 1 || lines_under).then(|| self.support_lines.lines(self.session.document()));
         (shown_up_to, lines)
+    }
+
+    /// The supports hidden from the view (#728).
+    pub(crate) fn hidden_supports(&self) -> HiddenSupports {
+        self.hidden_supports.borrow().clone()
+    }
+
+    /// Hides `hidden` from the view, in place of what was hidden; an empty
+    /// one shows every support again.
+    pub(crate) fn set_hidden_supports(&self, hidden: HiddenSupports) {
+        if *self.hidden_supports.borrow() == hidden {
+            return;
+        }
+        let count = hidden.tips.len() as i32;
+        *self.hidden_supports.borrow_mut() = hidden;
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_support_hidden_count(count);
+        }
+        self.upload_scene_again();
+    }
+
+    /// Whether the view hides any support (#728).
+    fn hiding_supports(&self) -> bool {
+        !self.hidden_supports.borrow().sets.is_empty()
+    }
+
+    /// The scene as the view draws it: `graph` with the supports hidden
+    /// with H left out of their sets (#728); `None` with none hidden.
+    pub(crate) fn scene_for_view(&self, graph: &sc_scene::Scene) -> Option<sc_scene::Scene> {
+        let hidden = self.hidden_supports.borrow();
+        let mut shown: Option<sc_scene::Scene> = None;
+        for set in &hidden.sets {
+            let Some(drawn) = &set.drawn else {
+                continue;
+            };
+            if !graph
+                .leaf_mesh_arc(set.leaf)
+                .is_some_and(|now| Arc::ptr_eq(now, &set.from))
+            {
+                continue;
+            }
+            let scene = shown.get_or_insert_with(|| graph.clone());
+            let resource = match scene.node(set.leaf).map(|node| &node.kind) {
+                Some(sc_scene::NodeKind::Leaf(sc_scene::LeafPayload::MeshResource(rid))) => {
+                    Some(*rid)
+                }
+                _ => None,
+            };
+            match resource {
+                // A mesh another leaf shares (a copy) is left as it is.
+                Some(rid) if !scene.other_leaf_references_resource(rid, set.leaf) => {
+                    let _ = scene.replace_mesh_resource(rid, &set.from, drawn.clone());
+                }
+                Some(_) => {}
+                None => {
+                    let _ = scene.replace_inline_leaf_mesh(set.leaf, &set.from, drawn.clone());
+                }
+            }
+        }
+        shown
+    }
+
+    /// The leaves the view leaves out: the ones hidden in the scene, and the
+    /// support sets whose every support is hidden with H (#728).
+    fn leaves_hidden_in_view(&self) -> Vec<sc_scene::NodeId> {
+        let document = self.session.document();
+        let mut leaves = document.hidden_leaves();
+        let hidden = self.hidden_supports.borrow();
+        let emptied: Vec<sc_scene::NodeId> = document
+            .with_scene(|spatial| {
+                hidden
+                    .sets
+                    .iter()
+                    .filter(|set| set.drawn.is_none())
+                    .filter(|set| {
+                        spatial
+                            .graph()
+                            .leaf_mesh_arc(set.leaf)
+                            .is_some_and(|now| Arc::ptr_eq(now, &set.from))
+                    })
+                    .map(|set| set.leaf)
+                    .collect()
+            })
+            .unwrap_or_default();
+        leaves.extend(emptied);
+        leaves
     }
 
     /// Whether the supports are left out of the view: while the Hollow tab's
@@ -4208,6 +4356,20 @@ impl ViewportController {
         self.mark_dirty();
     }
 
+    /// The file the model of the object list's row `index` came from
+    /// (#732); `None` for a support set's row.
+    pub(crate) fn file_of_row(&self, index: i32) -> Option<PathBuf> {
+        let document = self.session.document();
+        let index = usize::try_from(index).ok()?;
+        let model = document
+            .with_scene(|spatial| {
+                let id = spatial.leaf_id_at_index(index)?;
+                (!shows_supports(spatial, id)).then_some(id)
+            })
+            .flatten()?;
+        document.model_file(model)
+    }
+
     /// Whether the next click lays a model on a face (#15).
     #[cfg(test)]
     pub(crate) fn laying_on_face(&self) -> bool {
@@ -5853,6 +6015,81 @@ impl ViewportController {
         ui.set_selection_scale_x(r.axis_scale_pct[0] as f32);
         ui.set_selection_scale_y(r.axis_scale_pct[1] as f32);
         ui.set_selection_scale_z(r.axis_scale_pct[2] as f32);
+        // Too large for its plate, with the plate's margin (#733).
+        // Not during a gesture: the box is read again when it ends.
+        if !gesture {
+            let room = self.fit_room(id);
+            ui.set_selection_too_large(
+                (0..3).any(|k| r.size[k] > room[1][k] - room[0][k] + FIT_SLACK_MM),
+            );
+        }
+    }
+
+    /// The room a model `id` has on its plate (#733): the build volume over
+    /// the plate it stands on, its edges the plate's margin in (Arrange's).
+    fn fit_room(&self, id: sc_scene::NodeId) -> [[f64; 3]; 2] {
+        let volume = self.build_volume();
+        let (lo, hi) = (volume.envelope_min_mm(), volume.envelope_max_mm());
+        let on = crate::plates::offset(&volume, self.plate_of_leaf(id).unwrap_or(0));
+        let margin = self
+            .ui
+            .upgrade()
+            .map_or(2.0, |ui| f64::from(ui.get_arrange_margin()).max(0.0));
+        let half = [f64::from(hi.x - lo.x) * 0.5, f64::from(hi.y - lo.y) * 0.5]
+            .map(|h| margin.min(h * 0.45));
+        [
+            [
+                f64::from(lo.x + on.x) + half[0],
+                f64::from(lo.y + on.y) + half[1],
+                f64::from(lo.z),
+            ],
+            [
+                f64::from(hi.x + on.x) - half[0],
+                f64::from(hi.y + on.y) - half[1],
+                f64::from(hi.z),
+            ],
+        ]
+    }
+
+    /// Scale to fit (#733): the selected model, too large for its plate,
+    /// scaled evenly to the largest size that fits it with the plate's
+    /// margin, and moved in as far as that takes, in one undo step.
+    pub(crate) fn scale_to_fit(&self) {
+        if !self.allows_layout_tools() || self.gesture_active() {
+            return;
+        }
+        let document = self.session.document();
+        if document.selection_len() != 1 {
+            return;
+        }
+        let Some(id) = document.selection_primary_node_id() else {
+            return;
+        };
+        let [lo, hi] = self.fit_room(id);
+        let change = document
+            .with_scene(|spatial| {
+                let query = spatial.leaf(id)?;
+                let before = query.local_transform();
+                let after =
+                    super::numeric_transform::apply(&query, NumericEdit::FitInto { lo, hi })?;
+                Some((before, after))
+            })
+            .flatten();
+        let Some((before, after)) = change else {
+            return;
+        };
+        let edit = SceneEdit::SetLocalTransform {
+            node_id: id,
+            before,
+            after,
+        };
+        match document.apply_edit(edit.clone()) {
+            Ok(()) => document.push_edit(edit),
+            Err(EditNotApplied::Rejected(reason)) => self.show_edit_rejected(reason),
+            Err(_) => {}
+        }
+        self.readout_owed.set(true);
+        self.mark_dirty();
     }
 
     /// The viewport aids of a gesture in flight (BS-69): what it has done so
@@ -6260,10 +6497,12 @@ impl ViewportController {
 
         if self.render.frame().upload_owed() {
             crate::breadcrumbs::note("gpu: scene upload");
-            let upload = self
-                .session
-                .document()
-                .with_scene(|spatial| renderer.upload_scene(spatial.graph()));
+            let upload = self.session.document().with_scene(|spatial| {
+                match self.scene_for_view(spatial.graph()) {
+                    Some(shown) => renderer.upload_scene(&shown),
+                    None => renderer.upload_scene(spatial.graph()),
+                }
+            });
             crate::breadcrumbs::note(&format!(
                 "gpu: scene upload ok={}",
                 matches!(upload, Some(Ok(())))
@@ -6424,7 +6663,7 @@ impl ViewportController {
         renderer.set_support_lines(shown_up_to, lines.as_ref());
         renderer.set_supports_hidden(self.supports_hidden());
         renderer.set_support_view_fade(self.support_view_fade());
-        renderer.set_hidden_nodes(&self.session.document().hidden_leaves());
+        renderer.set_hidden_nodes(&self.leaves_hidden_in_view());
         renderer.set_plates(self.session.document().plates());
         renderer.set_dim_all(self.dims_off_plate());
         renderer.set_plate_tools(

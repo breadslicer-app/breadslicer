@@ -532,6 +532,8 @@ impl PanelUpdate {
             | PreferencesChange::SliceControlPanel
             | PreferencesChange::SliceViewPanel
             | PreferencesChange::LastOpenDir
+            | PreferencesChange::LastExportDir
+            | PreferencesChange::ExportNameTemplate
             | PreferencesChange::StartDialog
             | PreferencesChange::RepairOnImport
             | PreferencesChange::RecentFiles

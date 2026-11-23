@@ -81,10 +81,10 @@ use crate::support_persist::{
     DrawnSet, StaleWhy, SupportSessions, in_force, latest_drawing, model_of, record, sets_in_force,
     sets_of_model, support_leaf, support_leaves,
 };
-use crate::viewport::ViewportController;
 use crate::viewport::support_drag::{
     DragPoint, DragView, Project, ScreenHit, SupportDragHandler, SupportDragKind,
 };
+use crate::viewport::{HiddenSet, HiddenSupports, ViewportController};
 use crate::{MainWindow, WorkspaceSection};
 
 /// How much around an island a jump to it frames (#538), in mm.
@@ -2344,10 +2344,32 @@ impl SupportRun {
             });
         }
         {
+            let weak = Rc::downgrade(&run);
+            ui.on_support_picked_hide(move || {
+                if let Some(run) = weak.upgrade() {
+                    run.hide_chosen();
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(&run);
+            ui.on_support_hidden_show(move || {
+                if let Some(run) = weak.upgrade() {
+                    run.hide_tips(Vec::new());
+                }
+            });
+        }
+        {
             // An edit, an Undo or a new scene: the picked supports are shown
             // as they stand (#567).
             let weak = Rc::downgrade(&run);
             let sub = run.document.subscribe(move |event| {
+                // Another scene shows every support again (#728).
+                if matches!(event, SceneEvent::Installed | SceneEvent::Cleared)
+                    && let Some(run) = weak.upgrade()
+                {
+                    run.hide_tips(Vec::new());
+                }
                 if matches!(
                     event,
                     SceneEvent::Installed
@@ -2363,6 +2385,12 @@ impl SupportRun {
                             && let Some(ui) = run.ui.upgrade()
                         {
                             run.show_chosen(&ui);
+                            // The supports hidden stay hidden in the sets
+                            // as they stand now.
+                            let hidden = run.ctrl.hidden_supports().tips;
+                            if !hidden.is_empty() {
+                                run.hide_tips(hidden);
+                            }
                         }
                     });
                 }
@@ -5996,6 +6024,13 @@ impl SupportRun {
                     Some((drawn.leaf, drawn.session.tip_point(&id)?))
                 })
         });
+        // A support hidden from the view is not picked (#728).
+        let hidden = self.ctrl.hidden_supports().tips;
+        let found = found.filter(|(leaf, tip)| {
+            !hidden
+                .iter()
+                .any(|(l, t)| l == leaf && (0..3).all(|k| (t[k] - tip[k]).abs() < CHOSEN_TIP_MM))
+        });
         {
             let mut chosen = self.chosen.borrow_mut();
             let same = |a: [f64; 3], b: [f64; 3]| (0..3).all(|k| (a[k] - b[k]).abs() < 1e-6);
@@ -6014,6 +6049,75 @@ impl SupportRun {
             }
         }
         self.show_chosen(ui);
+    }
+
+    /// H with the Pick tool (#728): the picked supports leave the view, as
+    /// the ones hidden before, and are let go. View only: the scene keeps
+    /// them.
+    fn hide_chosen(&self) {
+        let mut tips = self.ctrl.hidden_supports().tips;
+        let same = |a: [f64; 3], b: [f64; 3]| (0..3).all(|k| (a[k] - b[k]).abs() < 1e-6);
+        for (leaf, tip) in self.chosen.borrow_mut().drain(..) {
+            if !tips.iter().any(|(l, t)| *l == leaf && same(*t, tip)) {
+                tips.push((leaf, tip));
+            }
+        }
+        self.hide_tips(tips);
+        if let Some(ui) = self.ui.upgrade() {
+            self.show_chosen(&ui);
+        }
+    }
+
+    /// Hides from the view the supports at `tips`, each by its set's leaf
+    /// and its tip, in place of the ones hidden (#728): each set they are
+    /// in is drawn without them. A tip no set holds any more is let go;
+    /// none shows every support again (Alt+H).
+    fn hide_tips(&self, tips: Vec<(NodeId, [f64; 3])>) {
+        if tips.is_empty() {
+            self.ctrl.set_hidden_supports(HiddenSupports::default());
+            return;
+        }
+        let sets = self.sets_in_force();
+        let mut kept = Vec::new();
+        let mut by_set: Vec<(&DrawnSet, Vec<String>)> = Vec::new();
+        for (leaf, tip) in tips {
+            let Some(drawn) = sets.iter().find(|d| d.leaf == leaf) else {
+                continue;
+            };
+            let Some(id) = drawn.session.tip_near(tip, CHOSEN_TIP_MM) else {
+                continue;
+            };
+            kept.push((leaf, tip));
+            match by_set.iter_mut().find(|(d, _)| d.leaf == leaf) {
+                Some((_, ids)) => {
+                    if !ids.contains(&id) {
+                        ids.push(id);
+                    }
+                }
+                None => by_set.push((drawn, vec![id])),
+            }
+        }
+        let shown = self
+            .document
+            .with_scene(|spatial| {
+                by_set
+                    .iter()
+                    .filter_map(|(drawn, ids)| {
+                        let from = spatial.graph().leaf_mesh_arc(drawn.leaf)?.clone();
+                        let without = drawn.session.mesh_without(ids).ok()?;
+                        Some(HiddenSet {
+                            leaf: drawn.leaf,
+                            from,
+                            drawn: without.map(Arc::new),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.ctrl.set_hidden_supports(HiddenSupports {
+            tips: kept,
+            sets: shown,
+        });
     }
 
     /// Lets go of every picked support (Esc with the Select tool).
@@ -13979,6 +14083,92 @@ mod hand_edit_tests {
             assert!(drawn.session.state().collections.trunks.contains_key(&id));
             assert!(document.undo().unwrap());
             assert_eq!(document.scene_revision(), before, "one undo step");
+        });
+    }
+
+    /// #728: H hides the picked supports from the view while the scene
+    /// keeps them; Alt+H shows them again, and so does another tab.
+    #[test]
+    fn hidden_supports_leave_the_view_but_not_the_scene() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test_with_ui(&window));
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation([20.0, 20.0, 8.0])),
+                    LeafPayload::Mesh(Arc::new(sc_mesh_fixtures::unit_cube_mesh())),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph.clone(), PathBuf::from("cube.stl"));
+            ctrl.set_section(WorkspaceSection::Supports);
+            let run =
+                SupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let outcome = start_supports(&graph, SupportRequest::default())
+                .unwrap()
+                .join();
+            *run.started_on.borrow_mut() = Some(document.scene_revision());
+            run.finish(outcome);
+            let session = run.sets_in_force()[0].session.clone();
+            let tip = session
+                .tips()
+                .into_iter()
+                .find(|(id, _)| !session.carries_others(id))
+                .expect("a support at an end")
+                .1
+                .map(|c| c as f32);
+            window.set_support_page(1);
+            window.set_support_tool(5);
+            run.on_tool_changed();
+            run.on_tool_click_with(tip, false);
+            assert_eq!(window.get_support_picked_count(), 1);
+
+            let before = document.scene_revision();
+            window.invoke_support_picked_hide();
+            assert_eq!(document.scene_revision(), before, "the view only");
+            assert_eq!(window.get_support_picked_count(), 0, "let go");
+            assert_eq!(window.get_support_hidden_count(), 1);
+            let hidden = ctrl.hidden_supports();
+            let set = &hidden.sets[0];
+            let without = set.drawn.clone().expect("the other supports");
+            assert!(without.faces().len() < set.from.faces().len());
+            let shown = document
+                .with_scene(|spatial| ctrl.scene_for_view(spatial.graph()))
+                .flatten()
+                .expect("the view draws its own scene");
+            assert!(Arc::ptr_eq(
+                shown.leaf_mesh_arc(set.leaf).expect("the set's leaf"),
+                &without
+            ));
+            assert_eq!(
+                run.sets_in_force()[0].session.tips().len(),
+                session.tips().len()
+            );
+
+            // Where it was, a click picks nothing.
+            run.on_tool_click_with(tip, false);
+            assert_eq!(window.get_support_picked_count(), 0);
+
+            window.invoke_support_hidden_show();
+            assert_eq!(window.get_support_hidden_count(), 0);
+            assert!(
+                document
+                    .with_scene(|spatial| ctrl.scene_for_view(spatial.graph()))
+                    .flatten()
+                    .is_none()
+            );
+
+            // Hidden again, another tab shows it.
+            run.on_tool_click_with(tip, false);
+            window.invoke_support_picked_hide();
+            assert_eq!(window.get_support_hidden_count(), 1);
+            ctrl.set_section(WorkspaceSection::Transform);
+            assert_eq!(window.get_support_hidden_count(), 0);
+            assert!(ctrl.hidden_supports().tips.is_empty());
         });
     }
 

@@ -1356,6 +1356,10 @@ export component TransformInspector inherits VerticalLayout {
     in property <float> scale-y;
     in property <float> scale-z;
     in-out property <bool> size-uniform: true;
+    // Larger than its plate (#733): Scale to fit brings it to the largest
+    // size that fits, in one undo step.
+    in property <bool> too-large;
+    callback scale-to-fit();
     callback object-picked(int);
     // Shift+click or Ctrl+click on a row.
     callback object-toggled(int);
@@ -1787,6 +1791,16 @@ export component TransformInspector inherits VerticalLayout {
             value: root.scale-z;
             committed(v) => {
                 root.numeric-edit(23, v);
+            }
+        }
+        if root.too-large: WarningNote {
+            text: @tr("Inspector" => "Larger than the plate: it does not print whole.");
+        }
+        if root.too-large: ScButton {
+            text: @tr("Inspector" => "Scale to fit");
+            icon: Icons.scale;
+            clicked => {
+                root.scale-to-fit();
             }
         }
         CheckBox {
@@ -2403,6 +2417,11 @@ export component SupportsInspector inherits VerticalLayout {
     // The supports picked after the first joined onto its trunk (#377).
     callback picked-join();
     in property <int> picked-count;
+    // The supports hidden from the view (#728), how to hide the picked ones
+    // and how to show them all again.
+    in property <int> hidden-count;
+    callback picked-hide();
+    callback hidden-show();
     in property <[int]> shape-choices;
     in property <[int]> shape-choice-defaults;
     in property <[string]> bracing-presets;
@@ -2628,6 +2647,24 @@ export component SupportsInspector inherits VerticalLayout {
             enabled: !root.running;
             clicked => {
                 root.picked-join();
+            }
+        }
+        if root.tool == 5 && (root.picked-count > 0 || root.hidden-count > 0): HorizontalLayout {
+            spacing: 8px;
+
+            if root.picked-count > 0: ScButton {
+                text: @tr("Inspector" => "Hide (H)");
+                icon: Icons.eye-off;
+                clicked => {
+                    root.picked-hide();
+                }
+            }
+            if root.hidden-count > 0: ScButton {
+                text: @tr("Inspector" => "Show {n} hidden (Alt+H)" | "Show {n} hidden (Alt+H)" % root.hidden-count);
+                icon: Icons.eye;
+                clicked => {
+                    root.hidden-show();
+                }
             }
         }
         if root.tool == 5: Note {
@@ -3584,6 +3621,10 @@ export component SliceInspector inherits VerticalLayout {
     in property <bool> send-naming-start;
     in-out property <string> send-name;
     in property <string> send-name-preview;
+    // A file already sliced, sent from the disk (#727): its name while it
+    // is being named, empty for the plate's.
+    in property <string> send-disk-file;
+    callback send-from-disk();
     callback send-name-asked(bool);
     callback send-name-edited(string);
     callback send-search(bool);
@@ -4068,6 +4109,16 @@ export component SliceInspector inherits VerticalLayout {
                 }
             }
         }
+        if !root.send-busy && !root.send-naming: ScButton {
+            text: @tr("SlicePanel" => "Send from disk…");
+            icon: Icons.folder;
+            kind: ButtonKind.ghost;
+            button-height: 30px;
+            enabled: root.send-index >= 0;
+            clicked => {
+                root.send-from-disk();
+            }
+        }
         // Before each send, the name the file goes onto the printer by.
         if !root.send-busy && root.send-naming: VerticalLayout {
             spacing: 6px;
@@ -4090,7 +4141,41 @@ export component SliceInspector inherits VerticalLayout {
             Note {
                 text: @tr("SlicePanel" => "On the printer: {}", root.send-name-preview);
             }
-            HorizontalLayout {
+            if root.send-disk-file != "": Note {
+                text: @tr("SlicePanel" => "From the disk: {}", root.send-disk-file);
+            }
+            if root.send-disk-file != "": HorizontalLayout {
+                spacing: 8px;
+                ScButton {
+                    horizontal-stretch: 1;
+                    text: @tr("SlicePanel" => "Send to printer");
+                    icon: Icons.file;
+                    kind: ButtonKind.primary;
+                    button-height: 34px;
+                    enabled: root.send-index >= 0;
+                    clicked => {
+                        root.send(false, root.send-name);
+                    }
+                }
+                ScButton {
+                    horizontal-stretch: 1;
+                    text: @tr("SlicePanel" => "Send and start");
+                    icon: Icons.slice;
+                    button-height: 34px;
+                    enabled: root.send-index >= 0;
+                    clicked => {
+                        root.send(true, root.send-name);
+                    }
+                }
+                ScButton {
+                    text: @tr("SlicePanel" => "Back");
+                    button-height: 34px;
+                    clicked => {
+                        root.send-naming = false;
+                    }
+                }
+            }
+            if root.send-disk-file == "": HorizontalLayout {
                 spacing: 8px;
                 ScButton {
                     horizontal-stretch: 1;

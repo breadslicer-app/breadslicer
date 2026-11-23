@@ -903,6 +903,7 @@ const DIALOG_SOURCES: &[(&str, &str)] = &[
     ("setup_window.rs", include_str!("setup_window.rs")),
     ("setup_forms.rs", include_str!("setup_forms.rs")),
     ("send_to_printer.rs", include_str!("send_to_printer.rs")),
+    ("show_in_folder.rs", include_str!("show_in_folder.rs")),
     ("network_profiles.rs", include_str!("network_profiles.rs")),
     ("printer_wall.rs", include_str!("printer_wall.rs")),
     ("printer_camera.rs", include_str!("printer_camera.rs")),

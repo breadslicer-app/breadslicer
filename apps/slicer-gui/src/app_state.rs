@@ -405,6 +405,8 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_slice_view_height(snap.slice_view_height);
     settings.set_slice_view_minimized(snap.slice_view_minimized);
     settings.set_last_open_dir(snap.last_open_dir.clone());
+    settings.set_last_export_dir(snap.last_export_dir.clone());
+    settings.set_export_name_template(&snap.export_name_template);
     settings.set_show_start_dialog(snap.show_start_dialog);
     settings.set_repair_on_import(snap.repair_on_import);
     settings.set_recent_files(snap.recent_files.clone());
@@ -580,6 +582,8 @@ impl AppState {
             slice_view_height: settings.slice_view_height(),
             slice_view_minimized: settings.slice_view_minimized(),
             last_open_dir: settings.last_open_dir(),
+            last_export_dir: settings.last_export_dir(),
+            export_name_template: settings.export_name_template(),
             show_start_dialog: settings.show_start_dialog(),
             repair_on_import: settings.repair_on_import(),
             recent_files: settings.recent_files(),
@@ -1085,12 +1089,46 @@ impl AppState {
         }
     }
 
-    /// Opens the files dropped on window `id` since the last time.
+    /// Opens the files dropped on window `id` since the last time. A
+    /// printer file goes to the window's Send card instead (#727).
     fn open_dropped(self: &Rc<Self>, id: u64) {
         let paths = self.dropped.borrow_mut().remove(&id).unwrap_or_default();
+        let (printer_files, paths): (Vec<PathBuf>, Vec<PathBuf>) = paths
+            .into_iter()
+            .partition(|path| crate::send_to_printer::is_printer_file(path));
+        if let Some(file) = printer_files.into_iter().next() {
+            self.send_dropped(id, file);
+        }
         if !paths.is_empty() {
             self.open_paths_in_window(id, paths);
         }
+    }
+
+    /// A printer file dropped on window `id` (#727): the Slice tab shows,
+    /// with the Send card ready to name it. Without a printer that takes a
+    /// print over the network there is no card, and the user is told so.
+    fn send_dropped(&self, id: u64, file: PathBuf) {
+        let Some((window, controller)) = self
+            .main_windows
+            .borrow()
+            .get(&id)
+            .map(|wired| (wired.window.clone_strong(), wired.controller.clone()))
+        else {
+            return;
+        };
+        if window.get_slice_send_shown() {
+            window.invoke_section_change_requested(crate::WorkspaceSection::Slice);
+            window.invoke_slice_send_file_dropped(file.to_string_lossy().as_ref().into());
+            return;
+        }
+        controller.dialogs().show_info(|| InfoTexts {
+            heading: ctr!("ErrorDialog", "Printer files are sent, not opened"),
+            message: ctr!(
+                "ErrorDialog",
+                "A printer file goes to a printer from the Send to printer card of the Slice tab, which shows while the printer in use takes prints over the network."
+            ),
+            details: Default::default(),
+        });
     }
 
     /// Routes an external (non-menu) open request of 1 file: a path on

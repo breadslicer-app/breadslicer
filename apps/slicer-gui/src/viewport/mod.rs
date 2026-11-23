@@ -56,6 +56,7 @@ mod types;
 #[cfg(test)]
 pub(crate) use controller::ISLAND_VIEW_PITCH;
 pub(crate) use controller::ViewportController;
+pub(crate) use controller::{HiddenSet, HiddenSupports};
 pub(crate) use object_list::build_object_list_names as object_names;
 pub(crate) use performance_probe::{ProbeResult, ProbeUpdate};
 pub(crate) use render_scheduler::RESIZE_SETTLE;

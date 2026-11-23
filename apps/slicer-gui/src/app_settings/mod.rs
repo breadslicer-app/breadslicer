@@ -575,6 +575,15 @@ pub(crate) struct AppSettings {
     /// then falls back to the home directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_open_dir: Option<PathBuf>,
+    /// Directory the printer-file export dialog starts in: the folder the
+    /// last printer file was written to (#729), apart from the one models
+    /// are imported from. Omitted in TOML until the first export.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_export_dir: Option<PathBuf>,
+    /// The template printer files are named by (#730). Omitted in TOML
+    /// while it is the shipped one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    export_name_template: Option<String>,
     /// Whether the start dialog shows when the app opens with no file (#381).
     /// Omitted in TOML while on (the default).
     #[serde(
@@ -629,6 +638,8 @@ impl Default for AppSettings {
             slice_panel: SliceControlPanelSettings::default(),
             slice_view: SliceViewSettings::default(),
             last_open_dir: None,
+            last_export_dir: None,
+            export_name_template: None,
             show_start_dialog: default_show_start_dialog(),
             repair_on_import: default_repair_on_import(),
             recent_files: Vec::new(),
@@ -1027,6 +1038,28 @@ impl AppSettings {
 
     pub(crate) fn set_last_open_dir(&mut self, dir: Option<PathBuf>) {
         self.last_open_dir = dir;
+    }
+
+    pub(crate) fn last_export_dir(&self) -> Option<PathBuf> {
+        self.last_export_dir.clone()
+    }
+
+    pub(crate) fn set_last_export_dir(&mut self, dir: Option<PathBuf>) {
+        self.last_export_dir = dir;
+    }
+
+    pub(crate) fn export_name_template(&self) -> String {
+        self.export_name_template
+            .clone()
+            .unwrap_or_else(|| crate::file_name_template::DEFAULT_TEMPLATE.to_owned())
+    }
+
+    /// Keeps `template`; the shipped one, or none, is not written.
+    pub(crate) fn set_export_name_template(&mut self, template: &str) {
+        let template = template.trim();
+        self.export_name_template = (!template.is_empty()
+            && template != crate::file_name_template::DEFAULT_TEMPLATE)
+            .then(|| template.to_owned());
     }
 
     pub(crate) fn show_start_dialog(&self) -> bool {
