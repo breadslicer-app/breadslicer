@@ -238,6 +238,9 @@ export component MainWindow inherits Window {
     // The selected object numbers for the Transform inspector, pushed by
     // Rust at most once per frame (`ViewportController::refresh_readout`).
     in property <bool> selection-valid: false;
+    // The selected model is larger than its plate (#733), and Scale to fit.
+    in property <bool> selection-too-large: false;
+    callback scale-to-fit-requested();
     in property <float> selection-size-x;
     // Size along the selected object's own axes, and whether a tilt makes
     // it differ from the world box (BS-393).
@@ -3160,6 +3163,10 @@ export component MainWindow inherits Window {
                                     }
                                     selection-valid: root.selection-valid;
                                     size-x: root.selection-size-x;
+                                    too-large: root.selection-too-large;
+                                    scale-to-fit => {
+                                        root.scale-to-fit-requested();
+                                    }
                                     size-y: root.selection-size-y;
                                     size-z: root.selection-size-z;
                                     model-x: root.selection-model-x;

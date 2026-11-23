@@ -11094,3 +11094,11 @@ msgstr "Ni el archivo ni su carpeta están más ahí."
 msgctxt "ErrorDialog"
 msgid "The file browser did not open: {}"
 msgstr "El explorador de archivos no se abrió: {}"
+
+msgctxt "Inspector"
+msgid "Larger than the plate: it does not print whole."
+msgstr "Más grande que la cama: no se imprime entero."
+
+msgctxt "Inspector"
+msgid "Scale to fit"
+msgstr "Escalar para que entre"

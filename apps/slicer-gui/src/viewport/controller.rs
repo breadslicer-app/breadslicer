@@ -137,6 +137,10 @@ impl PartialEq for HiddenSet {
     }
 }
 
+/// How far over its room a model may stand before Scale to fit is offered
+/// (#733), mm: what a print does not show.
+const FIT_SLACK_MM: f64 = 0.01;
+
 /// Told each time the held slice's estimate is worked out again.
 type EstimateListener = Rc<dyn Fn()>;
 
@@ -6011,6 +6015,81 @@ impl ViewportController {
         ui.set_selection_scale_x(r.axis_scale_pct[0] as f32);
         ui.set_selection_scale_y(r.axis_scale_pct[1] as f32);
         ui.set_selection_scale_z(r.axis_scale_pct[2] as f32);
+        // Too large for its plate, with the plate's margin (#733).
+        // Not during a gesture: the box is read again when it ends.
+        if !gesture {
+            let room = self.fit_room(id);
+            ui.set_selection_too_large(
+                (0..3).any(|k| r.size[k] > room[1][k] - room[0][k] + FIT_SLACK_MM),
+            );
+        }
+    }
+
+    /// The room a model `id` has on its plate (#733): the build volume over
+    /// the plate it stands on, its edges the plate's margin in (Arrange's).
+    fn fit_room(&self, id: sc_scene::NodeId) -> [[f64; 3]; 2] {
+        let volume = self.build_volume();
+        let (lo, hi) = (volume.envelope_min_mm(), volume.envelope_max_mm());
+        let on = crate::plates::offset(&volume, self.plate_of_leaf(id).unwrap_or(0));
+        let margin = self
+            .ui
+            .upgrade()
+            .map_or(2.0, |ui| f64::from(ui.get_arrange_margin()).max(0.0));
+        let half = [f64::from(hi.x - lo.x) * 0.5, f64::from(hi.y - lo.y) * 0.5]
+            .map(|h| margin.min(h * 0.45));
+        [
+            [
+                f64::from(lo.x + on.x) + half[0],
+                f64::from(lo.y + on.y) + half[1],
+                f64::from(lo.z),
+            ],
+            [
+                f64::from(hi.x + on.x) - half[0],
+                f64::from(hi.y + on.y) - half[1],
+                f64::from(hi.z),
+            ],
+        ]
+    }
+
+    /// Scale to fit (#733): the selected model, too large for its plate,
+    /// scaled evenly to the largest size that fits it with the plate's
+    /// margin, and moved in as far as that takes, in one undo step.
+    pub(crate) fn scale_to_fit(&self) {
+        if !self.allows_layout_tools() || self.gesture_active() {
+            return;
+        }
+        let document = self.session.document();
+        if document.selection_len() != 1 {
+            return;
+        }
+        let Some(id) = document.selection_primary_node_id() else {
+            return;
+        };
+        let [lo, hi] = self.fit_room(id);
+        let change = document
+            .with_scene(|spatial| {
+                let query = spatial.leaf(id)?;
+                let before = query.local_transform();
+                let after =
+                    super::numeric_transform::apply(&query, NumericEdit::FitInto { lo, hi })?;
+                Some((before, after))
+            })
+            .flatten();
+        let Some((before, after)) = change else {
+            return;
+        };
+        let edit = SceneEdit::SetLocalTransform {
+            node_id: id,
+            before,
+            after,
+        };
+        match document.apply_edit(edit.clone()) {
+            Ok(()) => document.push_edit(edit),
+            Err(EditNotApplied::Rejected(reason)) => self.show_edit_rejected(reason),
+            Err(_) => {}
+        }
+        self.readout_owed.set(true);
+        self.mark_dirty();
     }
 
     /// The viewport aids of a gesture in flight (BS-69): what it has done so

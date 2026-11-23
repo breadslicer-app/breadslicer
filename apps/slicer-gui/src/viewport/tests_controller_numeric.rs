@@ -124,3 +124,58 @@ fn a_typed_size_per_axis_scales_that_axis_alone() {
     let (_, size) = bottom_and_size(&ctrl);
     assert!((size[1] - 1.0).abs() < 1e-4, "{size:?}");
 }
+
+/// #733: a model too large for its plate is scaled evenly to the largest
+/// size that fits the build volume, the plate's margin kept clear, and
+/// moved in, in one undo step. One that fits is left as it is.
+#[test]
+fn scale_to_fit_brings_a_model_too_large_onto_its_plate_in_one_step() {
+    let ctrl = cube_in(WorkspaceSection::Transform);
+    ctrl.on_numeric_edit(6, 100_000.0);
+    ctrl.on_numeric_edit(0, 400.0);
+    let (_, huge) = bottom_and_size(&ctrl);
+    assert!(huge[0] > 900.0, "{huge:?}");
+
+    ctrl.scale_to_fit();
+    let volume = ctrl.build_volume();
+    let (lo, hi) = (volume.envelope_min_mm(), volume.envelope_max_mm());
+    let margin = 2.0;
+    let room = [
+        f64::from(hi.x - lo.x) - 2.0 * margin,
+        f64::from(hi.y - lo.y) - 2.0 * margin,
+        f64::from(hi.z - lo.z),
+    ];
+    let (_, size) = bottom_and_size(&ctrl);
+    let fits = room.iter().copied().fold(f64::INFINITY, f64::min);
+    assert!((size[0] - fits).abs() < 1e-3, "{size:?} in {room:?}");
+    assert!(
+        (size[0] - size[1]).abs() < 1e-6 && (size[1] - size[2]).abs() < 1e-6,
+        "evenly: {size:?}"
+    );
+    let document = ctrl.document();
+    let id = document.selection_primary_node_id().expect("a selection");
+    let (min, max) = document
+        .with_scene(|spatial| {
+            let query = spatial.leaf(id)?;
+            let aabb = query.transformed_aabb(query.world_transform())?;
+            Some((aabb.min().coords(), aabb.max().coords()))
+        })
+        .flatten()
+        .expect("cube geometry");
+    assert!(
+        f64::from(min[0]) >= f64::from(lo.x) + margin - 1e-3,
+        "{min:?}"
+    );
+    assert!(
+        f64::from(max[0]) <= f64::from(hi.x) - margin + 1e-3,
+        "{max:?}"
+    );
+
+    // It fits now: nothing more to do.
+    ctrl.scale_to_fit();
+    assert_eq!(bottom_and_size(&ctrl).1, size);
+
+    ctrl.on_undo_requested();
+    let (_, back) = bottom_and_size(&ctrl);
+    assert!((back[0] - huge[0]).abs() < 1e-3, "one undo step: {back:?}");
+}

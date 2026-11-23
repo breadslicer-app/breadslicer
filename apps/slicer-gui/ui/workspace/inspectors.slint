@@ -1321,6 +1321,10 @@ export component TransformInspector inherits VerticalLayout {
     in property <float> scale-y;
     in property <float> scale-z;
     in-out property <bool> size-uniform: true;
+    // Larger than its plate (#733): Scale to fit brings it to the largest
+    // size that fits, in one undo step.
+    in property <bool> too-large;
+    callback scale-to-fit();
     callback object-picked(int);
     // Shift+click or Ctrl+click on a row.
     callback object-toggled(int);
@@ -1752,6 +1756,16 @@ export component TransformInspector inherits VerticalLayout {
             value: root.scale-z;
             committed(v) => {
                 root.numeric-edit(23, v);
+            }
+        }
+        if root.too-large: WarningNote {
+            text: @tr("Inspector" => "Larger than the plate: it does not print whole.");
+        }
+        if root.too-large: ScButton {
+            text: @tr("Inspector" => "Scale to fit");
+            icon: Icons.scale;
+            clicked => {
+                root.scale-to-fit();
             }
         }
         CheckBox {
