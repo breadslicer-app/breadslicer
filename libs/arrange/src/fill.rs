@@ -243,6 +243,8 @@ pub fn fill(
                                     .fetch_max(count.saturating_sub(uncounted), Ordering::Relaxed);
                                 limit.is_none_or(|l| count < l)
                             },
+                            (!settings.squeeze_for.is_zero())
+                                .then(|| started + settings.squeeze_for),
                             cancel,
                         )
                     })

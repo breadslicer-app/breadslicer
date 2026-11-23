@@ -40,8 +40,8 @@ mod nest;
 mod packing;
 mod pattern;
 mod plate;
-mod scene_file;
 mod press;
+mod scene_file;
 mod search;
 mod separate;
 
@@ -121,6 +121,11 @@ pub struct Settings {
     /// anyway and the bodies around it move until none overlaps. Costs
     /// about a second a plate; never places fewer.
     pub squeeze: bool,
+    /// Fill bed keeps pressing more copies in until this long after it
+    /// started, when its first tries leave room it could not fill; zero
+    /// stops at its first tries, and the same scene then always fills the
+    /// same.
+    pub squeeze_for: Duration,
 }
 
 impl Default for Settings {
@@ -137,6 +142,7 @@ impl Default for Settings {
             free_below: 0.0,
             tight: false,
             squeeze: true,
+            squeeze_for: Duration::from_secs(3),
         }
     }
 }

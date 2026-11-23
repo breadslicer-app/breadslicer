@@ -1452,6 +1452,7 @@ fn a_copy_is_pressed_in_where_the_copies_make_room() {
         spread,
         [0, 0],
         |_| true,
+        None,
         &AtomicBool::new(false),
     )
     .expect("not cancelled");
@@ -1477,7 +1478,11 @@ fn the_same_scene_fills_the_same() {
     let l = l_body(&mesh, 0.0, [40.0, 20.0]);
     let bodies = [table, short, l];
     let plate = plate(70.0, 50.0);
-    let s = quarter_turns();
+    // Pressing for a while depends on how fast the machine is.
+    let s = Settings {
+        squeeze_for: std::time::Duration::ZERO,
+        ..quarter_turns()
+    };
     let a = fill_now(&bodies, &[1, 2], &plate, &s, None);
     let b = fill_now(&bodies, &[1, 2], &plate, &s, None);
     assert_eq!(a.copies, b.copies);

@@ -19,6 +19,7 @@
 //! order that clears every overlap wins.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Instant;
 
 use rayon::prelude::*;
 
@@ -156,6 +157,9 @@ struct Item {
 
 /// How many rounds a try gets: each moves every copy that overlaps.
 const ROUNDS: usize = 200;
+
+/// How many rounds the tries made while time is left get.
+const ROUNDS_LONG: usize = 1000;
 
 /// How many tries run side by side for each copy added.
 const TRIES: u64 = 32;
@@ -328,8 +332,18 @@ impl Try<'_> {
     }
 }
 
-/// One try at adding a copy of body `extra` to `placed`, from `seed`: where
-/// every copy then goes, or `None`.
+/// One try: its seed, its place among the tries run side by side, how many
+/// rounds it gets, and when it must give up at the latest.
+#[derive(Clone, Copy, Debug)]
+struct Attempt {
+    seed: u64,
+    index: u64,
+    rounds: usize,
+    until: Option<Instant>,
+}
+
+/// One try at adding a copy of body `extra` to `placed`: where every copy
+/// then goes, or `None`.
 #[allow(clippy::too_many_arguments)]
 fn separate(
     kinds: &Kinds,
@@ -337,10 +351,11 @@ fn separate(
     of_body: &[Vec<usize>],
     placed: &[Item],
     extra: usize,
-    (seed, try_index): (u64, u64),
+    attempt: Attempt,
     found: &AtomicU64,
     cancel: &AtomicBool,
 ) -> Option<Vec<Item>> {
+    let (seed, try_index) = (attempt.seed, attempt.index);
     let mut rng = Rng::new(seed);
     let mut items = placed.to_vec();
     let ks = &of_body[extra];
@@ -367,8 +382,11 @@ fn separate(
     let mut best_overlap = u64::MAX;
     let mut best_items = state.items.clone();
     let mut strikes = 0;
-    for _ in 0..ROUNDS {
-        if cancel.load(Ordering::Relaxed) || found.load(Ordering::Relaxed) < try_index {
+    for _ in 0..attempt.rounds {
+        if cancel.load(Ordering::Relaxed)
+            || found.load(Ordering::Relaxed) < try_index
+            || attempt.until.is_some_and(|u| Instant::now() >= u)
+        {
             return None;
         }
         let (pairs, held) = state.overlaps();
@@ -421,9 +439,11 @@ fn separate(
 
 /// Adds to `placed` (body, kind, frame's corner) copies of the bodies of
 /// `wanted`, in its order, while one fits: each is pressed in, the copies
-/// placed moving to make room; one that does not fit ends it. `room` says,
-/// before each, whether to try it. Every result is checked on the maps of
-/// `start`. `None` when cancelled.
+/// placed moving to make room; one that does not fit ends it. A copy the
+/// usual tries do not fit in is tried again, with longer tries, while
+/// `until` is ahead. `room` says, before each, whether to try it. Every
+/// result is checked on the maps of `start`. `None` when cancelled.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn press_in(
     kinds: &Kinds,
     depths: &Depths,
@@ -431,6 +451,7 @@ pub(crate) fn press_in(
     placed: Vec<(usize, usize, [i32; 2])>,
     wanted: impl IntoIterator<Item = usize>,
     mut room: impl FnMut(usize) -> bool,
+    until: Option<Instant>,
     cancel: &AtomicBool,
 ) -> Option<Vec<(usize, usize, [i32; 2])>> {
     let count = kinds.of.iter().map(|&(b, _)| b + 1).max().unwrap_or(0);
@@ -453,26 +474,35 @@ pub(crate) fn press_in(
             break;
         }
         let base = items.len() as u64 * 7919 + round as u64;
-        let found = AtomicU64::new(u64::MAX);
-        let results: Vec<Option<Vec<Item>>> = (0..tries)
-            .into_par_iter()
-            .map(|t| {
-                separate(
-                    kinds,
-                    depths,
-                    &of_body,
-                    &items,
-                    extra,
-                    (base * 131 + t, t),
-                    &found,
-                    cancel,
-                )
-            })
-            .collect();
-        if cancel.load(Ordering::Relaxed) {
-            return None;
-        }
-        let Some(next) = results.into_iter().flatten().next() else {
+        let mut batch = 0u64;
+        let next = loop {
+            let found = AtomicU64::new(u64::MAX);
+            let results: Vec<Option<Vec<Item>>> = (0..tries)
+                .into_par_iter()
+                .map(|t| {
+                    let attempt = Attempt {
+                        seed: base * 131 + batch * 1_000_003 + t,
+                        index: t,
+                        rounds: if batch == 0 { ROUNDS } else { ROUNDS_LONG },
+                        until: (batch > 0).then_some(until).flatten(),
+                    };
+                    separate(
+                        kinds, depths, &of_body, &items, extra, attempt, &found, cancel,
+                    )
+                })
+                .collect();
+            if cancel.load(Ordering::Relaxed) {
+                return None;
+            }
+            if let Some(next) = results.into_iter().flatten().next() {
+                break Some(next);
+            }
+            batch += 1;
+            if until.is_none_or(|u| Instant::now() >= u) {
+                break None;
+            }
+        };
+        let Some(next) = next else {
             break;
         };
         // What the try says clears, checked as a fill places it.
