@@ -785,6 +785,18 @@ fn lattice_spots(
 
 /// Runs the passes and keeps the best layout. `None` when cancelled.
 pub(crate) fn search(problem: &Problem<'_>, cancel: &AtomicBool) -> Option<Layout> {
+    search_by(problem, cancel, false)
+}
+
+/// [`search`]; with `by_area`, the layouts that cover most of the plate
+/// win before the ones with most bodies: a plate of Arrange all takes the
+/// large bodies it can hold rather than more small ones, which the plates
+/// after it fit around the large ones left (#554).
+pub(crate) fn search_by(
+    problem: &Problem<'_>,
+    cancel: &AtomicBool,
+    by_area: bool,
+) -> Option<Layout> {
     let spots = Spots::of(problem);
     let metric = spots.metric;
     let sizes: Vec<i64> = problem
@@ -868,9 +880,16 @@ pub(crate) fn search(problem: &Problem<'_>, cancel: &AtomicBool) -> Option<Layou
             );
             let mut placed = vec![None; sizes.len()];
             let mut cursor = 0;
+            // The shapes a body did not fit at: a copy of it, sharing them,
+            // fits nowhere either, for the plate only fills up.
+            let mut full: Vec<*const [Shape]> = Vec::new();
             for (_, body) in order {
                 if cancel.load(Ordering::Relaxed) {
                     return None;
+                }
+                let shapes = std::sync::Arc::as_ptr(&problem.footprints[body].shapes);
+                if full.contains(&shapes) {
+                    continue;
                 }
                 // On the lattice while a spot holds the body, then wherever
                 // it fits at that angle.
@@ -911,6 +930,9 @@ pub(crate) fn search(problem: &Problem<'_>, cancel: &AtomicBool) -> Option<Layou
                     }
                 };
                 placed[body] = run.place(body, turns);
+                if placed[body].is_none() {
+                    full.push(shapes);
+                }
             }
             Some((pull, finish(problem, metric, placed, run.pile, pass)))
         })
@@ -933,7 +955,33 @@ pub(crate) fn search(problem: &Problem<'_>, cancel: &AtomicBool) -> Option<Layou
             layouts.retain(|(p, _)| *p == Pull::Centre);
         }
     }
-    pick(layouts.into_iter().map(|(_, l)| l).collect())
+    let mut layouts: Vec<Layout> = layouts.into_iter().map(|(_, l)| l).collect();
+    if by_area {
+        // Each body weighs what it covers at its least: the same at every
+        // angle, or a turn that draws a cell more would win.
+        let least: Vec<usize> = problem
+            .footprints
+            .iter()
+            .map(|fp| {
+                fp.shapes
+                    .iter()
+                    .map(|s| s.bands.first().map_or(0, |m| m.grid.count()))
+                    .min()
+                    .unwrap_or(0)
+            })
+            .collect();
+        let area = |l: &Layout| -> usize {
+            l.placed
+                .iter()
+                .zip(&least)
+                .filter(|(spot, _)| spot.is_some())
+                .map(|(_, &a)| a)
+                .sum()
+        };
+        let most = layouts.iter().map(area).max();
+        layouts.retain(|l| Some(area(l)) == most);
+    }
+    pick(layouts)
 }
 
 /// `layout` with the bodies it left off squeezed in, the bodies placed
@@ -973,9 +1021,24 @@ pub(crate) fn squeezed(
         return Some(layout);
     }
     let mut spots = vec![None; layout.placed.len()];
+    for (b, spot) in placed {
+        spots[b] = Some(spot);
+    }
+    Some(settled(problem, spots, layout.pass))
+}
+
+/// The layout of the bodies of `problem` at `spots`, with its balance and
+/// the shift that improves it.
+pub(crate) fn settled(
+    problem: &Problem<'_>,
+    spots: Vec<Option<(usize, [i32; 2])>>,
+    pass: u32,
+) -> Layout {
     let mut pile: Option<([i32; 2], [i32; 2])> = None;
-    for (b, (angle, at)) in placed {
-        spots[b] = Some((angle, at));
+    for (b, spot) in spots.iter().enumerate() {
+        let Some((angle, at)) = *spot else {
+            continue;
+        };
         let shape = &problem.footprints[b].shapes[angle];
         let (lo, hi) = (
             [at[0] + shape.lo[0], at[1] + shape.lo[1]],
@@ -991,7 +1054,7 @@ pub(crate) fn squeezed(
     let metric = Metric {
         size: [problem.plate.width as i64, problem.plate.height as i64],
     };
-    Some(finish(problem, metric, spots, pile, layout.pass))
+    finish(problem, metric, spots, pile, pass)
 }
 
 /// The winner: most bodies placed, then the pile that needs the least
