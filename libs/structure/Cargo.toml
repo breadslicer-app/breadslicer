@@ -1,0 +1,16 @@
+[package]
+name = "bread-structure"
+version = "0.1.0"
+edition.workspace = true
+license = "Apache-2.0"
+authors = ["SynrgStudio"]
+description = "A 3D beam frame for resin print supports: the stresses in every trunk, branch, brace and tip neck while a layer peels, solved with a sparse Cholesky factorisation."
+categories = ["algorithms", "science"]
+keywords = ["3d", "slicer", "resin", "structural", "beam"]
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+faer = { version = "0.24.4", default-features = false, features = ["std", "sparse-linalg"] }

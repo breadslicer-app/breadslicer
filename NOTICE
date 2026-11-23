@@ -44,3 +44,8 @@ the source as their licenses require:
   https://github.com/cisco/openh264
   https://github.com/ralfbiedert/openh264-rs
   https://github.com/scottlamb/retina
+
+- faer (sarah quiñones and contributors; MIT): its sparse Cholesky
+  factorisation solves the supports' beam frame. Used as a crate. See
+  libs/structure.
+  https://github.com/sarah-quinones/faer-rs
