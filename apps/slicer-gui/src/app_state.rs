@@ -1856,6 +1856,16 @@ impl AppState {
         // Closures hold `Weak<AppState>`, so the MainWindow -> closure ->
         // AppState -> main_windows(MainWindow) chain forms no strong cycle.
         ui.on_support_page_requested(|page| open_in_browser(support_page_url(page)));
+        // The creator's source (#745): a web address alone opens.
+        ui.on_credit_link_clicked(|url| {
+            let credit = crate::credit::Credit {
+                source: Some(url.to_string()),
+                ..Default::default()
+            };
+            if let Some(link) = credit.link() {
+                open_in_browser(link);
+            }
+        });
         {
             let app = Rc::downgrade(self);
             let ui_weak = ui.as_weak();

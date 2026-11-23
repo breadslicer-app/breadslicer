@@ -149,6 +149,11 @@ export component MainWindow inherits Window {
     // the document's source path. Empty when no file is open, which
     // makes the title fall back to the application name.
     in property <string> document-name: "";
+    // The creator's credit a .bread file carries (#745): the line, and the
+    // source a click opens (empty: none to open).
+    in property <string> credit-line;
+    in property <string> credit-link;
+    callback credit-link-clicked(string);
     // The open project has earlier versions kept (#18): enables File >
     // Previous Versions.
     in property <bool> has-versions: false;
@@ -2601,6 +2606,42 @@ export component MainWindow inherits Window {
                         }
                         paint-toggled(on) => {
                             root.stress-paint-toggled(on);
+                        }
+                    }
+
+                    // The creator's credit (#745), high on the view's left.
+                    if root.has-scene && root.credit-line != "": Rectangle {
+                        x: 12px;
+                        y: 12px;
+                        width: min(parent.width - 24px, credit-row.preferred-width);
+                        height: 26px;
+                        border-radius: 2px;
+                        background: #171a1dcc;
+                        border-color: #272d32;
+                        border-width: 1px;
+                        credit-row := HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            spacing: 10px;
+                            Text {
+                                text: root.credit-line;
+                                color: #b9c2c9;
+                                font-size: Theme.font-sm;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            if root.credit-link != "": Text {
+                                text: @tr("Workspace" => "View source");
+                                color: credit-touch.has-hover ? Theme.text : Theme.brand;
+                                font-size: Theme.font-sm;
+                                vertical-alignment: center;
+                                credit-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        root.credit-link-clicked(root.credit-link);
+                                    }
+                                }
+                            }
                         }
                     }
 

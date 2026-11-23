@@ -13,6 +13,7 @@
 
 mod aa_level;
 mod caliper;
+mod credit;
 mod about_window;
 mod app_settings;
 mod app_state;

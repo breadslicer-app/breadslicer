@@ -11204,3 +11204,11 @@ msgstr[1] "Hacé clic en un punto del borde: {n} soportes."
 msgctxt "StressCard"
 msgid "Imported supports: not painted, their tips are not known"
 msgstr "Soportes importados: sin pintar, no se conocen sus puntas"
+
+msgctxt "Workspace"
+msgid "Designed by {}"
+msgstr "Diseñado por {}"
+
+msgctxt "Workspace"
+msgid "View source"
+msgstr "Ver fuente"

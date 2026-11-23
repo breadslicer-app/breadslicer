@@ -3265,6 +3265,17 @@ impl SceneDocument {
     /// when no scene is installed. Callers must keep the closure short: the
     /// internal borrow is held for its duration. Use `spatial.graph()` for
     /// read-only navigation and `spatial.leaf(id)` for per-leaf queries.
+    /// The creator's credit the file states for `node`, or for the file
+    /// (#745).
+    pub(crate) fn credit_of(&self, node: Option<NodeId>) -> Option<crate::credit::Credit> {
+        let metadata = self.file_metadata.borrow();
+        if metadata.is_empty() {
+            return None;
+        }
+        self.with_scene(|spatial| crate::credit::Credit::of(&metadata, Some(spatial.graph()), node))
+            .flatten()
+    }
+
     pub(crate) fn with_scene<R>(&self, f: impl FnOnce(&SceneSpatial) -> R) -> Option<R> {
         self.spatial.borrow().as_ref().map(f)
     }

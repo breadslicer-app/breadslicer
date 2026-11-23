@@ -823,15 +823,20 @@ impl ViewportController {
         match event {
             SceneEvent::Installed => {
                 self.on_scene_installed();
+                self.mirror_credit_to_ui();
                 self.mirror_prep_layers_to_ui();
                 self.mirror_slice_current_to_ui();
             }
-            SceneEvent::Cleared => self.on_scene_cleared(),
+            SceneEvent::Cleared => {
+                self.on_scene_cleared();
+                self.mirror_credit_to_ui();
+            }
             SceneEvent::Painted => self.mark_dirty(),
             SceneEvent::PlatesChanged => self.on_plates_changed(),
             SceneEvent::SelectionChanged => {
                 self.on_modal_transform_finish(false);
                 self.mirror_selection_to_ui();
+                self.mirror_credit_to_ui();
                 self.mark_dirty();
             }
             SceneEvent::Mutated => {
@@ -1081,6 +1086,24 @@ impl ViewportController {
     /// title. Empty while no scene is loaded. Runs on scene install and clear;
     /// the save flow calls [`Self::refresh_document_title`] after a "Save As"
     /// moves the document to a new path.
+    /// The creator's credit of the model picked, or of the file (#745).
+    fn mirror_credit_to_ui(&self) {
+        if let Some(ui) = self.ui.upgrade() {
+            let document = self.session.document();
+            let credit = document.credit_of(document.selection_primary_node_id());
+            let line = credit.as_ref().map_or_else(String::new, |credit| {
+                credit.line(|designer| ctr!("Workspace", "Designed by {}", designer).to_string())
+            });
+            let link = credit
+                .as_ref()
+                .and_then(crate::credit::Credit::link)
+                .unwrap_or_default()
+                .to_owned();
+            ui.set_credit_line(line.into());
+            ui.set_credit_link(link.into());
+        }
+    }
+
     fn mirror_title_to_ui(&self) {
         if let Some(ui) = self.ui.upgrade() {
             let document = self.session.document();
@@ -7274,6 +7297,53 @@ mod lasso_region_tests {
     use super::*;
     use crate::camera::OrbitCamera;
     use glam::Vec3;
+
+    /// #745: a project that credits its creator shows it on the view: the
+    /// model's own credit while it is picked, the file's otherwise; a
+    /// source that is a web address can be opened.
+    #[test]
+    fn a_project_s_creator_shows_on_the_view() {
+        crate::test_support::slint_thread::on_fresh_slint_thread(|| {
+            let window = MainWindow::new().unwrap();
+            let ctrl = Rc::new(ViewportController::new_for_test_with_ui(&window));
+            ctrl.register_document_listener();
+            let mut graph = sc_scene::Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Identity,
+                    sc_scene::node::LeafPayload::Mesh(Arc::new(
+                        sc_mesh_fixtures::unit_cube_mesh(),
+                    )),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            let meta = |node, key: &str, value: &str| sc_project_formats::FileMetadata {
+                node,
+                key: key.to_owned(),
+                value: value.as_bytes().to_vec(),
+            };
+            let payload = sc_project_formats::ProjectPayload {
+                metadata: vec![
+                    meta(None, "designer", "Studio"),
+                    meta(None, "license", "CC-BY-4.0"),
+                    meta(None, "source", "https://example.com/goblin"),
+                    meta(Some(leaf), "designer", "Fulano"),
+                ],
+                ..Default::default()
+            };
+            let document = ctrl.document();
+            document.install_project_graph(graph, "goblin.bread".into(), payload);
+            assert!(window.get_credit_line().contains("Studio"));
+            assert!(window.get_credit_line().contains("CC-BY-4.0"));
+            assert_eq!(window.get_credit_link().as_str(), "https://example.com/goblin");
+            document.set_selection(Selection::One(LeafId(leaf)));
+            assert!(window.get_credit_line().contains("Fulano"), "{}", window.get_credit_line());
+            assert_eq!(window.get_credit_link().as_str(), "");
+            document.clear_scene();
+            assert_eq!(window.get_credit_line().as_str(), "");
+        });
+    }
 
     /// #512: the supports leave the view while the lasso is armed in the
     /// Hollow tab, and come back with it put away or in another tab.
