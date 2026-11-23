@@ -243,6 +243,8 @@ pub fn fill(
                                     .fetch_max(count.saturating_sub(uncounted), Ordering::Relaxed);
                                 limit.is_none_or(|l| count < l)
                             },
+                            (!settings.squeeze_for.is_zero())
+                                .then(|| started + settings.squeeze_for),
                             cancel,
                         )
                     })
@@ -258,7 +260,10 @@ pub fn fill(
                     pressed.swap_remove(best)
                 }
             } else {
-                fills.into_iter().next().unwrap_or_default()
+                // Depths too large for their budget: squeezed as before.
+                let fill = fills.into_iter().next().unwrap_or_default();
+                let problem = if moving_wins { &moving } else { &staying };
+                squeezed(problem, fill, limit, settings.squeeze, cancel).ok_or(Cancelled)?
             };
             (moving_wins, copies)
         }
@@ -314,8 +319,9 @@ pub fn fill(
 }
 
 /// How many sources a fill packs on no-fit maps: their maps grow with the
-/// square of their angles.
-const NESTED: usize = 3;
+/// square of their angles. Six distinct minis take some 200 MB more and
+/// fill in about 3 s; eight take 400 MB and 5 s, twelve 760 MB and 12 s.
+const NESTED: usize = 6;
 
 /// Below how many copies the plate holds by area, at the most, a fill does
 /// without no-fit maps.
