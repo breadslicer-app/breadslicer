@@ -4654,6 +4654,48 @@ impl ViewportController {
         out
     }
 
+    /// The points of the model along a circle as seen (#734): around the
+    /// screen point of `centre`, through the screen point of `edge`, each
+    /// where a ray through it meets the model first, in turn round the
+    /// circle; rays that meet nothing leave a gap.
+    pub(crate) fn surface_circle(&self, centre: [f32; 3], edge: [f32; 3]) -> Vec<[f32; 3]> {
+        let Some(vp) = self.render.viewport() else {
+            return Vec::new();
+        };
+        let Some(camera) = self.camera.camera_cell().borrow().as_ref().cloned() else {
+            return Vec::new();
+        };
+        let fov = crate::mesh_render::default_fov_y();
+        let (w, h) = (vp.width(), vp.height());
+        let screen =
+            |p: [f32; 3]| picking::project_world_to_screen(&camera, fov, w, h, glam::Vec3::from(p));
+        let (Some(c), Some(e)) = (screen(centre), screen(edge)) else {
+            return Vec::new();
+        };
+        let radius = (e.0 - c.0).hypot(e.1 - c.1);
+        let start = (e.1 - c.1).atan2(e.0 - c.0);
+        // One sample every 1.5 px round the circle, at least 12, at most 2000.
+        let steps = ((std::f32::consts::TAU * radius / 1.5).ceil() as usize).clamp(12, 2000);
+        self.session
+            .document()
+            .with_scene(|spatial| {
+                let sample = |i: usize| {
+                    let a = start + std::f32::consts::TAU * i as f32 / steps as f32;
+                    let (x, y) = (c.0 + radius * a.cos(), c.1 + radius * a.sin());
+                    let ray = picking::ray_from_pixel(&camera, fov, w, h, x, y);
+                    picking::pick_face_where(&ray, spatial, |id| !shows_supports(spatial, id)).map(
+                        |hit| {
+                            let p = ray.origin + ray.direction * hit.t;
+                            [p.x, p.y, p.z]
+                        },
+                    )
+                };
+                use rayon::prelude::*;
+                path_pool().install(|| (0..steps).into_par_iter().filter_map(sample).collect())
+            })
+            .unwrap_or_default()
+    }
+
     pub(crate) fn measure_click(&self, cursor: ScreenPoint, chain: bool) {
         let Some(vp) = self.render.viewport() else {
             return;

@@ -240,6 +240,110 @@ fn barycentric(t: [[f64; 2]; 3], q: [f64; 2]) -> Option<[f64; 3]> {
     (a >= EDGE && b >= EDGE && c >= EDGE).then_some([a, b, c])
 }
 
+/// How far inside its border an edge support touches the paint (#734), mm:
+/// on the face, clear of the edge it follows.
+const EDGE_INSET_MM: f64 = 0.5;
+
+/// Points `spacing` mm apart around the border of the patch `tris` (world
+/// mm), each a little inside it on the face it lies on (#734): supports
+/// that hold a face by its edge leave the face itself without marks. Each
+/// loop of the border (an outline, a hole) gets its own, evenly spread.
+pub(crate) fn edge_on(tris: &[Tri], spacing: f64) -> Vec<[f32; 3]> {
+    let spacing = spacing.max(0.1);
+    let key = |p: [f64; 3]| p.map(|c| (c * 1e5).round() as i64);
+    // Each edge of a face by its corners; a border edge belongs to one face.
+    let mut count: std::collections::HashMap<([i64; 3], [i64; 3]), usize> = Default::default();
+    for t in tris {
+        for k in 0..3 {
+            let (a, b) = (key(t[k]), key(t[(k + 1) % 3]));
+            *count.entry((a.min(b), a.max(b))).or_default() += 1;
+        }
+    }
+    // The border's edges in their face's turn, with the face's third corner.
+    let mut from: std::collections::HashMap<[i64; 3], Vec<usize>> = Default::default();
+    let mut edges: Vec<([f64; 3], [f64; 3], [f64; 3])> = Vec::new();
+    for t in tris {
+        for k in 0..3 {
+            let (a, b, c) = (t[k], t[(k + 1) % 3], t[(k + 2) % 3]);
+            let (ka, kb) = (key(a), key(b));
+            if count[&(ka.min(kb), ka.max(kb))] == 1 {
+                from.entry(ka).or_default().push(edges.len());
+                edges.push((a, b, c));
+            }
+        }
+    }
+    let mut used = vec![false; edges.len()];
+    let mut out = Vec::new();
+    for start in 0..edges.len() {
+        if used[start] {
+            continue;
+        }
+        // One loop, edge after edge.
+        let mut chain = Vec::new();
+        let mut at = start;
+        loop {
+            used[at] = true;
+            chain.push(at);
+            let next = from
+                .get(&key(edges[at].1))
+                .and_then(|list| list.iter().copied().find(|&e| !used[e]));
+            match next {
+                Some(e) => at = e,
+                None => break,
+            }
+        }
+        let lengths: Vec<f64> = chain
+            .iter()
+            .map(|&e| dot(sub(edges[e].1, edges[e].0), sub(edges[e].1, edges[e].0)).sqrt())
+            .collect();
+        let total: f64 = lengths.iter().sum();
+        if total <= 0.0 {
+            continue;
+        }
+        let n = ((total / spacing).round() as usize).max(1);
+        let (mut k, mut walked) = (0, 0.0);
+        for i in 0..n {
+            let at = total * i as f64 / n as f64;
+            while k + 1 < chain.len() && walked + lengths[k] < at {
+                walked += lengths[k];
+                k += 1;
+            }
+            let (a, b, c) = edges[chain[k]];
+            // Off the corners too: a point at one would lie on the next
+            // edge once moved in.
+            let keep = if lengths[k] > 2.0 * EDGE_INSET_MM {
+                EDGE_INSET_MM / lengths[k]
+            } else {
+                0.5
+            };
+            let t = if lengths[k] > 0.0 {
+                ((at - walked) / lengths[k]).clamp(keep, 1.0 - keep)
+            } else {
+                0.0
+            };
+            let p = [0, 1, 2].map(|j| a[j] + (b[j] - a[j]) * t);
+            out.push(inset(p, a, b, c).map(|v| v as f32));
+        }
+    }
+    out
+}
+
+/// `p`, on the edge `a`–`b` of the face `a b c`, moved into the face by
+/// [`EDGE_INSET_MM`], never past the middle of the face's height there.
+fn inset(p: [f64; 3], a: [f64; 3], b: [f64; 3], c: [f64; 3]) -> [f64; 3] {
+    let Some(along) = unit(sub(b, a)) else {
+        return p;
+    };
+    let v = sub(c, p);
+    let across = sub(v, along.map(|e| e * dot(v, along)));
+    let height = dot(across, across).sqrt();
+    let Some(dir) = unit(across) else {
+        return p;
+    };
+    let step = EDGE_INSET_MM.min(0.5 * height);
+    [0, 1, 2].map(|j| p[j] + dir[j] * step)
+}
+
 /// How near painted detail a tip counts as on it (#186), mm.
 const ON_DETAIL_MM: f32 = 0.3;
 
@@ -284,6 +388,30 @@ pub(crate) fn tips_on_detail(document: &SceneDocument, leaf: NodeId, tips: &[[f6
 
 #[cfg(test)]
 mod tests {
+    /// #734: a square patch gets points evenly around its border, each just
+    /// inside it.
+    #[test]
+    fn the_edge_of_a_square_takes_points_just_inside_it() {
+        let square: Vec<Tri> = vec![
+            [[0.0, 0.0, 5.0], [10.0, 10.0, 5.0], [10.0, 0.0, 5.0]],
+            [[0.0, 0.0, 5.0], [0.0, 10.0, 5.0], [10.0, 10.0, 5.0]],
+        ];
+        let points = edge_on(&square, 2.0);
+        assert_eq!(points.len(), 20, "{points:?}");
+        for p in &points {
+            let (x, y) = (f64::from(p[0]), f64::from(p[1]));
+            assert!(
+                (0.0..=10.0).contains(&x) && (0.0..=10.0).contains(&y),
+                "{p:?}"
+            );
+            let to_edge = x.min(y).min(10.0 - x).min(10.0 - y);
+            assert!(to_edge > 0.2 && to_edge < 0.6, "{p:?} {to_edge}");
+            assert!((f64::from(p[2]) - 5.0).abs() < 1e-5);
+        }
+        // A spacing wider than the border still holds the face once.
+        assert_eq!(edge_on(&square, 100.0).len(), 1);
+    }
+
     use super::*;
 
     /// A square 10 x 6 mm facing down at z 5, as two triangles.

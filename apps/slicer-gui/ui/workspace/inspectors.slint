@@ -2410,8 +2410,16 @@ export component SupportsInspector inherits VerticalLayout {
     // The Area tool (#177): its brush, and filling or clearing the paint.
     in property <float> area-brush: 3;
     callback area-brush-edited(float);
-    callback area-fill();
+    // 0 a grid over the paint, 1 its edge only (#734).
+    in-out property <int> area-mode: 0;
+    callback area-fill(int);
     callback area-clear();
+    // The line tool's shape (#734): 0 a row, 1 a circle.
+    in property <int> line-mode;
+    callback line-mode-picked(int);
+    // The picked supports mirrored across the model's middle (#735): 0 in
+    // X, 1 in Y.
+    callback picked-mirror(int);
     // The supports picked routed again (#377), and how many there are.
     callback picked-reroute(bool);
     // The supports picked after the first joined onto its trunk (#377).
@@ -2642,6 +2650,24 @@ export component SupportsInspector inherits VerticalLayout {
                 }
             }
         }
+        if root.tool == 5 && root.picked-count > 0: HorizontalLayout {
+            spacing: 8px;
+
+            ScButton {
+                text: @tr("Inspector" => "Mirror in X");
+                enabled: !root.running;
+                clicked => {
+                    root.picked-mirror(0);
+                }
+            }
+            ScButton {
+                text: @tr("Inspector" => "Mirror in Y");
+                enabled: !root.running;
+                clicked => {
+                    root.picked-mirror(1);
+                }
+            }
+        }
         if root.tool == 5 && root.picked-count > 1: ScButton {
             text: @tr("Inspector" => "Join onto the first picked");
             enabled: !root.running;
@@ -2673,8 +2699,22 @@ export component SupportsInspector inherits VerticalLayout {
         if root.tool == 4: Note {
             text: @tr("Inspector" => "Click a support where the brace starts, then the support it goes to.");
         }
-        if root.tool == 6: Note {
+        if root.tool == 6: LabeledRow {
+            label: @tr("Inspector" => "Shape");
+            Segmented {
+                width: 190px;
+                options: [@tr("Inspector" => "Row"), @tr("Inspector" => "Circle")];
+                current: root.line-mode;
+                picked(i) => {
+                    root.line-mode-picked(i);
+                }
+            }
+        }
+        if root.tool == 6 && root.line-mode == 0: Note {
             text: @tr("Inspector" => "Click the model where the row starts, then where it ends: a support at every dot, along the surface. Keys 1–4 pick the size. Esc drops the first point.");
+        }
+        if root.tool == 6 && root.line-mode == 1: Note {
+            text: @tr("Inspector" => "Click the middle of the circle, then a point on it: a support at every dot around it, as the model is seen. Esc drops the middle.");
         }
         if root.tool == 7: Note {
             text: @tr("Inspector" => "Paint the faces where supports go; Shift+click takes the connected faces of the same plane, Alt erases. Then place a support on every node of a grid over the paint.");
@@ -2686,6 +2726,17 @@ export component SupportsInspector inherits VerticalLayout {
             value: root.area-brush;
             committed(v) => {
                 root.area-brush-edited(v);
+            }
+        }
+        if root.tool == 7: LabeledRow {
+            label: @tr("Inspector" => "Where");
+            Segmented {
+                width: 190px;
+                options: [@tr("Inspector" => "Grid"), @tr("Inspector" => "Edge only")];
+                current: root.area-mode;
+                picked(i) => {
+                    root.area-mode = i;
+                }
             }
         }
         if root.tool == 7: NumberField {
@@ -2705,7 +2756,7 @@ export component SupportsInspector inherits VerticalLayout {
                 kind: ButtonKind.primary;
                 enabled: !root.running;
                 clicked => {
-                    root.area-fill();
+                    root.area-fill(root.area-mode);
                 }
             }
             ScButton {

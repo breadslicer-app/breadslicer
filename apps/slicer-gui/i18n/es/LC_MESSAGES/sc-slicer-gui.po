@@ -11142,3 +11142,49 @@ msgstr "Más grande que la cama: no se imprime entero."
 msgctxt "Inspector"
 msgid "Scale to fit"
 msgstr "Escalar para que entre"
+
+msgctxt "Inspector"
+msgid "Mirror in X"
+msgstr "Espejar en X"
+
+msgctxt "Inspector"
+msgid "Mirror in Y"
+msgstr "Espejar en Y"
+
+msgctxt "Inspector"
+msgid "Row"
+msgstr "Fila"
+
+msgctxt "Inspector"
+msgid "Circle"
+msgstr "Círculo"
+
+msgctxt "Inspector"
+msgid "Where"
+msgstr "Dónde"
+
+msgctxt "Inspector"
+msgid "Grid"
+msgstr "Grilla"
+
+msgctxt "Inspector"
+msgid "Edge only"
+msgstr "Solo el borde"
+
+msgctxt "Inspector"
+msgid "Click the middle of the circle, then a point on it: a support at every dot around it, as the model is seen. Esc drops the middle."
+msgstr "Hacé clic en el centro del círculo y después en un punto del borde: un soporte en cada punto alrededor, como se ve el modelo. Esc suelta el centro."
+
+msgctxt "SupportDialog"
+msgid "Their mirror image already has supports: nothing to add."
+msgstr "Su imagen espejada ya tiene soportes: no hay nada que agregar."
+
+msgctxt "SupportDialog"
+msgid "Click a point on the circle."
+msgstr "Hacé clic en un punto del borde del círculo."
+
+msgctxt "SupportDialog"
+msgid "Click a point on the circle: {n} support."
+msgid_plural "Click a point on the circle: {n} supports."
+msgstr[0] "Hacé clic en un punto del borde: {n} soporte."
+msgstr[1] "Hacé clic en un punto del borde: {n} soportes."

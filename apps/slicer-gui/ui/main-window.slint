@@ -336,7 +336,10 @@ export component MainWindow inherits Window {
     // The Area tool (#177): its brush, and filling or clearing the paint.
     in property <float> support-area-brush: 3;
     callback support-area-brush-edited(float);
-    callback support-area-fill();
+    callback support-area-fill(int);
+    in property <int> support-line-mode;
+    callback support-line-mode-picked(int);
+    callback support-picked-mirror(int);
     callback support-area-clear();
     // The supports picked routed again (#377): on their own, or hung from
     // the nearest.
@@ -3396,8 +3399,15 @@ export component MainWindow inherits Window {
                                     area-brush-edited(v) => {
                                         root.support-area-brush-edited(v);
                                     }
-                                    area-fill => {
-                                        root.support-area-fill();
+                                    line-mode: root.support-line-mode;
+                                    line-mode-picked(i) => {
+                                        root.support-line-mode-picked(i);
+                                    }
+                                    picked-mirror(axis) => {
+                                        root.support-picked-mirror(axis);
+                                    }
+                                    area-fill(mode) => {
+                                        root.support-area-fill(mode);
                                     }
                                     picked-reroute(own) => {
                                         root.support-picked-reroute(own);

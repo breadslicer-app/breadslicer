@@ -317,6 +317,8 @@ pub(crate) struct SupportRun {
     brace_from: RefCell<Option<(DrawnSet, BraceEnd)>>,
     /// The line tool's first point (#178): the next click places the row.
     line_from: Cell<Option<[f32; 3]>>,
+    /// The line tool's shape (#734): 0 a row, 1 a circle.
+    line_mode: Cell<i32>,
     /// The line tool's spacing between supports, mm; the Area tool's grid
     /// too (#177).
     line_spacing: Cell<f64>,
@@ -1749,6 +1751,29 @@ const LINE_SPACING_MM: f64 = 2.0;
 /// The supports of a row along `path` (points on the surface, in order),
 /// `spacing` mm apart along it (#178): evenly over each stretch, ends
 /// included. Where the path jumps (it left the model), a new stretch starts.
+/// How near a tip already there a mirrored one counts as taken (#735), mm.
+const MIRROR_TAKEN_MM: f64 = 0.3;
+
+/// The points of the closed `path` (a circle on the model, #734) `spacing`
+/// mm apart along it: [`line_points`] round the loop, its end dropped where
+/// it comes back to its start.
+fn circle_points(path: &[[f32; 3]], spacing: f64) -> Vec<[f32; 3]> {
+    let Some(&first) = path.first() else {
+        return Vec::new();
+    };
+    let mut closed = path.to_vec();
+    closed.push(first);
+    let mut points = line_points(&closed, spacing);
+    if points.len() > 1 {
+        let (a, b) = (points[0], points[points.len() - 1]);
+        let gap = (0..3).map(|k| f64::from(b[k] - a[k]).powi(2)).sum::<f64>().sqrt();
+        if gap < spacing.max(0.1) / 2.0 {
+            points.pop();
+        }
+    }
+    points
+}
+
 fn line_points(path: &[[f32; 3]], spacing: f64) -> Vec<[f32; 3]> {
     let spacing = spacing.max(0.1);
     let gap = |a: [f32; 3], b: [f32; 3]| {
@@ -2271,6 +2296,7 @@ impl SupportRun {
             drag: RefCell::new(None),
             brace_from: RefCell::new(None),
             line_from: Cell::new(None),
+            line_mode: Cell::new(0),
             line_spacing: Cell::new(LINE_SPACING_MM),
             area_brush,
             box_poll: slint::Timer::default(),
@@ -2541,7 +2567,15 @@ impl SupportRun {
         }
         {
             let run = run.clone();
-            ui.on_support_area_fill(move || run.fill_painted());
+            ui.on_support_area_fill(move |mode| run.fill_painted(mode == 1));
+        }
+        {
+            let run = run.clone();
+            ui.on_support_line_mode_picked(move |mode| run.on_line_mode(mode));
+        }
+        {
+            let run = run.clone();
+            ui.on_support_picked_mirror(move |axis| run.mirror_chosen(axis as usize));
         }
         {
             let run = run.clone();
@@ -6764,7 +6798,66 @@ impl SupportRun {
     /// Where the supports of a row from the line's first point to `to` go
     /// (#178): along the model's surface between them, as seen.
     fn line_row(&self, from: [f32; 3], to: [f32; 3]) -> Vec<[f32; 3]> {
+        if self.line_mode.get() == 1 {
+            return circle_points(&self.ctrl.surface_circle(from, to), self.line_spacing.get());
+        }
         line_points(&self.ctrl.surface_path(from, to), self.line_spacing.get())
+    }
+
+    /// The line tool's shape picked (#734): a row or a circle. A first point
+    /// in is dropped.
+    fn on_line_mode(&self, mode: i32) {
+        self.line_mode.set(mode.clamp(0, 1));
+        self.drop_line();
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_support_line_mode(self.line_mode.get());
+        }
+    }
+
+    /// The picked supports mirrored across the middle of their model (#735),
+    /// in X (`axis` 0) or Y (1): a support placed, as Add places one, at the
+    /// mirror image of each picked tip; one already standing there is left.
+    fn mirror_chosen(self: &Rc<Self>, axis: usize) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let axis = axis.min(1);
+        let mut points: Vec<[f32; 3]> = Vec::new();
+        for (drawn, ids) in self.chosen_now() {
+            let middle = self
+                .document
+                .with_scene(|spatial| {
+                    let query = spatial.leaf(drawn.model)?;
+                    let aabb = query.transformed_aabb(query.world_transform())?;
+                    Some(f64::from(aabb.min().coords()[axis] + aabb.max().coords()[axis]) / 2.0)
+                })
+                .flatten();
+            let Some(middle) = middle else {
+                continue;
+            };
+            let tips: Vec<[f64; 3]> = drawn.session.tips().into_iter().map(|(_, p)| p).collect();
+            for id in &ids {
+                let Some(mut p) = drawn.session.tip_point(id) else {
+                    continue;
+                };
+                p[axis] = 2.0 * middle - p[axis];
+                let taken = tips.iter().any(|t| {
+                    (0..3).map(|k| (t[k] - p[k]).powi(2)).sum::<f64>() < MIRROR_TAKEN_MM.powi(2)
+                });
+                if !taken {
+                    points.push(p.map(|c| c as f32));
+                }
+            }
+        }
+        crate::breadcrumbs::note(&format!("supports: mirror {} in axis {axis}", points.len()));
+        if points.is_empty() {
+            ui.set_supports_last_run(ctr!(
+                "SupportDialog",
+                "Their mirror image already has supports: nothing to add."
+            ));
+            return;
+        }
+        self.place_row(&ui, points);
     }
 
     /// The line tool's hover: once the first point is in, a dot where each
@@ -6779,15 +6872,22 @@ impl SupportRun {
         };
         let row = self.line_row(from, to);
         self.ctrl.set_preview_overlay(line_dots(&row));
-        self.show_add_note((
+        let note = if self.line_mode.get() == 1 {
+            ctr!(
+                "SupportDialog",
+                "Click a point on the circle: {n} support.",
+                "Click a point on the circle: {n} supports.",
+                row.len()
+            )
+        } else {
             ctr!(
                 "SupportDialog",
                 "Click where the row ends: {n} support.",
                 "Click where the row ends: {n} supports.",
                 row.len()
-            ),
-            false,
-        ));
+            )
+        };
+        self.show_add_note((note, false));
     }
 
     /// A click of the line tool (#178): the first sets where the row
@@ -6797,7 +6897,12 @@ impl SupportRun {
             crate::breadcrumbs::note("supports: line started");
             self.line_from.set(Some(point));
             self.ctrl.set_preview_overlay(line_dots(&[point]));
-            self.show_add_note((ctr!("SupportDialog", "Click where the row ends."), false));
+            let note = if self.line_mode.get() == 1 {
+                ctr!("SupportDialog", "Click a point on the circle.")
+            } else {
+                ctr!("SupportDialog", "Click where the row ends.")
+            };
+            self.show_add_note((note, false));
             return;
         };
         let row = self.line_row(from, point);
@@ -6829,14 +6934,21 @@ impl SupportRun {
 
     /// Places a support on every node of a grid over each patch painted
     /// with the Area tool (#177), as one edit, the spacing the field's.
-    fn fill_painted(self: &Rc<Self>) {
+    /// With `edge`, around each patch's border alone (#734).
+    fn fill_painted(self: &Rc<Self>, edge: bool) {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
         let spacing = self.line_spacing.get();
         let mut row: Vec<[f32; 3]> = crate::support_area::painted_patches(&self.document)
             .iter()
-            .flat_map(|(_, patch)| crate::support_area::grid_on(patch, spacing))
+            .flat_map(|(_, patch)| {
+                if edge {
+                    crate::support_area::edge_on(patch, spacing)
+                } else {
+                    crate::support_area::grid_on(patch, spacing)
+                }
+            })
             .collect();
         if row.is_empty() {
             ui.set_supports_last_run(ctr!(
@@ -15702,6 +15814,66 @@ mod hand_edit_tests {
 
     /// The line tool (#178): dots evenly along each stretch of the path,
     /// a new stretch where the path left the model.
+    /// #734: a circle's loop is spread evenly round it, with no support
+    /// twice where it closes.
+    #[test]
+    fn a_circle_spreads_evenly_round_its_loop() {
+        let path: Vec<[f32; 3]> = (0..400)
+            .map(|i| {
+                let a = std::f32::consts::TAU * i as f32 / 400.0;
+                [10.0 * a.cos(), 10.0 * a.sin(), 5.0]
+            })
+            .collect();
+        let points = circle_points(&path, 2.0);
+        // About 62.8 mm round: 31 supports, none twice.
+        assert_eq!(points.len(), 31, "{points:?}");
+        for w in points.windows(2) {
+            let gap = (0..2).map(|k| (w[1][k] - w[0][k]).powi(2)).sum::<f32>().sqrt();
+            assert!((gap - 2.03).abs() < 0.05, "{gap}");
+        }
+        assert!(circle_points(&[], 2.0).is_empty());
+    }
+
+    /// #735: a picked support mirrored across the middle of its model gets
+    /// a support where its mirror image is, in one edit.
+    #[test]
+    fn a_picked_support_is_mirrored_across_its_model() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (_document, run) = supported_slab(&window);
+            let generated = in_force_session(&run).expect("editable");
+            let tips: Vec<(String, [f64; 3])> = generated.tips();
+            // The slab spans X 10..30: its middle is 20.
+            let mirrored = |p: [f64; 3]| [40.0 - p[0], p[1], p[2]];
+            let free = |p: [f64; 3]| {
+                tips.iter().all(|(_, t)| {
+                    (0..3).map(|k| (t[k] - p[k]).powi(2)).sum::<f64>() >= MIRROR_TAKEN_MM.powi(2)
+                })
+            };
+            let (id, tip) = tips
+                .iter()
+                .find(|(_, p)| free(mirrored(*p)))
+                .cloned()
+                .expect("a tip whose mirror image has no support");
+            window.set_support_page(1);
+            window.set_support_tool(5);
+            run.on_tool_changed();
+            run.on_tool_click_with(tip.map(|c| c as f32), false);
+            assert_eq!(run.chosen_now()[0].1, vec![id]);
+            run.mirror_chosen(0);
+            settle_click(&run);
+            let after = in_force_session(&run).expect("still editable");
+            let target = mirrored(tip);
+            assert!(
+                after.tips().iter().any(|(_, t)| {
+                    (0..3).map(|k| (t[k] - target[k]).powi(2)).sum::<f64>() < 0.5f64.powi(2)
+                }),
+                "a support at {target:?}"
+            );
+            assert_eq!(after.tips().len(), tips.len() + 1);
+        });
+    }
+
     #[test]
     fn a_row_spreads_evenly_and_starts_again_past_a_gap() {
         let path: Vec<[f32; 3]> = (0..=40).map(|i| [i as f32 * 0.25, 0.0, 5.0]).collect();
@@ -15913,7 +16085,7 @@ mod hand_edit_tests {
             run.on_tool_changed();
             assert!(run.area_brush.armed());
 
-            run.fill_painted();
+            run.fill_painted(false);
             assert!(
                 run.support_leaf().is_none(),
                 "nothing painted, nothing placed"
@@ -15943,7 +16115,7 @@ mod hand_edit_tests {
             document.apply_edit(edit.clone()).unwrap();
             document.push_edit(edit);
 
-            run.fill_painted();
+            run.fill_painted(false);
             settle_click(&run);
             let session = in_force_session(&run).expect("the grid started a set");
             let tips: Vec<[f64; 3]> = session.tips().into_iter().map(|t| t.1).collect();
