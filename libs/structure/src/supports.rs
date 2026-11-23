@@ -12,9 +12,9 @@ use crate::check::{buckling_runs, member_check};
 use crate::frame::{Frame, Hold, Point, distance};
 use crate::solve::{Load, Material, SolveError, Target, solve};
 
-/// The stress concentration where a tip's neck meets the model and its
-/// cone: the section changes sharply there. Between 1.5 and 2.5 by the usual
-/// shoulder tables; to measure.
+/// The stress concentration where a tip meets the model: the section
+/// changes sharply there. About 2, to measure; check against a strength
+/// without any concentration in it (see [`CheckOptions::strength_mpa`]).
 pub const NECK_KT: f64 = 2.0;
 
 /// How far above the layer that peels a support is still kept (mm): a tip
@@ -231,7 +231,9 @@ pub struct BodyLoad {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CheckOptions {
     pub material: Material,
-    /// The stress that breaks a support in the vat, MPa.
+    /// The stress that breaks the resin in the vat, MPa, with no stress
+    /// concentration in it: the frame applies [`NECK_KT`] where a tip
+    /// narrows.
     pub strength_mpa: f64,
     /// The pull's sideways share at the film, in any direction.
     pub lateral_share: f64,

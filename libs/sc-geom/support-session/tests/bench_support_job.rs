@@ -345,7 +345,8 @@ fn support_frame_timings() {
     });
     let options = CheckOptions {
         material: Material::GREEN_RESIN,
-        strength_mpa: 8.0,
+        // The tips' 8 MPa of the peel model, without the neck's concentration.
+        strength_mpa: 16.0,
         lateral_share: std::env::var("SC_BENCH_LATERAL")
             .ok()
             .and_then(|v| v.parse().ok())

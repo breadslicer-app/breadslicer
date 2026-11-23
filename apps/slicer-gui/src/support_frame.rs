@@ -75,13 +75,18 @@ impl FrameShares {
     }
 }
 
-/// How the frame is checked: the peel's sideways share and the tips'
-/// strength, as the loads of #241 take them.
+/// How the frame is checked: the peel's sideways share, as the loads of
+/// #241 take it, and the resin's strength in the vat. The tips' strength of
+/// #241 has the concentration of a tip's narrowing taken in; the frame
+/// applies that concentration where a tip meets the model
+/// ([`bread_structure::NECK_KT`]) and nowhere else, so it checks every beam
+/// against the strength without it: a tip comes out as #241 has it, a
+/// shaft against the resin's own strength.
 fn options() -> CheckOptions {
     let model = bread_peel::PeelModel::default();
     CheckOptions {
         material: Material::GREEN_RESIN,
-        strength_mpa: model.tip_strength_mpa.mid,
+        strength_mpa: model.tip_strength_mpa.mid * bread_structure::NECK_KT,
         lateral_share: model.lateral_share,
         directions: 8,
     }
