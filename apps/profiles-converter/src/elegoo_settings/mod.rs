@@ -17,6 +17,7 @@
 pub mod cell;
 pub mod machines;
 pub mod sheet;
+pub mod wiki;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -116,7 +117,14 @@ impl ProfileReader for ElegooSettingsReader {
     fn read(&self, inputs: &[&Path]) -> Result<SourceReading, Self::Error> {
         let mut run = Run::default();
         for path in inputs {
-            let sheet = Sheet::open(path).map_err(ElegooSettingsError::Sheet)?;
+            // A saved copy of ELEGOO's settings page reads as the sheet does
+            // (#752).
+            let sheet = if wiki::is_wiki_page(path) {
+                wiki::open(path)
+            } else {
+                Sheet::open(path)
+            }
+            .map_err(ElegooSettingsError::Sheet)?;
             run.absorb(&sheet, path)?;
         }
         Ok(run.finish())
@@ -798,14 +806,14 @@ mod elegoo_settings_tests {
     #[test]
     fn rows_for_machines_we_do_not_ship_are_counted_per_machine() {
         let mut old = MARS_5;
-        old[0] = "ELEGOO Saturn 8K";
+        old[0] = "ELEGOO Mars 4 Ultra（normal resin+fast printing）";
         let reading = read(&[old, old, MARS_5]);
 
         assert_eq!(reading.profiles.len(), 1);
         assert_eq!(
             reading.notes,
             vec![SourceNote::RowsForAMachineWeDoNotShip {
-                model: "ELEGOO Saturn 8K".to_owned(),
+                model: "ELEGOO Mars 4 Ultra（normal resin+fast printing）".to_owned(),
                 rows: 2,
             }],
         );

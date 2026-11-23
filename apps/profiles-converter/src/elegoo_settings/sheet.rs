@@ -49,6 +49,8 @@ pub enum SheetReadError {
     },
     /// It is a zip archive but holds no worksheet where one belongs.
     MissingPart { path: PathBuf, part: &'static str },
+    /// A saved page holds no list of models with their resins (#752).
+    NotAWikiPage { path: PathBuf },
     /// A part is not the XML it should be.
     Xml {
         path: PathBuf,
@@ -73,6 +75,11 @@ impl fmt::Display for SheetReadError {
                 "{} holds no {part}, so it carries no worksheet",
                 path.display(),
             ),
+            Self::NotAWikiPage { path } => write!(
+                f,
+                "{} holds no list of ELEGOO's models and their resins",
+                path.display(),
+            ),
             Self::Xml { path, part, source } => {
                 write!(f, "{} has a malformed {part}: {source}", path.display())
             }
@@ -85,7 +92,7 @@ impl std::error::Error for SheetReadError {
         match self {
             Self::Open { source, .. } => Some(source),
             Self::NotAWorkbook { source, .. } => Some(source),
-            Self::MissingPart { .. } => None,
+            Self::MissingPart { .. } | Self::NotAWikiPage { .. } => None,
             Self::Xml { source, .. } => Some(source),
         }
     }

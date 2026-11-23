@@ -391,11 +391,12 @@ fn a_span_a_spreadsheet_rewrote_as_a_date_still_reads_as_an_exposure() {
 fn the_run_reports_every_row_it_could_not_use() {
     let (_out, _dir, notes) = convert(&ROWS);
 
+    // The Saturn 8K is shipped since the printers came from UVtools (#752):
+    // its row makes a block.
     assert!(
-        notes.contains(&SourceNote::RowsForAMachineWeDoNotShip {
-            model: "ELEGOO Saturn 8K".to_owned(),
-            rows: 1,
-        }),
+        !notes
+            .iter()
+            .any(|note| matches!(note, SourceNote::RowsForAMachineWeDoNotShip { .. })),
         "{notes:?}",
     );
     assert!(
