@@ -1092,6 +1092,185 @@ fn the_bodies_left_off_are_squeezed_in_and_keep_the_gap() {
     assert_eq!(again.placements, after.placements);
 }
 
+/// Copies of a body share its footprint (#554), whether they share its
+/// meshes or have meshes of their own, and however they stand turned by a
+/// whole number of the angles' steps; turned otherwise, they do not.
+#[test]
+fn copies_share_a_footprint_however_they_stand_turned() {
+    let mesh = cube();
+    let own = || Arc::new((*mesh).clone());
+    let eighth = std::f64::consts::FRAC_PI_4;
+    let bodies = vec![
+        body(vec![turned_box(&mesh, [10.0, 6.0, 4.0], 0.0, [20.0, 20.0])]),
+        body(vec![turned_box(
+            &own(),
+            [10.0, 6.0, 4.0],
+            0.0,
+            [50.0, 20.0],
+        )]),
+        body(vec![turned_box(
+            &own(),
+            [10.0, 6.0, 4.0],
+            eighth,
+            [20.0, 50.0],
+        )]),
+        body(vec![turned_box(
+            &mesh,
+            [10.0, 6.0, 4.0],
+            3.0 * eighth,
+            [50.0, 50.0],
+        )]),
+        body(vec![turned_box(&mesh, [10.0, 6.0, 4.0], 0.3, [80.0, 50.0])]),
+        body(vec![turned_box(&mesh, [10.0, 7.0, 4.0], 0.0, [80.0, 20.0])]),
+    ];
+    let frame = crate::Frame::new(&plate(100.0, 80.0), &Settings::default());
+    let fps = crate::across::movable_footprints(&frame, &bodies);
+    let shapes = |k: usize| Arc::as_ptr(&fps[k].as_ref().expect("drawn").shapes);
+    for k in 1..4 {
+        assert_eq!(shapes(k), shapes(0), "body {k} is a copy");
+    }
+    assert_ne!(shapes(4), shapes(0), "turned off the angles");
+    assert_ne!(shapes(5), shapes(0), "another size");
+}
+
+/// Plates of copies take the same layout (#554): the search would find it
+/// again, or one copy short, which leaves a plate at the end nearly empty.
+/// Every plate keeps the gap and the margin.
+#[test]
+fn plates_of_copies_take_the_same_layout() {
+    let mesh = cube();
+    let bodies: Vec<Body> = (0..30)
+        .map(|k| l_body(&mesh, 0.0, [-200.0 - 20.0 * f64::from(k), 0.0]))
+        .collect();
+    let plates = plates_in_a_row(8, 50.0, 40.0);
+    let s = Settings {
+        margin: 1.0,
+        ..quarter_turns()
+    };
+    let cancel = AtomicBool::new(false);
+    let across = crate::arrange_across(&bodies, &vec![None; bodies.len()], &plates, &s, &cancel)
+        .expect("not cancelled");
+    assert!(across.left_off().is_empty());
+    // Each plate's bodies, where they stand on it.
+    let on = |p: usize| -> Vec<(i64, i64, i64)> {
+        let mut at: Vec<(i64, i64, i64)> = across
+            .placements
+            .iter()
+            .map(|pl| pl.expect("placed"))
+            .zip(&bodies)
+            .filter(|((q, _), _)| *q == p)
+            .map(|((_, pl), b)| {
+                // Where the body's parts end up, from the plate's corner.
+                let c = corners(b, Some(pl));
+                let lo = c
+                    .iter()
+                    .fold([f64::INFINITY; 2], |m, q| [m[0].min(q[0]), m[1].min(q[1])]);
+                (
+                    ((lo[0] - plates[p].min[0]) * 1e3).round() as i64,
+                    (lo[1] * 1e3).round() as i64,
+                    (pl.angle.rem_euclid(std::f64::consts::TAU) * 1e6).round() as i64,
+                )
+            })
+            .collect();
+        at.sort_unstable();
+        at
+    };
+    let first = on(0);
+    assert!(first.len() > 4, "{}", first.len());
+    let full = bodies.len() / first.len();
+    for p in 1..full {
+        assert_eq!(on(p), first, "plate {p} as the first");
+    }
+    for (p, plate) in plates.iter().enumerate().take(across.plates_used) {
+        let (kept, at): (Vec<Body>, Vec<Option<Placement>>) = bodies
+            .iter()
+            .zip(&across.placements)
+            .filter(|(_, pl)| pl.is_some_and(|(q, _)| q == p))
+            .map(|(b, pl)| (b.clone(), pl.map(|(_, pl)| pl)))
+            .unzip();
+        assert_kept_apart(&kept, &at, plate, &s);
+    }
+    // And again: the same scene, the same plates.
+    let again = crate::arrange_across(&bodies, &vec![None; bodies.len()], &plates, &s, &cancel)
+        .expect("not cancelled");
+    assert_eq!(again.placements, across.placements);
+}
+
+/// A plate a body stays on is filled first (#554): it is used anyway, and
+/// the bodies it takes leave a plate fewer to fill.
+#[test]
+fn the_plate_a_body_stays_on_is_filled_first() {
+    let mesh = cube();
+    let plates = plates_in_a_row(4, 60.0, 60.0);
+    // A 20 mm box staying on the third plate, and 6 of 20 mm to place: a
+    // plate holds 4.
+    let x = plates[2].min[0];
+    let mut bodies = vec![Body {
+        parts: vec![boxed(&mesh, [20.0, 20.0, 5.0], [x + 6.0, 6.0, 0.0])],
+        fixed: true,
+    }];
+    bodies.extend((0..6).map(|k| {
+        body(vec![boxed(
+            &mesh,
+            [20.0, 20.0, 5.0],
+            [k as f64 * 25.0, 0.0, 0.0],
+        )])
+    }));
+    let mut stands_on = vec![None; bodies.len()];
+    stands_on[0] = Some(2);
+    let s = Settings {
+        turns: 1,
+        ..Settings::default()
+    };
+    let across = crate::arrange_across(&bodies, &stands_on, &plates, &s, &AtomicBool::new(false))
+        .expect("not cancelled");
+    assert!(across.placements[0].is_none(), "it stays");
+    let mut on = [0; 4];
+    for placed in across.placements.iter().skip(1) {
+        on[placed.expect("placed").0] += 1;
+    }
+    assert_eq!(on, [3, 0, 3, 0]);
+    assert_eq!(across.plates_used, 3);
+    let (kept, at): (Vec<Body>, Vec<Option<Placement>>) = bodies
+        .iter()
+        .zip(&across.placements)
+        .filter(|(b, pl)| b.fixed || pl.is_some_and(|(q, _)| q == 2))
+        .map(|(b, pl)| (b.clone(), pl.map(|(_, pl)| pl)))
+        .unzip();
+    let kept: Vec<Body> = kept
+        .into_iter()
+        .map(|b| Body { fixed: false, ..b })
+        .collect();
+    assert_kept_apart(&kept, &at, &plates[2], &s);
+}
+
+/// Copies that one plate holds are arranged as Arrange does (#554): rows
+/// and lattices, which pack copies for fewer plates, would turn squares an
+/// eighth into a lattice of diamonds only a little smaller, whose boxes
+/// overlap in plan.
+#[test]
+fn copies_one_plate_holds_are_arranged_as_arrange_does() {
+    let mesh = cube();
+    let bodies: Vec<Body> = (0..6)
+        .map(|_| body(vec![boxed(&mesh, [14.0, 14.0, 6.0], [-7.0, -7.0, 0.0])]))
+        .collect();
+    let plates = plates_in_a_row(4, 100.0, 60.0);
+    let s = Settings {
+        margin: 2.0,
+        ..Settings::default()
+    };
+    let across = crate::arrange_across(&bodies, &[None; 6], &plates, &s, &AtomicBool::new(false))
+        .expect("not cancelled");
+    assert_eq!(across.plates_used, 1);
+    let placements: Vec<Option<Placement>> = across
+        .placements
+        .iter()
+        .map(|p| p.map(|(_, p)| p))
+        .collect();
+    // Each part's box, turned with it, keeps the gap.
+    assert_kept_apart(&bodies, &placements, &plates[0], &s);
+}
+
 /// A table (a leg under a wide top) and a short box, at every quarter turn,
 /// as a fill draws them on `plate`.
 fn table_and_box(plate: &Plate) -> (crate::Frame, Vec<crate::footprint::Footprint>) {

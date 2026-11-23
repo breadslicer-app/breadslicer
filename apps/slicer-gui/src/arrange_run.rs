@@ -1595,6 +1595,77 @@ mod real_scene {
             }
         });
     }
+
+    /// Writes the Arrange all job of a real project to a file, as the
+    /// worker gets it (models with no supports yet measured with the ones
+    /// they will get), for `bread-arrange`'s bench (its ignored test
+    /// `bench::arrange_all_on_a_real_job`) to measure without the app. `BREADSLICER_ARRANGE_BREAD` names the
+    /// project, `BREADSLICER_ARRANGE_DUMP` the file written; with
+    /// `BREADSLICER_ARRANGE_KEEP_BY_HAND=1` models placed by hand stay.
+    #[test]
+    #[ignore = "writes a real project's job for measuring"]
+    fn dump_the_arrange_all_job() {
+        let (Some(path), Some(dump)) = (
+            std::env::var_os("BREADSLICER_ARRANGE_BREAD"),
+            std::env::var_os("BREADSLICER_ARRANGE_DUMP"),
+        ) else {
+            return;
+        };
+        let keep_by_hand =
+            std::env::var("BREADSLICER_ARRANGE_KEEP_BY_HAND").is_ok_and(|v| v == "1");
+        let path = std::path::PathBuf::from(path);
+        crate::test_support::slint_thread::on_fresh_slint_thread(move || {
+            let loaded = sc_project_formats::load_scene(&path, None, |_| {}).expect("it opens");
+            let sc_project_formats::LoadedContent::Project(mut project) = loaded.content else {
+                panic!("a .bread is a project")
+            };
+            let restored =
+                crate::support_persist::restore_supports(&mut project.scene, project.supports);
+            let window = MainWindow::new().expect("a main window");
+            let bus = crate::preferences_bus::PreferencesBus::new(
+                crate::preferences_bus::PreferencesSnapshot::for_tests(),
+            );
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let volume = crate::build_volume::BuildVolume::new(223.642, 126.976, 230.0);
+            ctrl.set_build_volume(volume);
+            let document = ctrl.document();
+            document.install_graph(project.scene, path.clone());
+            crate::support_persist::install_sets(&document, restored.sets);
+            let supports = crate::support_run::SupportRun::install(
+                &window,
+                bus,
+                document.clone(),
+                ctrl.dialogs(),
+                ctrl.clone(),
+            );
+            let job =
+                across::job(&document, &volume, ArrangeScope::Plates, keep_by_hand).expect("a job");
+            let ctx = supports.forecast_ctx();
+            let mut bodies = job.bodies.clone();
+            let t = Instant::now();
+            with_forecasts(&mut bodies, &job.bare, &ctx, &AtomicBool::new(false))
+                .expect("forecasts");
+            let raft_top = ArrangeOptions::default().on(&document, true).raft_top_mm;
+            let scene = bread_arrange::SceneJob {
+                bodies,
+                stands_on: job.stands_on.clone(),
+                plates: job.plates.clone(),
+                names: job.names.clone(),
+                raft_top: f64::from(raft_top),
+            };
+            let mut out = std::io::BufWriter::new(std::fs::File::create(&dump).expect("creates"));
+            scene.write(&mut out).expect("writes");
+            println!(
+                "{} bodies ({} bare, forecast in {:.1} s, {} fixed), {} plates, raft top {raft_top:.2} mm, forecast raft top {:.2} mm",
+                scene.bodies.len(),
+                job.bare.iter().filter(|&&b| b).count(),
+                t.elapsed().as_secs_f64(),
+                scene.bodies.iter().filter(|b| b.fixed).count(),
+                scene.plates.len(),
+                ctx.raft_top_mm,
+            );
+        });
+    }
 }
 
 #[cfg(test)]
