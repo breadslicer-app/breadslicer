@@ -12245,8 +12245,10 @@ mod hand_edit_tests {
             let model = leaves[0];
             let (set_leaf, set_mesh) = set_of(&document, &run, model);
             let start = leaf_transform(&document, model);
-            // The plate around it: room for two rows and four columns of it
-            // with its raft, so in its middle it splits the plate.
+            // The plate around it: room for one row of four of it with its
+            // raft, a little over, and no more. In the row's middle it
+            // splits it, a copy fitting on either side; moved, it lets
+            // three in, however well the copies pack.
             let size = set_mesh
                 .vertices()
                 .iter()
@@ -12259,8 +12261,8 @@ mod hand_edit_tests {
                 })
                 .map(|half| half * 2.0 + 1.6);
             let plate = bread_arrange::Plate {
-                min: [20.0 - 2.0 * size[0] - 5.0, 20.0 - size[1] - 5.0],
-                max: [20.0 + 2.0 * size[0] + 5.0, 20.0 + size[1] + 5.0],
+                min: [20.0 - 2.0 * size[0] - 5.0, 20.0 - size[1] / 2.0 - 5.0],
+                max: [20.0 + 2.0 * size[0] + 5.0, 20.0 + size[1] / 2.0 + 5.0],
                 floor: 0.0,
             };
             document.set_selection(Selection::One(LeafId(model)));
@@ -12270,7 +12272,7 @@ mod hand_edit_tests {
             };
             let filled = fill_now(&document, &plate, options).expect("filled").0;
             assert_eq!(filled.moved.len(), 1, "it moves; {size:?}");
-            assert!(filled.copies.len() >= 7, "{}", filled.copies.len());
+            assert_eq!(filled.copies.len(), 3);
             assert_ne!(leaf_transform(&document, model), start);
             let (leaf, mesh) = set_of(&document, &run, model);
             assert_eq!(leaf, set_leaf, "the same set");
