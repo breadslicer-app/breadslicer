@@ -150,6 +150,9 @@ pub(crate) struct PreferencesSnapshot {
     /// opened file lived in. `None` until the first open; the dialog then falls
     /// back to the home directory. App-wide state.
     pub last_open_dir: Option<PathBuf>,
+    /// Directory the printer-file export dialog should start in: the folder
+    /// the last printer file was written to (#729). App-wide state.
+    pub last_export_dir: Option<PathBuf>,
     /// Whether the start dialog shows when the app opens with no file
     /// (#381): its "Don't show at startup" box and Preferences turn it off
     /// and on.
@@ -224,6 +227,7 @@ impl PreferencesSnapshot {
             slice_view_height: None,
             slice_view_minimized: false,
             last_open_dir: None,
+            last_export_dir: None,
             show_start_dialog: true,
             repair_on_import: true,
             recent_files: Vec::new(),
@@ -268,6 +272,8 @@ pub(crate) enum PreferencesChange {
     SliceControlPanel,
     SliceViewPanel,
     LastOpenDir,
+    /// The folder printer files were last written to (#729).
+    LastExportDir,
     /// Whether the start dialog shows at launch (#381).
     StartDialog,
     /// Repair on import (#677).

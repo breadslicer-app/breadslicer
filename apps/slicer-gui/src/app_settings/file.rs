@@ -957,6 +957,23 @@ gizmo_size = 400
     }
 
     #[test]
+    fn last_export_dir_round_trips_apart_from_the_open_one() {
+        let tmp = TempDir::new().unwrap();
+        let file = settings_file_in(&tmp);
+        let mut s = AppSettings::default();
+        s.set_last_open_dir(Some(PathBuf::from("/home/user/models")));
+        s.set_last_export_dir(Some(PathBuf::from("/media/usb")));
+        file.save(&s).unwrap();
+
+        let loaded = file.load().settings();
+        assert_eq!(loaded.last_export_dir(), Some(PathBuf::from("/media/usb")));
+        assert_eq!(
+            loaded.last_open_dir(),
+            Some(PathBuf::from("/home/user/models"))
+        );
+    }
+
+    #[test]
     fn last_open_dir_round_trips() {
         let tmp = TempDir::new().unwrap();
         let file = settings_file_in(&tmp);

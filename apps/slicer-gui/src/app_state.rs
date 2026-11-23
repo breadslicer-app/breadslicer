@@ -405,6 +405,7 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_slice_view_height(snap.slice_view_height);
     settings.set_slice_view_minimized(snap.slice_view_minimized);
     settings.set_last_open_dir(snap.last_open_dir.clone());
+    settings.set_last_export_dir(snap.last_export_dir.clone());
     settings.set_show_start_dialog(snap.show_start_dialog);
     settings.set_repair_on_import(snap.repair_on_import);
     settings.set_recent_files(snap.recent_files.clone());
@@ -580,6 +581,7 @@ impl AppState {
             slice_view_height: settings.slice_view_height(),
             slice_view_minimized: settings.slice_view_minimized(),
             last_open_dir: settings.last_open_dir(),
+            last_export_dir: settings.last_export_dir(),
             show_start_dialog: settings.show_start_dialog(),
             repair_on_import: settings.repair_on_import(),
             recent_files: settings.recent_files(),

@@ -44,6 +44,7 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
         slice_panel,
         slice_view,
         last_open_dir,
+        last_export_dir,
         show_start_dialog,
         repair_on_import,
         recent_files,
@@ -120,6 +121,11 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
         slice_panel: merge_slice_panel(&base.slice_panel, &ours.slice_panel, slice_panel),
         slice_view: merge_slice_view(&base.slice_view, &ours.slice_view, slice_view),
         last_open_dir: pick(&base.last_open_dir, &ours.last_open_dir, last_open_dir),
+        last_export_dir: pick(
+            &base.last_export_dir,
+            &ours.last_export_dir,
+            last_export_dir,
+        ),
         show_start_dialog: pick(
             &base.show_start_dialog,
             &ours.show_start_dialog,

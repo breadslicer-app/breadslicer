@@ -760,6 +760,11 @@ impl SendToPrinter {
             .file_dialog()
             .set_title(ctr!("FileDialog", "Printer file to send").to_string())
             .add_filter(ctr!("FileDialog", "Printer files").to_string(), &extensions);
+        // Where printer files were last written (#729).
+        let dialog = match crate::export_print_file::export_dialog_dir(&self.panel.bus()) {
+            Some(dir) => dialog.set_directory(dir),
+            None => dialog,
+        };
         let this = self.clone();
         let _ = slint::spawn_local(async move {
             if let Some(file) = dialog.pick_file().await {
