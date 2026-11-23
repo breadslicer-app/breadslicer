@@ -717,11 +717,10 @@ fn layer_case(
     let input = ctx.input;
     let zero = Band::new(0.0, 0.0, 0.0);
     let mut out = Vec::new();
-    for id in 0..offsets[layer + 1] {
+    for (id, body) in bodies.iter().enumerate().take(offsets[layer + 1]) {
         if sets.find(id) != id {
             continue;
         }
-        let body = &bodies[id];
         if body.tips.is_empty() && body.feet.is_empty() {
             continue;
         }

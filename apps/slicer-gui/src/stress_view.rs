@@ -282,6 +282,9 @@ fn raise(shares: &mut [Vec<(String, f64)>], extra: &Shares) {
 }
 
 /// The stress view of one window.
+/// The weak supports of each set, by the leaf of the set (#247).
+pub(crate) type WeakSupports = Vec<(NodeId, Vec<crate::support_frame::WeakSpot>)>;
+
 pub(crate) struct StressView {
     ui: slint::Weak<MainWindow>,
     ctrl: Rc<ViewportController>,
@@ -517,9 +520,7 @@ impl StressView {
             ui.set_slice_timeline_weak_supports(self.weak_count() as i32);
             return;
         }
-        ui.set_slice_timeline_frame_note(
-            ctr!("StressCard", "Analysing trunks and braces…").into(),
-        );
+        ui.set_slice_timeline_frame_note(ctr!("StressCard", "Analysing trunks and braces…"));
         let cancel = Arc::new(AtomicBool::new(false));
         let slot = Arc::new(Mutex::new(None));
         *self.checking.borrow_mut() = Some(Checking {
@@ -608,7 +609,7 @@ impl StressView {
 
     /// The supports the frame found weak (#247), by the leaf of their set:
     /// id, utilisation and the part worst off.
-    pub(crate) fn weak_supports(&self) -> Vec<(NodeId, Vec<(String, f64, bread_structure::Part)>)> {
+    pub(crate) fn weak_supports(&self) -> WeakSupports {
         let held = self.held.borrow();
         let checked = self.checked.borrow();
         let (Some(held), Some((checked_for, found))) = (held.as_ref(), checked.as_ref()) else {

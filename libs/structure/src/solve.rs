@@ -157,7 +157,8 @@ type M6 = [[f64; 6]; 6];
 enum EndMap {
     Fixed,
     Own(usize),
-    Body(usize, M6),
+    /// A point of a body, `r` from the body's reference point.
+    Body(usize, Point),
 }
 
 fn body_map(r: Point) -> M6 {
@@ -188,7 +189,10 @@ impl EndMap {
         match self {
             Self::Fixed => [0.0; 6],
             Self::Own(_) => *v,
-            Self::Body(_, m) => std::array::from_fn(|i| (0..6).map(|j| m[i][j] * v[j]).sum()),
+            Self::Body(_, r) => {
+                let m = body_map(*r);
+                std::array::from_fn(|i| (0..6).map(|j| m[i][j] * v[j]).sum())
+            }
         }
     }
 }
@@ -236,7 +240,7 @@ pub fn solve(frame: &Frame, material: &Material, cases: &[Loads]) -> Result<Solv
         Hold::Free => node_dofs[i].map_or(EndMap::Fixed, EndMap::Own),
         Hold::Fixed => EndMap::Fixed,
         Hold::Body(b) => match body_dofs[b] {
-            Some(base) => EndMap::Body(base, body_map(node_body[i].expect("a body's node").1)),
+            Some(base) => EndMap::Body(base, node_body[i].expect("a body's node").1),
             None => EndMap::Fixed,
         },
     };
@@ -276,7 +280,8 @@ pub fn solve(frame: &Frame, material: &Material, cases: &[Loads]) -> Result<Solv
                         block[i][j] = kg[p * 6 + i][q * 6 + j];
                     }
                 }
-                if let EndMap::Body(_, mq) = ends[q] {
+                if let EndMap::Body(_, rq) = ends[q] {
+                    let mq = body_map(rq);
                     let mut right = [[0.0; 6]; 6];
                     for i in 0..6 {
                         for j in 0..6 {
@@ -285,7 +290,8 @@ pub fn solve(frame: &Frame, material: &Material, cases: &[Loads]) -> Result<Solv
                     }
                     block = right;
                 }
-                if let EndMap::Body(_, mp) = ends[p] {
+                if let EndMap::Body(_, rp) = ends[p] {
+                    let mp = body_map(rp);
                     let mut left = [[0.0; 6]; 6];
                     for i in 0..6 {
                         for j in 0..6 {
@@ -361,7 +367,10 @@ pub fn solve(frame: &Frame, material: &Material, cases: &[Loads]) -> Result<Solv
                 diag[t.row] = t.val;
             }
         }
-        if diag.iter().any(|d| !(*d > 0.0)) {
+        if diag
+            .iter()
+            .any(|d| d.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater))
+        {
             return Err(SolveError::Singular);
         }
         let scale: Vec<f64> = diag.iter().map(|d| 1.0 / d.sqrt()).collect();

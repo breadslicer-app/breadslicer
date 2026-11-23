@@ -99,7 +99,7 @@ fn a_trunk_carrying_a_branch_takes_both_pulls() {
         [2.0, 0.0, 10.0],
         vec![[0.0, 0.0, 10.1], [2.0, 0.0, 10.1], [6.0, 0.0, 10.1]],
     );
-    let check = check_layer(&[g.clone()], 10.0, &[pulled.clone()], &OPTIONS).unwrap();
+    let check = check_layer(&[g.clone()], 10.0, std::slice::from_ref(&pulled), &OPTIONS).unwrap();
     assert_eq!(check.tips_found, 3);
     assert!(check.worst > 0.0);
 
@@ -147,7 +147,8 @@ fn a_sideways_share_bends_the_necks() {
     let mut g = SupportGraph::new();
     trunk(&mut g, "a", 0.0, 0.0, 10.0);
     let pulled = body(1.0, [0.0, 0.0, 10.0], vec![[0.0, 0.0, 10.1]]);
-    let straight = check_layer(&[g.clone()], 10.0, &[pulled.clone()], &OPTIONS).unwrap();
+    let straight =
+        check_layer(&[g.clone()], 10.0, std::slice::from_ref(&pulled), &OPTIONS).unwrap();
     let sideways = CheckOptions {
         lateral_share: 0.1,
         ..OPTIONS

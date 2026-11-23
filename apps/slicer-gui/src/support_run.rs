@@ -6715,7 +6715,7 @@ impl SupportRun {
     pub(crate) fn reinforce(
         self: &Rc<Self>,
         ui: &MainWindow,
-        weak: Vec<(NodeId, Vec<(String, f64, bread_structure::Part)>)>,
+        weak: crate::stress_view::WeakSupports,
     ) {
         if self.pending_click.borrow().is_some() || self.handle.borrow().is_some() {
             ui.set_supports_last_run(ctr!(

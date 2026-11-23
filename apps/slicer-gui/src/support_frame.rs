@@ -26,6 +26,9 @@ use sc_print_glue::PlateFrame;
 
 use crate::support_persist::DrawnSet;
 
+/// A weak support: its id, its utilisation and the part worst off.
+pub(crate) type WeakSpot = (String, f64, Part);
+
 /// A support whose frame utilisation passes 1 by more than this is a weak
 /// spot to reinforce (#247).
 pub(crate) const WEAK_FROM: f64 = 1.0;
@@ -52,7 +55,7 @@ pub(crate) struct FrameShares {
 impl FrameShares {
     /// The supports past [`WEAK_FROM`], per set: id, utilisation and the
     /// part worst off.
-    pub(crate) fn weak(&self) -> Vec<Vec<(String, f64, Part)>> {
+    pub(crate) fn weak(&self) -> Vec<Vec<WeakSpot>> {
         self.worst
             .iter()
             .zip(&self.parts)

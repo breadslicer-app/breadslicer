@@ -298,7 +298,7 @@ fn a_solve_is_deterministic_and_cases_add_up() {
     let both = solve(&fr, &MAT, &[vec![loads[0]], vec![loads[1]]]).unwrap();
     let again = solve(&fr, &MAT, &[vec![loads[0]], vec![loads[1]]]).unwrap();
     let alone = solve(&fr, &MAT, &[vec![loads[1]]]).unwrap();
-    let sum = solve(&fr, &MAT, &[loads.clone()]).unwrap();
+    let sum = solve(&fr, &MAT, std::slice::from_ref(&loads)).unwrap();
     for k in 0..fr.members().len() {
         assert_eq!(both.forces[0][k], again.forces[0][k]);
         let (x, y) = (both.forces[1][k].unwrap(), alone.forces[0][k].unwrap());
