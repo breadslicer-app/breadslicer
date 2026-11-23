@@ -517,6 +517,9 @@ export component OrientCard inherits Card {
     callback apply();
     callback close();
     callback arrange();
+    // Lean back (#722): the angle, remembered, and the button with it.
+    in-out property <float> lean-angle: 37;
+    callback lean-back(float);
 
     property <bool> advanced: false;
 
@@ -526,6 +529,38 @@ export component OrientCard inherits Card {
 
     Note {
         text: @tr("Inspector" => "Finds the best way up for printing: fewer supports, less peel force, less height. Hover an option to see it on the model.");
+    }
+    Text {
+        text: @tr("Inspector" => "LEAN BACK");
+        font-size: Theme.font-xs;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        color: Theme.text-muted;
+    }
+    HorizontalLayout {
+        spacing: 8px;
+
+        NumberField {
+            label: @tr("Inspector" => "Angle");
+            field-width: 72px;
+            unit: "°";
+            decimals: 1;
+            value: root.lean-angle;
+            horizontal-stretch: 1;
+            committed(v) => {
+                root.lean-angle = Math.clamp(v, 0, 90);
+            }
+        }
+        ScButton {
+            text: @tr("Inspector" => "Lean back");
+            enabled: root.enabled && !root.running;
+            clicked => {
+                root.lean-back(root.lean-angle);
+            }
+        }
+    }
+    Note {
+        text: @tr("Inspector" => "Every selected model faces the front, leans back by exactly this angle and rests on the plate: copies stand alike.");
     }
     Text {
         text: @tr("Inspector" => "PROTECT DETAIL");

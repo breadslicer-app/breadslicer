@@ -11013,3 +11013,27 @@ msgstr "Nada para reforzar: lo débil son refuerzos o barras entre partes."
 msgctxt "SupportDialog"
 msgid "Reinforcing {} supports: their tips or shafts made wider."
 msgstr "Reforzando {} soportes: más gruesa la punta o el tronco."
+
+msgctxt "Inspector"
+msgid "LEAN BACK"
+msgstr "INCLINAR HACIA ATRÁS"
+
+msgctxt "Inspector"
+msgid "Angle"
+msgstr "Ángulo"
+
+msgctxt "Inspector"
+msgid "Lean back"
+msgstr "Inclinar"
+
+msgctxt "Inspector"
+msgid "Every selected model faces the front, leans back by exactly this angle and rests on the plate: copies stand alike."
+msgstr "Cada modelo elegido mira al frente, se inclina hacia atrás exactamente este ángulo y queda apoyado en la cama: las copias quedan iguales."
+
+msgctxt "Inspector"
+msgid "Already leaning back by {}°."
+msgstr "Ya está inclinado hacia atrás {}°."
+
+msgctxt "Inspector"
+msgid "Leaned back by {}°. Undo puts them back."
+msgstr "Inclinado hacia atrás {}°. Deshacer los vuelve a poner como estaban."

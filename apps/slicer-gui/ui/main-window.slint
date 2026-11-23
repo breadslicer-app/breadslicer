@@ -1139,6 +1139,7 @@ export component MainWindow inherits Window {
     in property <float> orient-progress: 0;
     in property <int> orient-preset: 0;
     in property <float> orient-max-tilt: 180;
+    in-out property <float> orient-lean-angle: 37;
     in property <bool> orient-align: false;
     in property <float> orient-weight-supports: 100;
     in property <float> orient-weight-force: 100;
@@ -1175,6 +1176,7 @@ export component MainWindow inherits Window {
     callback orient-finished();
     // 0 preset, 1 max tilt, 2 align (0/1), 3-5 term weights (%).
     callback orient-option-changed(int, float);
+    callback orient-lean-back(float);
     callback orient-option-hovered(int, bool);
     callback orient-option-picked(int);
     callback orient-apply();
@@ -3033,6 +3035,10 @@ export component MainWindow inherits Window {
                                     progress: root.orient-progress;
                                     preset: root.orient-preset;
                                     max-tilt: root.orient-max-tilt;
+                                    lean-angle <=> root.orient-lean-angle;
+                                    lean-back(angle) => {
+                                        root.orient-lean-back(angle);
+                                    }
                                     align: root.orient-align;
                                     weight-supports: root.orient-weight-supports;
                                     weight-force: root.orient-weight-force;

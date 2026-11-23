@@ -41,24 +41,24 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use sc_geom::supports::is_any_support_mesh;
-use sc_mesh_core::IndexedMesh;
-use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use bread_orient::{
     Cancelled, Candidate, Note, OrientAnalysis, OrientContext, Preset, SearchMode, SearchOutcome,
     Stage, kept_on_plate, turned_about_footprint,
 };
+use sc_geom::supports::is_any_support_mesh;
+use sc_mesh_core::IndexedMesh;
+use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_scene::{NodeId, PaintKind, SurfaceTags, surface_area};
 use sc_scene_edit::SceneEdit;
 use slint::ComponentHandle;
 
-use crate::support_run::SupportRun;
 use crate::error_dialog::{DialogManager, ErrorTexts};
 use crate::i18n::ctr;
 use crate::mesh_loader::panic_message;
 use crate::scene_document::{
     EditNotApplied, SceneDocument, SceneEvent, SceneRevision, SceneSubscription,
 };
+use crate::support_run::SupportRun;
 use crate::surface_brush::SurfaceBrush;
 use crate::viewport::ViewportController;
 use crate::{MainWindow, OrientOption};
@@ -460,6 +460,7 @@ impl OrientRun {
             me.upgrade().is_some_and(|run| run.editable())
         }));
         run.push_brush();
+        ui.set_orient_lean_angle(load_lean_angle() as f32);
         macro_rules! wire {
             ($on:ident, |$run:ident $(, $arg:ident)*| $body:expr) => {{
                 let $run = run.clone();
@@ -490,6 +491,9 @@ impl OrientRun {
             .set_visible_only(on));
         wire!(on_orient_brush_op, |r, code| r.brush_op(code));
         wire!(on_orient_brush_escape, |r| r.brush_escape());
+        wire!(on_orient_lean_back, |r, angle| {
+            r.lean_back(f64::from(angle));
+        });
         run
     }
 
@@ -1351,6 +1355,84 @@ impl OrientRun {
         }
     }
 
+    /// Lean back (#722): every selected model faces the front, leans back by
+    /// `angle` degrees about X and rests on the plate, in one Undo step.
+    /// False when nothing moved.
+    pub(crate) fn lean_back(&self, angle: f64) -> bool {
+        self.end_preview();
+        let angle = if angle.is_finite() {
+            angle.clamp(0.0, 90.0)
+        } else {
+            DEFAULT_LEAN_DEG
+        };
+        save_lean_angle(angle);
+        if !self.editable() {
+            return false;
+        }
+        let targets = Target::every_selected(&self.document);
+        let edits: Vec<SceneEdit> = targets
+            .iter()
+            .filter_map(|target| {
+                let after = target.local_for(bread_orient::leaned_back(
+                    &target.mesh,
+                    &target.world,
+                    angle,
+                ));
+                (after != target.local).then_some(SceneEdit::SetLocalTransform {
+                    node_id: target.leaf,
+                    before: target.local,
+                    after,
+                })
+            })
+            .collect();
+        if edits.is_empty() {
+            self.set_status(
+                ctr!(
+                    "Inspector",
+                    "Already leaning back by {}°.",
+                    format!("{angle:.1}")
+                )
+                .to_string(),
+            );
+            return false;
+        }
+        let moved = edits.len();
+        let edit = SceneEdit::Compound(edits);
+        match self.document.apply_edit(edit.clone()) {
+            Ok(()) => self.document.push_edit(edit),
+            Err(EditNotApplied::Rejected(error)) => {
+                self.dialogs.show_error(move || ErrorTexts {
+                    heading: ctr!("OrientDialog", "Auto-orient failed"),
+                    context: None,
+                    message: ctr!(
+                        "OrientDialog",
+                        "The scene rejected the new pose; nothing was moved."
+                    ),
+                    details: error.to_string().into(),
+                });
+                return false;
+            }
+            Err(EditNotApplied::NoSceneLoaded) => return false,
+        }
+        crate::breadcrumbs::note(&format!(
+            "orient: leaned {moved} models back {angle:.1} deg"
+        ));
+        self.clear_shown();
+        self.set_status(
+            ctr!(
+                "Inspector",
+                "Leaned back by {}°. Undo puts them back.",
+                format!("{angle:.1}")
+            )
+            .to_string(),
+        );
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_orient_offer_arrange(self.model_count() > 1);
+        }
+        self.refresh_warning();
+        true
+    }
+
     /// Applies the picked option: one transform edit, one Undo step. False
     /// when nothing was applied.
     pub(crate) fn apply(&self) -> bool {
@@ -1728,6 +1810,39 @@ fn current_row(c: &Candidate) -> String {
     match c.cost.detail {
         Some(_) => format!("{row} · {}", detail_text(c)),
         None => row,
+    }
+}
+
+/// The lean of Lean back when none was set (#722): how most minis print.
+const DEFAULT_LEAN_DEG: f64 = 37.0;
+
+fn lean_file() -> Option<std::path::PathBuf> {
+    if cfg!(test) {
+        return None;
+    }
+    Some(
+        sc_app_paths::project_dirs()?
+            .data_local_dir()
+            .join("orient")
+            .join("lean-back"),
+    )
+}
+
+/// The last angle Lean back used, else 37°.
+fn load_lean_angle() -> f64 {
+    lean_file()
+        .and_then(|f| std::fs::read_to_string(f).ok())
+        .and_then(|text| text.trim().parse::<f64>().ok())
+        .filter(|a| a.is_finite() && (0.0..=90.0).contains(a))
+        .unwrap_or(DEFAULT_LEAN_DEG)
+}
+
+fn save_lean_angle(angle: f64) {
+    if let Some(file) = lean_file()
+        && let Some(dir) = file.parent()
+        && std::fs::create_dir_all(dir).is_ok()
+    {
+        let _ = std::fs::write(file, format!("{angle}"));
     }
 }
 

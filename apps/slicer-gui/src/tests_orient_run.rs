@@ -1060,3 +1060,27 @@ fn two_models_picked_are_each_oriented_in_one_undo_step() {
         assert!(!f.document.can_undo(), "one step for both");
     });
 }
+
+/// #722: Lean back puts the model at the exact lean, on the plate, in one
+/// Undo step, and pressing it again moves nothing.
+#[test]
+fn leaning_back_is_one_exact_undo_step() {
+    on_fresh_slint_thread(|| {
+        let f = fixture();
+        let before = local(&f);
+        assert!(f.run.lean_back(37.0));
+        let world = affine(&local(&f));
+        let up = [
+            world.linear()[0][2],
+            world.linear()[1][2],
+            world.linear()[2][2],
+        ];
+        assert!(up[0].abs() < 1e-9, "{up:?}");
+        assert!((up[1] - 37f64.to_radians().sin()).abs() < 1e-9, "{up:?}");
+        let (lo, _) = bounds(&f);
+        assert!((-1e-9..1e-4).contains(&lo[2]), "{lo:?}");
+        assert!(!f.run.lean_back(37.0), "already leaning back");
+        f.document.undo();
+        assert_eq!(local(&f), before);
+    });
+}
