@@ -25,6 +25,14 @@ impl Occupancy {
         }
     }
 
+    /// Each band's grid that holds something, with its band.
+    pub(crate) fn grids(&self) -> impl Iterator<Item = (usize, &BitGrid)> {
+        self.bands
+            .iter()
+            .enumerate()
+            .filter_map(|(b, g)| g.as_ref().map(|g| (b, g)))
+    }
+
     /// Whether `shape` with its frame's corner at plate cell `at` lies on
     /// the plate.
     pub(crate) fn holds(&self, shape: &Shape, at: [i32; 2]) -> bool {

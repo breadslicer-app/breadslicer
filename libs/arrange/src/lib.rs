@@ -35,7 +35,11 @@ mod cache;
 mod fill;
 mod footprint;
 mod grid;
+mod nest;
+mod packing;
+mod pattern;
 mod plate;
+mod press;
 mod search;
 mod separate;
 
