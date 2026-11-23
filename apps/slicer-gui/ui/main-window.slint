@@ -85,6 +85,13 @@ export component MainWindow inherits Window {
     // the edges are where it is resized. Rust turns it on where it is
     // supported (Windows).
     in property <bool> custom-chrome: false;
+    // The top bar folds as the window narrows (a tester lost Close under
+    // 1600 px): the support links to their hearts, then the file's name
+    // and the printer chip.
+    property <bool> bar-compact: root.width < 1640px;
+    property <bool> bar-narrow: root.width < 1240px;
+    // Under this, the support links go: Undo and Redo keep their room.
+    property <bool> bar-tiny: root.width < 1100px;
     in property <bool> window-maximized: false;
     callback window-drag();
     callback window-minimize();
@@ -211,7 +218,7 @@ export component MainWindow inherits Window {
     // Menu presentation, pushed from the persisted preference. macOS
     // always resolves to Bar in Rust because it renders a global menu
     // bar.
-    in property <MenuLayout> menu-layout: MenuLayout.Bar;
+    in property <MenuLayout> menu-layout: MenuLayout.Compact;
     // Active workspace section, driven by Rust: the pill switcher
     // reflects it and clicking a segment requests a change through
     // `section-change-requested` rather than writing it directly, so
@@ -1648,14 +1655,25 @@ export component MainWindow inherits Window {
                     }
                 }
 
+                // The bar's content, short of the window's own buttons, which
+                // stand at the right edge whatever the width: a narrow
+                // window folds the content first (a tester lost Close under
+                // 1600 px).
+                bar-content := Rectangle {
+                    x: 0;
+                    y: 0;
+                    width: parent.width - (root.custom-chrome ? caption-buttons.width : 0px);
+                    height: parent.height;
+                    clip: true;
+
                 HorizontalLayout {
                     // Room for the compact menu button in its corner.
                     padding-left: root.menu-layout == MenuLayout.Compact ? 48px : 12px;
                     padding-right: root.custom-chrome ? 0px : 8px;
-                    spacing: 16px;
+                    spacing: root.bar-narrow ? 10px : 16px;
 
                     HorizontalLayout {
-                        min-width: 240px;
+                        min-width: root.bar-narrow ? 0px : 240px;
                         spacing: 10px;
                         alignment: start;
 
@@ -1671,17 +1689,17 @@ export component MainWindow inherits Window {
                             color: Theme.text;
                             vertical-alignment: center;
                         }
-                        if root.document-name != "": Text {
+                        if root.document-name != "" && !root.bar-narrow: Text {
                             text: "/";
                             color: Theme.border-strong;
                             vertical-alignment: center;
                         }
-                        if root.document-name != "": Text {
+                        if root.document-name != "" && !root.bar-narrow: Text {
                             text: root.document-name;
                             color: Theme.text-soft;
                             vertical-alignment: center;
                             overflow: elide;
-                            max-width: 260px;
+                            max-width: root.bar-compact ? 140px : 260px;
                         }
                         if root.scene-dirty: Rectangle {
                             width: 6px;
@@ -1759,31 +1777,33 @@ export component MainWindow inherits Window {
                     }
 
                     HorizontalLayout {
-                        min-width: 240px;
+                        min-width: root.bar-narrow ? 0px : 240px;
                         spacing: 4px;
                         alignment: end;
 
-                        SupportLink {
+                        if !root.bar-tiny: SupportLink {
                             label: @tr("Support us on Patreon");
+                            compact: root.bar-compact;
                             y: (parent.height - self.height) / 2;
                             clicked => {
                                 root.support-page-requested(SupportPage.Patreon);
                             }
                         }
-                        SupportLink {
+                        if !root.bar-tiny: SupportLink {
                             label: @tr("Support us on Ko-fi");
+                            compact: root.bar-compact;
                             y: (parent.height - self.height) / 2;
                             clicked => {
                                 root.support-page-requested(SupportPage.KoFi);
                             }
                         }
-                        Rectangle { width: 8px; }
+                        Rectangle { width: root.bar-narrow ? 2px : 8px; }
                         // What you print on, one click from Printer & resin
                         // (#151).
                         printer-chip := Rectangle {
                             y: (parent.height - self.height) / 2;
                             height: 26px;
-                            width: min(240px, chip-text.preferred-width + 39px);
+                            width: min(root.bar-narrow ? 150px : 240px, chip-text.preferred-width + 39px);
                             border-radius: Theme.radius;
                             border-width: 1px;
                             border-color: root.slice-printer-current-index >= 0
@@ -1844,9 +1864,19 @@ export component MainWindow inherits Window {
                                 root.redo-requested();
                             }
                         }
-                        if root.custom-chrome: Rectangle {
-                            width: 9px;
-                        }
+                    }
+                }
+                }
+
+                // The window's own buttons, always at the right edge.
+                caption-buttons := HorizontalLayout {
+                    x: parent.width - self.width;
+                    height: parent.height;
+                    width: root.custom-chrome ? self.preferred-width : 0px;
+                    visible: root.custom-chrome;
+                    spacing: 4px;
+                    padding-left: 9px;
+
                         if root.custom-chrome: CaptionButton {
                             kind: CaptionKind.minimize;
                             label: @tr("Workspace" => "Minimize");
@@ -1868,7 +1898,6 @@ export component MainWindow inherits Window {
                                 root.window-close();
                             }
                         }
-                    }
                 }
 
                 Rectangle {

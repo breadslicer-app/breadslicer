@@ -719,3 +719,69 @@ fn the_pictures_of_the_progress_and_the_shortcuts_are_written_when_asked() {
         }
     }
 }
+
+/// The window's own buttons stand at the right edge however narrow the
+/// window: a tester lost Close under 1600 px, with the top bar pushing them
+/// out. The bar folds instead (the support links to their hearts, then the
+/// file's name and the printer chip). With `BREADSLICER_UI_SHOTS`, the
+/// pictures are written too.
+#[test]
+fn the_close_button_stays_in_reach_at_any_width() {
+    let dir = std::env::var_os(SHOTS_ENV).map(std::path::PathBuf::from);
+    for (language, layout) in [
+        ("en", crate::MenuLayout::Compact),
+        ("es", crate::MenuLayout::Compact),
+        ("en", crate::MenuLayout::Bar),
+    ] {
+        for width in [960u32, 1100, 1240, 1400, 1536, 1640, 1920] {
+            let dir = dir.clone();
+            on_fresh_slint_thread(move || {
+                let window = MainWindow::new().expect("a main window");
+                slint::select_bundled_translation(language).expect("bundled language");
+                window.show().expect("the window shows");
+                window
+                    .window()
+                    .set_size(slint::LogicalSize::new(width as f32, 700.0));
+                window.set_custom_chrome(true);
+                window.set_menu_layout(layout);
+                window.set_has_scene(true);
+                window.set_document_name(
+                    "SUPPORTED French Hotchkiss MG Team - Crew 1 (Gunner) + Hotchkiss M1914".into(),
+                );
+                window.set_slice_printer_options(slint::ModelRc::new(slint::VecModel::from(vec![
+                    slint::SharedString::from("ELEGOO Saturn 4 Ultra 16K"),
+                ])));
+                window.set_slice_printer_current_index(0);
+                render_frames();
+                let shot = window.window().take_snapshot().expect("a snapshot");
+                let picture = image::RgbaImage::from_raw(
+                    shot.width(),
+                    shot.height(),
+                    shot.as_bytes().to_vec(),
+                )
+                .expect("RGBA");
+                if let Some(dir) = &dir {
+                    std::fs::create_dir_all(dir).expect("the folder is made");
+                    let bar = image::imageops::crop_imm(&picture, 0, 0, width, 80).to_image();
+                    let which = if layout == crate::MenuLayout::Bar {
+                        "bar"
+                    } else {
+                        "compact"
+                    };
+                    bar.save(dir.join(format!("topbar-{language}-{which}-{width}.png")))
+                        .expect("written");
+                }
+                // The close button's cross: light pixels in the last 46 px
+                // of the bar.
+                let lit = (width - 46..width)
+                    .flat_map(|x| (0..80).map(move |y| (x, y)))
+                    .filter(|&(x, y)| {
+                        let p = picture.get_pixel(x, y).0;
+                        u32::from(p[0]) + u32::from(p[1]) + u32::from(p[2]) > 450
+                    })
+                    .count();
+                assert!(lit > 6, "{language} {width}: no close button ({lit})");
+            });
+        }
+    }
+}
