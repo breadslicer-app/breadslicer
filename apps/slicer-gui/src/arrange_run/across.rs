@@ -7,9 +7,10 @@
 //!
 //! Every model of every plate is packed for the fewest plates: the first
 //! plate takes as many as fit, the next the rest, and plates are added at the
-//! end as they are needed. Plates left empty at the end, which held objects
-//! before, are taken off. Models the person placed by hand may stay where
-//! they are, as obstacles. The plate's own Arrange packs its plate, and what
+//! end as they are needed. Plates left empty, which held objects before, are
+//! taken off, at the end or between others: the plates after one taken off
+//! move up with their models and keep their names. Models the person placed
+//! by hand may stay where they are, as obstacles, and move with their plate. The plate's own Arrange packs its plate, and what
 //! does not fit goes to plates added at the end. One step of history: the
 //! moves and the plates.
 
@@ -37,6 +38,11 @@ pub(crate) struct Job {
     pub(crate) models: Vec<Option<NodeId>>,
     /// Per body, whether it is a model with no supports yet (#556).
     pub(crate) bare: Vec<bool>,
+    /// Per body, the scene's plate it stands on now.
+    pub(crate) on: Vec<u32>,
+    /// Per body, the leaf that says which plate it stands on: its model, or
+    /// the supports no model owns.
+    pub(crate) anchors: Vec<NodeId>,
     /// Per plate of the scene, whether objects stood on it.
     pub(crate) held: Vec<bool>,
     pub(crate) scope: ArrangeScope,
@@ -123,6 +129,8 @@ pub(crate) fn job(
         names: Vec::new(),
         models: Vec::new(),
         bare: Vec::new(),
+        on: Vec::new(),
+        anchors: Vec::new(),
         held: Vec::new(),
         scope,
     };
@@ -149,6 +157,8 @@ pub(crate) fn job(
         job.names.push(gathered.names[k].clone());
         job.models.push(is_model.then_some(anchor));
         job.bare.push(gathered.bare[k]);
+        job.on.push(plate);
+        job.anchors.push(anchor);
     }
     job.held = held;
     Some(job).filter(|j| j.bodies.iter().any(|b| !b.fixed))
@@ -176,12 +186,11 @@ pub(crate) fn apply(
     across: &Across,
     again: bool,
 ) -> Result<Option<Applied>, EditNotApplied> {
-    let placements: Vec<Option<bread_arrange::Placement>> = across
+    let mut placements: Vec<Option<bread_arrange::Placement>> = across
         .placements
         .iter()
         .map(|p| p.map(|(_, placement)| placement))
         .collect();
-    let edits = motion_edits(document, &placements, &job.leaves);
     let before = document.plate_names();
     let count = before.len() as u32;
     let needed = job.real[..across.plates_used.min(job.real.len())]
@@ -203,38 +212,85 @@ pub(crate) fn apply(
         }
     }
     .min(crate::plates::MAX_PLATES);
-    if edits.is_empty() && plates == count {
-        return Ok(None);
+    // Plates left empty between others, which held objects before, go too:
+    // the plates after them move up, each body with its plate.
+    let gone = emptied_between(job, across, plates, count);
+    if !gone.is_empty() {
+        let up = |p: u32| p - gone.iter().filter(|&&g| g < p).count() as u32;
+        for (k, placement) in placements.iter_mut().enumerate() {
+            let p = landed_on(job, across, k);
+            if up(p) == p {
+                continue;
+            }
+            let (Some(from), Some(to)) = (job.plate_of(p), job.plate_of(up(p))) else {
+                continue;
+            };
+            let by = [to.min[0] - from.min[0], to.min[1] - from.min[1]];
+            let moved = placement.get_or_insert(bread_arrange::Placement {
+                angle: 0.0,
+                translation: [0.0, 0.0],
+                on_plate: true,
+            });
+            moved.translation = [moved.translation[0] + by[0], moved.translation[1] + by[1]];
+        }
     }
+    // What moves with each body: its model and the supports that do not
+    // follow it, or the supports no model owns.
+    let leaves: Vec<Vec<NodeId>> = job
+        .leaves
+        .iter()
+        .zip(&job.anchors)
+        .map(|(leaves, &anchor)| {
+            if leaves.is_empty() {
+                vec![anchor]
+            } else {
+                leaves.clone()
+            }
+        })
+        .collect();
+    let edits = motion_edits(document, &placements, &leaves);
     let mut after = before.clone();
     after.truncate(plates as usize);
     while (after.len() as u32) < plates {
         let name = SceneDocument::new_plate_name(&after);
         after.push(name);
     }
+    // The plates taken off between others, by their names: the others keep
+    // theirs.
+    for &g in gone.iter().rev() {
+        after.remove(g as usize);
+    }
+    let plates = after.len() as u32;
+    if edits.is_empty() && plates == count {
+        return Ok(None);
+    }
     let edit = SceneEdit::Compound(edits);
     document.apply_edit(edit.clone())?;
     if after == before {
         document.push_edit(edit);
     } else {
-        let active = document.plates().active().min(plates - 1);
-        document.push_plates_edit(edit, before, after, active);
+        // The active plate, or the one in its place.
+        let active = document.plates().active();
+        let active = active - gone.iter().filter(|&&g| g < active).count() as u32;
+        document.push_plates_edit(edit, before, after, active.min(plates - 1));
     }
     if again {
         document.squash_last_two_steps();
         crate::support_persist::forget_unreachable(document, &document.support_sessions());
     }
-    // Where the app put them, not by hand.
+    // Where the app put them, not by hand: models placed by hand that
+    // stayed, and moved with their plate, are still placed by hand.
     let placed: Vec<NodeId> = job
         .models
         .iter()
-        .zip(&across.placements)
-        .filter(|(_, p)| p.is_some())
-        .filter_map(|(m, _)| *m)
+        .zip(&job.bodies)
+        .zip(&placements)
+        .filter(|((_, body), p)| p.is_some() && !body.fixed)
+        .filter_map(|((m, _), _)| *m)
         .collect();
     document.note_placed(&placed);
     Ok(Some(Applied {
-        moved: placements.iter().flatten().count(),
+        moved: across.placements.iter().flatten().count(),
         plates,
         plates_before: count,
         left_off: across
@@ -243,4 +299,43 @@ pub(crate) fn apply(
             .filter_map(|i| job.names.get(i).cloned())
             .collect(),
     }))
+}
+
+impl Job {
+    /// The area scene plate `plate` covers, when the job knows it.
+    fn plate_of(&self, plate: u32) -> Option<&Plate> {
+        self.real
+            .iter()
+            .position(|&p| p == plate)
+            .and_then(|k| self.plates.get(k))
+    }
+}
+
+/// The scene's plate body `k` stands on once `across` is applied: where it
+/// went, or where it stays.
+fn landed_on(job: &Job, across: &Across, k: usize) -> u32 {
+    match across.placements.get(k).copied().flatten() {
+        Some((p, _)) => job.real.get(p).copied().unwrap_or(job.on[k]),
+        None => job.on[k],
+    }
+}
+
+/// The scene's plates under `plates`, the count Arrange all leaves before
+/// taking off any between others, that held objects before (`count` of
+/// them stood) and hold none once `across` is applied, lowest first. Only
+/// Arrange all takes plates off between others; a plate's own Arrange
+/// leaves the plates as they are.
+fn emptied_between(job: &Job, across: &Across, plates: u32, count: u32) -> Vec<u32> {
+    if job.scope != ArrangeScope::Plates {
+        return Vec::new();
+    }
+    let mut holds = vec![false; plates.max(count) as usize];
+    for k in 0..job.bodies.len() {
+        if let Some(h) = holds.get_mut(landed_on(job, across, k) as usize) {
+            *h = true;
+        }
+    }
+    (0..plates.min(count))
+        .filter(|&p| job.held.get(p as usize).copied().unwrap_or(false) && !holds[p as usize])
+        .collect()
 }

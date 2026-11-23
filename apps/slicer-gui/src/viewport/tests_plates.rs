@@ -564,6 +564,70 @@ fn a_model_placed_by_hand_may_stay_where_it_is() {
     assert_eq!(by_hand(&document), 0);
 }
 
+/// Arrange all takes off a plate it leaves empty between others (#554),
+/// not only at the end: a model placed by hand stays on the third plate,
+/// which fills first, and what does not fit there goes to the first; the
+/// second, emptied, goes. The others keep their names, the third moves up
+/// with its model, still placed by hand, and one Undo puts the plates,
+/// their names and the models back.
+#[test]
+fn arrange_all_takes_off_a_plate_it_empties_between_others() {
+    let v = volume();
+    let mut places: Vec<Vec3> = (0..5)
+        .map(|k| Vec3::new(k as f32 * 5.0 - 10.0, 0.0, 0.0))
+        .collect();
+    places.extend((0..4).map(|k| offset(&v, 1) + Vec3::new(k as f32 * 5.0 - 10.0, 0.0, 0.0)));
+    places.push(offset(&v, 2) + Vec3::new(-30.0, -10.0, 0.0));
+    let (ctrl, leaves) = window_of(&places, 5.0);
+    let document = ctrl.document();
+    ctrl.add_plate();
+    ctrl.add_plate();
+    for (k, name) in ["Front", "Middle", "Back"].into_iter().enumerate() {
+        document.rename_plate(k as u32, name);
+    }
+    let hand = leaves[9];
+    let edit =
+        crate::plate_layout::moved_by(&document, hand, Vec3::new(2.0, 2.0, 0.0)).expect("a move");
+    document.apply_edit(edit.clone()).expect("applies");
+    document.push_edit(edit);
+    let start: Vec<Vec3> = leaves.iter().map(|&l| centre_of(&ctrl, l)).collect();
+    let on_its_plate = start[9] - offset(&v, 2);
+    let steps = document.undo_len();
+    let by_hand = |document: &SceneDocument| {
+        crate::arrange_run::placed_by_hand(document, &v, crate::arrange_run::ArrangeScope::Plates)
+    };
+    assert_eq!(by_hand(&document), 1);
+    crate::arrange_run::arrange_across_now(
+        document.as_ref(),
+        &v,
+        Default::default(),
+        crate::arrange_run::ArrangeScope::Plates,
+        true,
+    )
+    .expect("arranged");
+    assert_eq!(document.plate_names(), vec!["Front", "Back"]);
+    assert_eq!(document.plates().count(), 2);
+    assert!(
+        near(centre_of(&ctrl, hand), offset(&v, 1) + on_its_plate),
+        "the model placed by hand moved up with its plate"
+    );
+    assert_eq!(by_hand(&document), 1, "still placed by hand");
+    let mut on = [0; 2];
+    for &leaf in &leaves {
+        let c = centre_of(&ctrl, leaf);
+        let plate = (0..2).find(|&p| on_plate(c, p)).expect("on a plate");
+        on[plate as usize] += 1;
+    }
+    assert!(on[0] > 0 && on[1] > 1, "both plates hold models: {on:?}");
+    assert_eq!(document.undo_len(), steps + 1, "one step");
+    assert!(document.undo().expect("undoes"));
+    assert_eq!(document.plate_names(), vec!["Front", "Middle", "Back"]);
+    for (k, &leaf) in leaves.iter().enumerate() {
+        assert!(near(centre_of(&ctrl, leaf), start[k]), "model {k} back");
+    }
+    assert_eq!(by_hand(&document), 1);
+}
+
 /// A project keeps which models were placed by hand (#554).
 #[test]
 fn a_project_keeps_the_models_placed_by_hand() {
