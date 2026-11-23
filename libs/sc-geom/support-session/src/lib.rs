@@ -166,6 +166,10 @@ pub struct SupportRequest {
     /// Models that stand on a raft of their own (#198): by leaf, the options
     /// whose raft their new set is drawn on, in place of `options`' raft.
     pub own_rafts: Vec<(NodeId, SupportOptions)>,
+    /// Models made with options of their own (#723): by leaf, the options
+    /// their set is made with in place of `options` (a preset picked by
+    /// the model's height). A group is made with its first member's.
+    pub model_options: Vec<(NodeId, SupportOptions)>,
     /// Where no tip may land (#465): the channels of the hollows' drains,
     /// in world space.
     pub keep_out: Vec<KeepOut>,
@@ -189,6 +193,7 @@ impl Default for SupportRequest {
             models: None,
             keep_edits: Vec::new(),
             own_rafts: Vec::new(),
+            model_options: Vec::new(),
             keep_out: Vec::new(),
             together: Vec::new(),
             detail: Vec::new(),
@@ -736,12 +741,21 @@ fn copies_of(models: &[(NodeId, ModelInput)], request: &SupportRequest) -> Vec<O
         if keeps(leaf) {
             continue;
         }
+        // Copies are made with the same options (#723).
+        let options_of = |leaf: &NodeId| {
+            request
+                .model_options
+                .iter()
+                .find(|(m, _)| m == leaf)
+                .map(|(_, o)| o)
+        };
         of[i] = (0..i).find(|&k| {
             let (other_leaf, other) = &models[k];
             of[k].is_none()
                 && !keeps(other_leaf)
                 && Arc::ptr_eq(&model.geometry, &other.geometry)
                 && (model.transform.position.z - other.transform.position.z).abs() < 1e-6
+                && options_of(leaf) == options_of(other_leaf)
         });
     }
     of
@@ -917,13 +931,23 @@ fn run_with_copies(
             };
             let together = (unit.members.len() > 1)
                 .then(|| leaves.iter().map(|(_, m)| m.id.clone()).collect::<Vec<_>>());
+            let base = if unit.alone.is_some() {
+                &alone_request
+            } else {
+                request
+            };
+            // A model with options of its own is made with them (#723).
+            let own = request
+                .model_options
+                .iter()
+                .find(|(leaf, _)| *leaf == models[unit.members[0]].0)
+                .map(|(_, options)| SupportRequest {
+                    options: options.clone(),
+                    ..base.clone()
+                });
             run_supports(
                 &leaves,
-                if unit.alone.is_some() {
-                    &alone_request
-                } else {
-                    request
-                },
+                own.as_ref().unwrap_or(base),
                 worker,
                 prefix,
                 &unit.copies,

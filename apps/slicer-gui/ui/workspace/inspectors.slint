@@ -2323,6 +2323,9 @@ export component SupportsInspector inherits VerticalLayout {
     // An option change: its code (SupportRun::on_option) and value.
     callback option-changed(int, float);
     callback preset-picked(int);
+    // Each model takes the zone preset of its height (#723).
+    in property <bool> by-height;
+    callback by-height-toggled(bool);
     callback preset-save(string);
     callback preset-delete();
     callback lift-edit(float);
@@ -2719,6 +2722,17 @@ export component SupportsInspector inherits VerticalLayout {
             picked(i) => {
                 root.preset-picked(i);
             }
+        }
+        CheckBox {
+            text: @tr("Inspector" => "Pick by each model's height");
+            checked: root.by-height;
+            enabled: !root.running;
+            toggled => {
+                root.by-height-toggled(self.checked);
+            }
+        }
+        if root.by-height: Note {
+            text: @tr("Inspector" => "Generate gives each model the preset its height asks for: up to 65 mm Miniatures, up to 150 mm Figures, taller Statues. Picking a preset turns this off.");
         }
         // One line that is always there: what the options are, and the
         // way back to the preset as it ships. Nothing under it moves when

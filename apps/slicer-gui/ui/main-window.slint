@@ -709,6 +709,8 @@ export component MainWindow inherits Window {
     property <bool> tab-key-on: root.has-scene && !root.message-open && !start-layer.visible
         && !root.loading && !root.modal-transform-active;
     callback support-preset-picked(int);
+    in property <bool> support-by-height;
+    callback support-by-height-toggled(bool);
     callback support-preset-save(string);
     callback support-preset-delete();
     in property <string> axis-guide-commands: "";
@@ -3494,6 +3496,10 @@ export component MainWindow inherits Window {
                                     }
                                     preset-picked(i) => {
                                         root.support-preset-picked(i);
+                                    }
+                                    by-height: root.support-by-height;
+                                    by-height-toggled(on) => {
+                                        root.support-by-height-toggled(on);
                                     }
                                     preset-save(name) => {
                                         root.support-preset-save(name);

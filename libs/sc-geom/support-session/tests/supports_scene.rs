@@ -4,14 +4,13 @@
 
 use std::sync::Arc;
 
+use bread_support_session::{
+    RaftMode, SUPPORT_MESH_NAME, SupportRequest, scene_models, start_prescan, start_supports,
+};
 use sc_geom_transport_inprocess::JobError;
 use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, MeshMetadata, Vertex};
 use sc_scene::{LeafPayload, Scene};
-use bread_support_session::{
-    SUPPORT_MESH_NAME, SupportRequest, RaftMode, scene_models, start_prescan,
-    start_supports,
-};
 
 /// A closed 10 mm cube, outward-wound.
 fn cube() -> IndexedMesh {
@@ -58,6 +57,42 @@ fn scene_with(meshes: Vec<(IndexedMesh, [f64; 3])>) -> Scene {
         g.add_root(leaf).unwrap();
     }
     g
+}
+
+/// #723: a model with options of its own is made with them; the others
+/// with the request's, a copy of it included only when it has the same.
+#[test]
+fn a_model_with_options_of_its_own_is_made_with_them() {
+    use bread_support_session::{SupportOptions, scene_model_leaves, zone_presets};
+    let scene = scene_with(vec![(cube(), [0.0, 0.0, 8.0]), (cube(), [30.0, 0.0, 8.0])]);
+    let leaves: Vec<_> = scene_model_leaves(&scene, None)
+        .unwrap()
+        .into_iter()
+        .map(|(leaf, _)| leaf)
+        .collect();
+    let figures = SupportOptions {
+        zones: Some(zone_presets::figures_70()),
+        ..SupportOptions::default()
+    };
+    let request = SupportRequest {
+        model_options: vec![(leaves[1], figures.clone())],
+        ..SupportRequest::default()
+    };
+    let outcome = start_supports(&scene, request).unwrap().join().unwrap();
+    let options_of = |leaf| {
+        outcome
+            .sets
+            .iter()
+            .find(|set| set.model == leaf)
+            .and_then(|set| set.session.options().cloned())
+            .expect("a set with its options")
+    };
+    assert_eq!(options_of(leaves[1]).zones, figures.zones);
+    assert_eq!(
+        options_of(leaves[0]).zones,
+        SupportOptions::default().zones,
+        "the other keeps the request's"
+    );
 }
 
 #[test]
@@ -321,13 +356,18 @@ fn a_session_put_down_lets_go_of_its_edit_caches_and_edits_as_before() {
         .unwrap();
     let kept = outcome.sets.into_iter().next().unwrap().session;
     let mut warm = kept.clone();
-    warm.add_trunk_at([1.5, 1.5, 8.0]).expect("a way to hold it");
-    assert!(kept.holds_edit_caches(), "the edit built them, for every copy");
+    warm.add_trunk_at([1.5, 1.5, 8.0])
+        .expect("a way to hold it");
+    assert!(
+        kept.holds_edit_caches(),
+        "the edit built them, for every copy"
+    );
 
     kept.put_down();
     assert!(!kept.holds_edit_caches());
     let mut cold = kept.clone();
-    cold.add_trunk_at([1.5, 1.5, 8.0]).expect("a way to hold it");
+    cold.add_trunk_at([1.5, 1.5, 8.0])
+        .expect("a way to hold it");
     assert!(cold.holds_edit_caches(), "the edit built them again");
     assert_eq!(
         cold.mesh().unwrap().unwrap().faces(),

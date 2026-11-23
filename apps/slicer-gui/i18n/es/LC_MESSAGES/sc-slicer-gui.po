@@ -11037,3 +11037,15 @@ msgstr "Ya está inclinado hacia atrás {}°."
 msgctxt "Inspector"
 msgid "Leaned back by {}°. Undo puts them back."
 msgstr "Inclinado hacia atrás {}°. Deshacer los vuelve a poner como estaban."
+
+msgctxt "Inspector"
+msgid "Pick by each model's height"
+msgstr "Elegir según la altura de cada modelo"
+
+msgctxt "Inspector"
+msgid "Generate gives each model the preset its height asks for: up to 65 mm Miniatures, up to 150 mm Figures, taller Statues. Picking a preset turns this off."
+msgstr "Generar le da a cada modelo el preset que pide su altura: hasta 65 mm Miniaturas, hasta 150 mm Figuras, más alto Estatuas. Elegir un preset lo apaga."
+
+msgctxt "SupportDialog"
+msgid "By height: {}."
+msgstr "Por altura: {}."

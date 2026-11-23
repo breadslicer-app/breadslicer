@@ -257,6 +257,10 @@ pub(crate) struct SupportRun {
     /// The preset last picked from the list: of presets with the same
     /// numbers, the one the person clicked is the one marked (#564).
     picked: Cell<Option<usize>>,
+    /// Each model takes the zone preset of its height (#723), and what the
+    /// last Generate press gave each, for the line after the run.
+    by_height: Cell<bool>,
+    height_picks: RefCell<Option<String>>,
     /// The supports the Select tool picked (#567): each by its set's leaf and
     /// where its tip touches the model, which a redraw keeps.
     chosen: RefCell<Vec<(NodeId, [f64; 3])>>,
@@ -2067,6 +2071,36 @@ fn save_shape_flat(flat: bool) {
     }
 }
 
+/// The built-in zone preset for a model `height_mm` tall (#723): up to
+/// 65 mm Miniatures, up to 150 mm Figures, taller Statues.
+fn preset_for_height(height_mm: f64) -> usize {
+    if height_mm <= 65.0 {
+        0
+    } else if height_mm <= 150.0 {
+        1
+    } else {
+        2
+    }
+}
+
+fn load_by_height() -> bool {
+    // Tests pick their preset; the one by height is tested on its own.
+    if cfg!(test) {
+        return false;
+    }
+    support_data_dir()
+        .and_then(|d| std::fs::read_to_string(d.join("by-height")).ok())
+        .is_none_or(|text| text.trim() != "off")
+}
+
+fn save_by_height(on: bool) {
+    if let Some(dir) = support_data_dir()
+        && std::fs::create_dir_all(&dir).is_ok()
+    {
+        let _ = std::fs::write(dir.join("by-height"), if on { "on" } else { "off" });
+    }
+}
+
 /// Miniatures 20~65 mm (#490): what the Supports tab starts with.
 fn starting_options() -> SupportOptions {
     SupportOptions {
@@ -2213,6 +2247,8 @@ impl SupportRun {
             based_on: Cell::new(None),
             editing: Cell::new(None),
             picked: Cell::new(None),
+            by_height: Cell::new(load_by_height()),
+            height_picks: RefCell::new(None),
             chosen: RefCell::new(Vec::new()),
             chosen_events: RefCell::new(None),
             chosen_listeners: RefCell::new(Vec::new()),
@@ -2361,6 +2397,11 @@ impl SupportRun {
         {
             let run = run.clone();
             ui.on_support_preset_picked(move |i| run.on_preset_picked(i));
+        }
+        ui.set_support_by_height(run.by_height.get());
+        {
+            let run = run.clone();
+            ui.on_support_by_height_toggled(move |on| run.set_by_height(on));
         }
         {
             let run = run.clone();
@@ -3552,6 +3593,14 @@ impl SupportRun {
         let mut request = self.request_for_printer();
         request.options = self.options.borrow().clone();
         request.models = self.target_models();
+        // Each model the preset of its height (#723).
+        if self.by_height.get() {
+            let (options, picks) = self.options_by_height(request.models.as_deref());
+            request.model_options = options;
+            *self.height_picks.borrow_mut() = picks;
+        } else {
+            *self.height_picks.borrow_mut() = None;
+        }
         // No tip in a hollow's drain channel (#465).
         request.keep_out = crate::raft_drains::drain_channels(&self.document);
         // A model on a raft of its own keeps it (#198), a group's members
@@ -3567,6 +3616,63 @@ impl SupportRun {
         // A group is made as one structure, braced to itself (#475).
         request.together = self.document.groups();
         request
+    }
+
+    /// The box turned on or off (#723), remembered.
+    fn set_by_height(&self, on: bool) {
+        if self.by_height.replace(on) != on {
+            save_by_height(on);
+        }
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_support_by_height(on);
+        }
+    }
+
+    /// The options each model of `only` (every model when `None`) is made
+    /// with when it takes the zone preset of its height (#723), and the line
+    /// that says which preset each took. A model as tall as the preset it
+    /// takes keeps the tab's one raft for all.
+    fn options_by_height(
+        &self,
+        only: Option<&[NodeId]>,
+    ) -> (Vec<(NodeId, SupportOptions)>, Option<String>) {
+        let heights: Vec<(NodeId, f64)> = self
+            .document
+            .with_scene(|spatial| {
+                crate::raft_clash::model_bottoms(spatial)
+                    .into_iter()
+                    .filter(|(id, _)| only.is_none_or(|only| only.contains(id)))
+                    .filter_map(|(id, _)| {
+                        let query = spatial.leaf(id)?;
+                        let aabb = query.transformed_aabb(query.world_transform())?;
+                        let height = f64::from(aabb.max().coords()[2] - aabb.min().coords()[2]);
+                        Some((id, height))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let presets = self.presets.borrow();
+        let one_raft = self.options.borrow().one_raft;
+        let mut counts = [0_usize; 3];
+        let options = heights
+            .into_iter()
+            .filter_map(|(id, height)| {
+                let i = preset_for_height(height);
+                let preset = presets.get(i).filter(|p| p.built_in)?;
+                counts[i] += 1;
+                let mut options = preset.options.clone();
+                options.one_raft = one_raft;
+                Some((id, options))
+            })
+            .collect();
+        let line = counts
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| **n > 0)
+            .filter_map(|(i, n)| presets.get(i).map(|p| format!("{} × {n}", p.name)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        (options, (!line.is_empty()).then_some(line))
     }
 
     /// The raft `model` stands on: its group's one raft of lines (#475), its
@@ -5262,6 +5368,8 @@ impl SupportRun {
             self.based_on.set(card);
             self.editing.set(card);
             self.picked.set(Some(index.max(0) as usize));
+            // A preset picked by hand is for every model (#723).
+            self.set_by_height(false);
             self.set_options(options);
         }
     }
@@ -7987,6 +8095,11 @@ impl SupportRun {
         if let Some(ui) = self.ui.upgrade() {
             let seconds = outcome.timings.total.as_secs_f64();
             let mut line = format!("{summary} {seconds:.1} s.");
+            // Which preset each model took by its height (#723).
+            if let Some(picks) = self.height_picks.borrow_mut().take() {
+                line.push(' ');
+                line.push_str(&ctr!("SupportDialog", "By height: {}.", picks));
+            }
             // Painted detail is avoided where it can be (#186); the tips it
             // could not be are told, with the finest tip.
             let on_detail: usize = outcome
@@ -16690,6 +16803,52 @@ mod hand_edit_tests {
         assert!(rows.iter().any(|row| row.0 == "dragon"));
         assert_eq!((*sets, *hollows), (1, 1));
         assert_eq!(reopened, saved, "everything comes back as it was saved");
+    }
+
+    /// #723: with the box on, each model takes the zone preset of its
+    /// height; picking a preset by hand turns the box off.
+    #[test]
+    fn each_model_takes_the_preset_of_its_height() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let mut leaves = Vec::new();
+            for (x, height) in [(0.0, 30.0), (40.0, 100.0), (80.0, 200.0)] {
+                let leaf = graph
+                    .add_leaf(
+                        None,
+                        translation([x, 0.0, 0.0]),
+                        LeafPayload::Mesh(Arc::new(box_mesh([0.0; 3], [20.0, 20.0, height]))),
+                    )
+                    .unwrap();
+                graph.add_root(leaf).unwrap();
+                leaves.push(leaf);
+            }
+            document.install_graph(graph, PathBuf::from("boxes.stl"));
+            let run =
+                SupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            assert!(run.request_for_selection().model_options.is_empty(), "off");
+            run.set_by_height(true);
+            assert!(window.get_support_by_height());
+            let request = run.request_for_selection();
+            let presets = run.presets.borrow().clone();
+            for (k, leaf) in leaves.iter().enumerate() {
+                let (_, options) = request
+                    .model_options
+                    .iter()
+                    .find(|(id, _)| id == leaf)
+                    .expect("each model its options");
+                assert_eq!(options.zones, presets[k].options.zones, "model {k}");
+            }
+            let line = run.height_picks.borrow().clone().expect("the line");
+            assert!(line.contains(&presets[2].name), "{line}");
+            run.on_preset_picked(1);
+            assert!(!window.get_support_by_height(), "picked by hand");
+            assert!(run.request_for_selection().model_options.is_empty());
+        });
     }
 
     // The card of supports out of date (#408), with the helpers above.
