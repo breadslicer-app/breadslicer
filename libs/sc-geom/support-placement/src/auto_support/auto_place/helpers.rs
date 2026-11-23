@@ -678,7 +678,13 @@ pub struct MergeHost {
 /// or shaft joint is within 4 mm on the plate, nearest in space (a joint
 /// counts 10 % nearer in square), plus half the longest member it carries
 /// already. A stump never takes one.
-pub fn find_merge_host(tip_pos: Vec3, model_id: &str, draft: &SupportState) -> Option<MergeHost> {
+/// With `share`, a trunk of any model of the run takes it (#725).
+pub fn find_merge_host(
+    tip_pos: Vec3,
+    model_id: &str,
+    draft: &SupportState,
+    share: bool,
+) -> Option<MergeHost> {
     let reach2 = GRIDLESS_MERGE_RADIUS_MM * GRIDLESS_MERGE_RADIUS_MM;
     let mut loads: HashMap<String, f64> = HashMap::new();
     let mut best: Option<MergeHost> = None;
@@ -699,7 +705,7 @@ pub fn find_merge_host(tip_pos: Vec3, model_id: &str, draft: &SupportState) -> O
     };
     let near_plate = near_plate_origin();
     for (id, trunk) in &draft.collections.trunks {
-        if trunk.base.model_id != model_id || trunk.base.origin == Some(near_plate) {
+        if (!share && trunk.base.model_id != model_id) || trunk.base.origin == Some(near_plate) {
             continue;
         }
         if let Some(cone) = &trunk.contact_cone {

@@ -30,6 +30,13 @@
 //!   zone preset "Miniatures 20~65 mm", "Figures 65~150 mm", or "Statues 150 mm+"
 //!   (#360, #479) instead of the default options.
 //! - `SUPPORT_SCORECARD_GRID`: `off` or a spacing in mm, over the preset's.
+//! - `SUPPORT_SCORECARD_COPIES`: `cols,rows,gap[,lean]`: a scene of one mesh
+//!   file becomes a plate of copies sharing its mesh, in a grid with `gap` mm
+//!   between their boxes, each leaned back `lean` degrees about X first
+//!   (#722), to measure a filled plate (#725).
+//! - `SUPPORT_SCORECARD_TOGETHER`: the plate's models are made as one group,
+//!   braced to each other (#475); with `SUPPORT_SCORECARD_SHARE` too, their
+//!   supports hang from each other's trunks (#725).
 //! - `SUPPORT_SCORECARD_STOP_AFTER_GEN`: ends the process right after the
 //!   support job of the first scene, for whoever measures its memory.
 //! - `SUPPORT_SCORECARD_DUMP`: a folder for each scene's tips, islands left and
@@ -83,7 +90,7 @@ use sc_geom::supports::{
     scene_model_leaves, settings_for, start_supports, zone_presets,
 };
 use sc_mesh_core::indexed_mesh::RepairPasses;
-use sc_mesh_core::transform::Transform3D;
+use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, Vertex};
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use bread_orient::PeelModel;
@@ -291,6 +298,19 @@ fn load_entry(entry: &Entry, printer: &PrinterProfile) -> Scene {
         return scene;
     }
     let mut scene = Scene::new();
+    if let (Ok(copies), [path]) = (
+        std::env::var("SUPPORT_SCORECARD_COPIES"),
+        entry.paths.as_slice(),
+    ) {
+        lay_copies(&mut scene, path, entry.height_mm, &copies);
+        if entry.repair {
+            scene.repair_meshes(RepairPasses::default_repair());
+        }
+        scene
+            .drop_at([x as f32, y as f32], (floor_z + lift) as f32)
+            .expect("place on the plate");
+        return scene;
+    }
     let mut x0 = 0.0f32;
     for path in &entry.paths {
         for mut mesh in load_meshes(path, entry.height_mm) {
@@ -323,6 +343,62 @@ fn load_entry(entry: &Entry, printer: &PrinterProfile) -> Scene {
         .drop_at([x as f32, y as f32], (floor_z + lift) as f32)
         .expect("place on the plate");
     scene
+}
+
+/// A grid of copies of the mesh of `path` into `scene` (#725), as
+/// `cols,rows,gap[,lean]` says: they share the mesh, as copies in the app do.
+fn lay_copies(scene: &mut Scene, path: &Path, height_mm: Option<f32>, spec: &str) {
+    let parts: Vec<f32> = spec
+        .split(',')
+        .map(|v| v.trim().parse().expect("SUPPORT_SCORECARD_COPIES: numbers"))
+        .collect();
+    let (cols, rows, gap) = (parts[0] as usize, parts[1] as usize, parts[2]);
+    let lean = parts.get(3).copied().unwrap_or(0.0).to_radians();
+    let mesh = load_meshes(path, height_mm).remove(0);
+    let (s, c) = (-lean).sin_cos();
+    let vertices: Vec<Vertex> = mesh
+        .vertices()
+        .iter()
+        .map(|v| {
+            let [x, y, z] = *v.as_array();
+            Vertex::new([x, c * y - s * z, s * y + c * z])
+        })
+        .collect();
+    let (mut lo, mut hi) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
+    for v in &vertices {
+        let p = v.as_array();
+        for k in 0..3 {
+            lo[k] = lo[k].min(p[k]);
+            hi[k] = hi[k].max(p[k]);
+        }
+    }
+    let mesh = Arc::new(IndexedMesh::new(None, vertices, mesh.faces().to_vec()));
+    let (w, d) = (hi[0] - lo[0], hi[1] - lo[1]);
+    for j in 0..rows {
+        for i in 0..cols {
+            let at = [
+                f64::from(i as f32 * (w + gap) - lo[0]),
+                f64::from(j as f32 * (d + gap) - lo[1]),
+                f64::from(-lo[2]),
+            ];
+            let leaf = scene
+                .add_leaf(
+                    Some(SceneMetadata {
+                        name: Some(format!("copy {i},{j}")),
+                        ..Default::default()
+                    }),
+                    Transform3D::Affine(AffineTransform3D::from_translation(at)),
+                    LeafPayload::Mesh(mesh.clone()),
+                )
+                .expect("add a copy");
+            scene.add_root(leaf).expect("add a root");
+        }
+    }
+    eprintln!(
+        "copies: {cols} x {rows}, {w:.1} x {d:.1} mm each, {gap} mm apart, plate {:.1} x {:.1} mm",
+        cols as f32 * (w + gap) - gap,
+        rows as f32 * (d + gap) - gap
+    );
 }
 
 // --------------------------------------------------------------- digests
@@ -1788,6 +1864,17 @@ fn run_scene(
         Ok(other) => panic!("SUPPORT_SCORECARD_PRESET: unknown preset {other:?}"),
         Err(_) => {}
     }
+    // A plate made as one group, hanging from each other's trunks (#725).
+    let share = std::env::var("SUPPORT_SCORECARD_SHARE").is_ok();
+    if share || std::env::var("SUPPORT_SCORECARD_TOGETHER").is_ok() {
+        let leaves = scene_model_leaves(&scene, None)
+            .expect("bake")
+            .into_iter()
+            .map(|(leaf, _)| leaf)
+            .collect();
+        request.together = vec![leaves];
+        request.share_hosts = share;
+    }
     // `off` or a spacing in mm, over what the preset says.
     if let (Ok(grid), Some(zones)) = (
         std::env::var("SUPPORT_SCORECARD_GRID"),
@@ -1823,6 +1910,36 @@ fn run_scene(
         .iter()
         .min_by(|a, b| a.0.total_cmp(&b.0))
         .expect("at least one run");
+    // What each model's supports put inside another model, as made (#725):
+    // a set made standing alone does not see its neighbours.
+    {
+        let leaves: Vec<(sc_scene::NodeId, ModelInput)> =
+            scene_model_leaves(&scene, None).expect("bake");
+        let geoms: Vec<ModelGeom> = leaves.par_iter().map(|(_, m)| ModelGeom::of(m)).collect();
+        let (mut inside, mut sets_hit) = (0usize, 0usize);
+        for set in &outcome.sets {
+            let Some(mesh) = &set.mesh else { continue };
+            let own = leaves.iter().position(|(leaf, _)| *leaf == set.model);
+            let hits = mesh
+                .vertices()
+                .par_iter()
+                .filter(|v| {
+                    let p = v.as_array();
+                    let q = Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]));
+                    geoms
+                        .iter()
+                        .enumerate()
+                        .any(|(i, g)| Some(i) != own && g.holds(q))
+                })
+                .count();
+            inside += hits;
+            sets_hit += usize::from(hits > 0);
+        }
+        eprintln!(
+            "  neighbours: {inside} support vertices inside another model, in {sets_hit} of {} sets",
+            outcome.sets.len()
+        );
+    }
     let mut stages: Vec<(String, f64)> = outcome
         .timings
         .entries

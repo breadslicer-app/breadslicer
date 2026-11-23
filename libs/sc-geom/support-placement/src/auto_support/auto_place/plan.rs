@@ -445,7 +445,7 @@ fn make_members(
             let Some(trunk) = run.draft.collections.trunks.get(&host_id).cloned() else {
                 continue;
             };
-            if trunk.base.model_id != model_id {
+            if !live.auto_support.share_hosts && trunk.base.model_id != model_id {
                 continue;
             }
             let off_node = live.grid.enabled
@@ -760,7 +760,7 @@ fn cover_flat_islands(
     }
     let tops: Vec<Top> = collect_host_entities(&run.draft)
         .into_iter()
-        .filter(|h| h.entity.base.model_id == model_id)
+        .filter(|h| live.auto_support.share_hosts || h.entity.base.model_id == model_id)
         .filter_map(|h| {
             let last = h.entity.segments.last();
             let pos = last

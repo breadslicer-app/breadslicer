@@ -176,6 +176,9 @@ pub struct SupportRequest {
     /// Groups of models made as one structure (#475), by leaf: run together
     /// as they stand, their supports braced to each other's.
     pub together: Vec<Vec<NodeId>>,
+    /// The supports of a group hang from any member's trunks, not only
+    /// their own model's (#725): a plate made as one structure.
+    pub share_hosts: bool,
     /// The faces painted as detail (#186), by leaf, in the order of its
     /// mesh's faces: tips keep off them where they can. A run reads them off
     /// its scene; set by hand, they stand in for it.
@@ -196,6 +199,7 @@ impl Default for SupportRequest {
             model_options: Vec::new(),
             keep_out: Vec::new(),
             together: Vec::new(),
+            share_hosts: false,
             detail: Vec::new(),
         }
     }
@@ -1350,6 +1354,8 @@ fn run_supports(
     // A group's supports are braced to each other's (#475).
     if let Some(group) = together {
         settings.supports.auto_bracing.brace_together = vec![group];
+        // And hang from each other's trunks, when asked (#725).
+        settings.supports.auto_support.share_hosts = request.share_hosts;
     }
     let models: Vec<ModelInput> = leaves.iter().map(|(_, m)| m.clone()).collect();
     let models = &models[..];

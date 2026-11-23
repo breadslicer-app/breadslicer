@@ -87,6 +87,10 @@ pub struct AutoSupportSettings {
     /// The zone rules (#360): every support's size and spacing by the zone
     /// it lands in, each size drawn as written. Miniatures' by default.
     pub zone_rules: ZoneRules,
+    /// Supports hang from the trunks of every model of the run, not only
+    /// their own (#725): the models of a plate made as one structure.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub share_hosts: bool,
 }
 
 impl Default for AutoSupportSettings {
@@ -133,6 +137,7 @@ pub fn create_default_auto_support_settings() -> AutoSupportSettings {
         model_load_factor_cap: c::MODEL_LOAD_FACTOR_CAP.default_value,
         debug_skip_auto_bracing: false,
         zone_rules: super::presets::minis_30().rules,
+        share_hosts: false,
     }
 }
 
@@ -164,5 +169,6 @@ pub fn normalize_auto_support_settings(source: &AutoSupportSettings) -> AutoSupp
         model_load_factor_cap: clamp(source.model_load_factor_cap, c::MODEL_LOAD_FACTOR_CAP),
         debug_skip_auto_bracing: source.debug_skip_auto_bracing,
         zone_rules: source.zone_rules.clamped(),
+        share_hosts: source.share_hosts,
     }
 }

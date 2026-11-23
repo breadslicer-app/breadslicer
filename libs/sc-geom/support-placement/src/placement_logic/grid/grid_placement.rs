@@ -692,7 +692,7 @@ pub fn decide_grid_placement(
             continue;
         }
         for (id, trunk) in &snapshot.collections.trunks {
-            if trunk.base.model_id != model_id {
+            if !live.auto_support.share_hosts && trunk.base.model_id != model_id {
                 continue;
             }
             if let Some(root) = snapshot.collections.roots.get(&trunk.root_id) {

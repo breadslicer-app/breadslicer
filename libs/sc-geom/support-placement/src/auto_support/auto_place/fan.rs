@@ -168,8 +168,9 @@ pub fn fan_leaf_to_host(args: &FanArgs<'_>, ctx: &PlanCtx<'_>) -> FanLeafResult 
         if across2 > reach * reach && across2.sqrt() >= nearest_host {
             continue;
         }
-        if host_shaft(draft, point.host_type_id, &point.host_id).map(|(b, _)| b.model_id.as_str())
-            != Some(model_id)
+        if !ctx.live().auto_support.share_hosts
+            && host_shaft(draft, point.host_type_id, &point.host_id).map(|(b, _)| b.model_id.as_str())
+                != Some(model_id)
         {
             continue;
         }
@@ -435,9 +436,10 @@ pub fn build_consolidation_branch(
     let mut best: Option<&FanShaftPoint> = None;
     let mut best_lean = f64::INFINITY;
     for point in pool {
-        if host_entity_of(pruned, point.host_type_id, &point.host_id)
-            .map(|h| h.base.model_id.as_str())
-            != Some(model_id)
+        if !ctx.live().auto_support.share_hosts
+            && host_entity_of(pruned, point.host_type_id, &point.host_id)
+                .map(|h| h.base.model_id.as_str())
+                != Some(model_id)
         {
             continue;
         }
