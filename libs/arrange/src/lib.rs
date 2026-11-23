@@ -36,8 +36,12 @@ mod cache;
 mod fill;
 mod footprint;
 mod grid;
+mod nest;
+mod packing;
+mod pattern;
 mod plate;
 mod scene_file;
+mod press;
 mod search;
 mod separate;
 
@@ -736,5 +740,7 @@ impl Parking {
 
 #[cfg(test)]
 mod bench;
+#[cfg(test)]
+mod fill_bench;
 #[cfg(test)]
 mod tests;
