@@ -153,6 +153,8 @@ pub(crate) struct PreferencesSnapshot {
     /// Directory the printer-file export dialog should start in: the folder
     /// the last printer file was written to (#729). App-wide state.
     pub last_export_dir: Option<PathBuf>,
+    /// The template printer files are named by (#730).
+    pub export_name_template: String,
     /// Whether the start dialog shows when the app opens with no file
     /// (#381): its "Don't show at startup" box and Preferences turn it off
     /// and on.
@@ -228,6 +230,7 @@ impl PreferencesSnapshot {
             slice_view_minimized: false,
             last_open_dir: None,
             last_export_dir: None,
+            export_name_template: crate::file_name_template::DEFAULT_TEMPLATE.to_owned(),
             show_start_dialog: true,
             repair_on_import: true,
             recent_files: Vec::new(),
@@ -274,6 +277,8 @@ pub(crate) enum PreferencesChange {
     LastOpenDir,
     /// The folder printer files were last written to (#729).
     LastExportDir,
+    /// The template printer files are named by (#730).
+    ExportNameTemplate,
     /// Whether the start dialog shows at launch (#381).
     StartDialog,
     /// Repair on import (#677).

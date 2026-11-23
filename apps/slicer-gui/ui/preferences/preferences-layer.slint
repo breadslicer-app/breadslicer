@@ -10,6 +10,7 @@
 import { Theme } from "../kit/theme.slint";
 import { ScrollView } from "std-widgets.slint";
 import {
+    ButtonKind,
     ScButton as Button,
     ScCheckBox,
     ScComboBox,
@@ -65,6 +66,9 @@ export global Prefs {
     in-out property <bool> show-start-dialog: true;
     in-out property <bool> repair-on-import: true;
     in property <int> silenced-message-count: 0;
+    // The template printer files are named by (#730), and a name it gives.
+    in-out property <string> export-name-template;
+    in property <string> export-name-preview;
 
     // Look and feel.
     in-out property <ThemePreference> theme: ThemePreference.System;
@@ -118,6 +122,7 @@ export global Prefs {
     callback language-changed(int);
     callback show-start-dialog-changed(bool);
     callback repair-on-import-changed(bool);
+    callback export-name-template-edited(string);
     callback show-all-messages-again();
 
     callback theme-changed(ThemePreference);
@@ -344,6 +349,35 @@ component GeneralPage inherits VerticalLayout {
             toggled => {
                 Prefs.repair-on-import = self.checked;
                 Prefs.repair-on-import-changed(self.checked);
+            }
+        }
+    }
+    PrefSection {
+        text: @tr("PreferencesLayer" => "EXPORTING");
+    }
+    PrefRow {
+        title: @tr("PreferencesLayer" => "Exported file name");
+        hint: @tr("PreferencesLayer" => "For example: {}", Prefs.export-name-preview);
+        ScLineEdit {
+            width: 260px;
+            text <=> Prefs.export-name-template;
+            accessible-label: @tr("PreferencesLayer" => "Exported file name");
+            edited(t) => {
+                Prefs.export-name-template-edited(t);
+            }
+        }
+    }
+    HorizontalLayout {
+        alignment: end;
+        spacing: 4px;
+        padding-bottom: 8px;
+        for piece in ["{project}", "{plate}", "{printer}", "{resin}", "{date}", "{time}"]: Button {
+            text: piece;
+            kind: ButtonKind.ghost;
+            clicked => {
+                Prefs.export-name-template = Prefs.export-name-template == ""
+                    ? piece : Prefs.export-name-template + " " + piece;
+                Prefs.export-name-template-edited(Prefs.export-name-template);
             }
         }
     }

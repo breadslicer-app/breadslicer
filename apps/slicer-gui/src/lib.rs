@@ -38,6 +38,7 @@ mod send_to_printer;
 mod export_progress;
 mod export_progress_panel;
 mod failure_gate;
+mod file_name_template;
 mod foreign_build;
 mod frame_rate;
 mod graphics_status;

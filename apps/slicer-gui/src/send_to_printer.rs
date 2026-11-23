@@ -817,8 +817,25 @@ impl SendToPrinter {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
-        let stem = crate::scene_export::default_export_stem(&self.ctrl.document())
-            .unwrap_or_else(|| "print".to_owned());
+        // Named by the template of Preferences (#730), `{printer}` the
+        // printer it goes to by its own name.
+        let mut parts = crate::file_name_template::NameParts::of_held_slice(
+            &self.ctrl.document(),
+            &self.panel.catalog(),
+            false,
+        );
+        if let Some(printer) = self.picked() {
+            parts.printer = printer.name;
+        }
+        let stem = crate::file_name_template::file_name(
+            &self.panel.bus().snapshot().export_name_template,
+            &parts,
+        );
+        let stem = if stem.is_empty() {
+            "print".to_owned()
+        } else {
+            stem
+        };
         *self.from_disk.borrow_mut() = None;
         ui.set_slice_send_disk_file(SharedString::default());
         ui.set_slice_send_naming_start(start);

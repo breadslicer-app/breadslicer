@@ -11059,3 +11059,16 @@ msgstr[1] "Mostrar {n} ocultos (Alt+H)"
 msgctxt "ShortcutsCard"
 msgid "Hide the picked, show them all"
 msgstr "Ocultar los elegidos, mostrar todos"
+
+msgctxt "PreferencesLayer"
+msgid "EXPORTING"
+msgstr "EXPORTAR"
+
+msgctxt "PreferencesLayer"
+msgid "Exported file name"
+msgstr "Nombre del archivo exportado"
+
+#, rust-format
+msgctxt "PreferencesLayer"
+msgid "For example: {}"
+msgstr "Por ejemplo: {}"

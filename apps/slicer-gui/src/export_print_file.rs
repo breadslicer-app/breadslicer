@@ -36,7 +36,6 @@ use crate::i18n::ctr;
 use crate::mesh_loader::panic_message;
 use crate::preferences_bus::{PreferencesBus, PreferencesChange};
 use crate::scene_document::SceneDocument;
-use crate::scene_export;
 use crate::slice_panel::SlicePanelBridge;
 use crate::slice_projection::{SliceFailure, load_selected_profiles};
 use crate::slice_result::{
@@ -292,7 +291,8 @@ pub(crate) fn wire_export_print_file(
         let dialogs = ctrl.dialogs();
         let export_progress = ctrl.export_progress();
         let bus = panel.bus();
-        let default_stem = scene_export::default_export_stem(&document);
+        // Named by the template of Preferences (#730).
+        let default_stem = template_name(&panel, &document, false);
         let previews_from = ctrl.clone();
         // The plate the held slice was cut for (#547).
         let scene = document
@@ -538,9 +538,9 @@ pub(crate) fn wire_export_every_plate(
         let Some(format) = panel.selected_print_format() else {
             return;
         };
-        let (ctrl, slice, bus) = (ctrl.clone(), slice.clone(), panel.bus());
+        let (ctrl, slice, panel) = (ctrl.clone(), slice.clone(), panel.clone());
         if let Err(err) = slint::spawn_local(async move {
-            run_export_every_plate(ctrl, slice, &bus, format).await;
+            run_export_every_plate(ctrl, slice, &panel, format).await;
         }) {
             eprintln!("Failed to spawn the every-plate export: {err}");
         }
@@ -566,14 +566,34 @@ fn file_stem_of(name: &str) -> String {
     }
 }
 
-/// The file of plate `name` in `folder`: the project's name and the plate's.
-fn plate_file(folder: &Path, stem: Option<&str>, name: &str, format: PrinterFileFormat) -> PathBuf {
-    let plate = file_stem_of(name);
-    let file = match stem {
-        Some(stem) => format!("{} - {plate}.{}", file_stem_of(stem), format.extension()),
-        None => format!("{plate}.{}", format.extension()),
-    };
-    folder.join(file)
+/// The file of a plate in `folder`: `named`, what the template gives it
+/// (#730), or the plate's `name` when it gives nothing.
+fn plate_file(
+    folder: &Path,
+    named: Option<&str>,
+    name: &str,
+    format: PrinterFileFormat,
+) -> PathBuf {
+    let stem = named.map_or_else(|| file_stem_of(name), str::to_owned);
+    folder.join(format!("{stem}.{}", format.extension()))
+}
+
+/// What the template of Preferences names the held slice's printer file
+/// (#730): with `every_plate`, each plate's carries its name. `None` when
+/// it gives nothing.
+fn template_name(
+    panel: &SlicePanelBridge,
+    document: &SceneDocument,
+    every_plate: bool,
+) -> Option<String> {
+    let parts = crate::file_name_template::NameParts::of_held_slice(
+        document,
+        &panel.catalog(),
+        every_plate,
+    );
+    let name =
+        crate::file_name_template::file_name(&panel.bus().snapshot().export_name_template, &parts);
+    (!name.is_empty()).then_some(name)
 }
 
 /// Asks for a folder, then slices each plate with models on it in turn and
@@ -582,9 +602,10 @@ fn plate_file(folder: &Path, stem: Option<&str>, name: &str, format: PrinterFile
 async fn run_export_every_plate(
     ctrl: Rc<ViewportController>,
     slice: Rc<crate::slice_run::SliceRun>,
-    bus: &PreferencesBus,
+    panel: &SlicePanelBridge,
     format: PrinterFileFormat,
 ) {
+    let bus = &panel.bus();
     let document = ctrl.document();
     let dialogs = ctrl.dialogs();
     let plates = ctrl.plates_in_use();
@@ -600,7 +621,6 @@ async fn run_export_every_plate(
     let Some(folder) = dialog.pick_folder().await.map(|h| h.path().to_path_buf()) else {
         return;
     };
-    let stem = scene_export::default_export_stem(&document);
     let back_to = document.plates().active();
     let mut written = Vec::new();
     for plate in plates {
@@ -628,7 +648,8 @@ async fn run_export_every_plate(
                 break;
             }
         };
-        let target = plate_file(&folder, stem.as_deref(), &name, format);
+        let named = template_name(panel, &document, true);
+        let target = plate_file(&folder, named.as_deref(), &name, format);
         let previews = ctrl.print_file_previews(format);
         match write_job(
             &ctrl.export_progress(),
@@ -711,7 +732,7 @@ mod plate_file_tests {
     #[test]
     fn a_plates_file_carries_the_projects_name_and_its_own() {
         let format = PrinterFileFormat::Goo(sc_sla_formats::GooVersion::V3_0);
-        let path = plate_file(Path::new("out"), Some("minis"), "Plate 2", format);
+        let path = plate_file(Path::new("out"), Some("minis - Plate 2"), "Plate 2", format);
         assert_eq!(
             path,
             Path::new("out").join(format!("minis - Plate 2.{}", format.extension()))
