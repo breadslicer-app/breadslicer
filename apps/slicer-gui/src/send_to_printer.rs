@@ -12,11 +12,15 @@
 //! on the UI thread. The printers seen, the one used last first, and what
 //! the user gave each one (#631: a name, the printer profile it is, the
 //! resin it is kept for, a note) are kept in a file of the app's own.
+//!
+//! A file already sliced (today, another day, or by another program) is
+//! sent from the disk as it is (#727): picked with Send from disk, or
+//! dropped on the window.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::net::Ipv4Addr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -69,6 +73,9 @@ pub(crate) struct SendToPrinter {
     searched_at: Cell<Option<Instant>>,
     searching: Cell<bool>,
     sending: RefCell<Option<Sending>>,
+    /// The file from the disk being named for sending (#727); `None` while
+    /// the plate's is.
+    from_disk: RefCell<Option<PathBuf>>,
     progress: slint::Timer,
     /// The picked printer's camera (#633).
     camera: PrinterCamera,
@@ -97,6 +104,7 @@ impl SendToPrinter {
             searched_at: Cell::new(None),
             searching: Cell::new(false),
             sending: RefCell::new(None),
+            from_disk: RefCell::new(None),
             progress: slint::Timer::default(),
             camera: PrinterCamera::new(ui),
             wall: PrinterWall::new(ui),
@@ -160,6 +168,22 @@ impl SendToPrinter {
             ui.on_slice_send_name_asked(move |start| {
                 if let Some(this) = weak.upgrade() {
                     this.ask_name(start);
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(&this);
+            ui.on_slice_send_from_disk(move || {
+                if let Some(this) = weak.upgrade() {
+                    this.pick_from_disk();
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(&this);
+            ui.on_slice_send_file_dropped(move |path| {
+                if let Some(this) = weak.upgrade() {
+                    this.offer_file(PathBuf::from(path.as_str()));
                 }
             });
         }
@@ -719,8 +743,67 @@ impl SendToPrinter {
     /// The name the file would go onto the printer by, typed as `text`:
     /// what its firmware takes, with the format's extension.
     fn name_on_printer(&self, text: &str) -> Option<String> {
+        if let Some(path) = self.from_disk.borrow().as_deref() {
+            return Some(name_with(text, &extension_of(path)));
+        }
         let format = self.panel.selected_print_format()?;
         Some(name_with(text, format.extension()))
+    }
+
+    /// Asks for a printer file on the disk, then opens the card's name
+    /// field for it.
+    fn pick_from_disk(self: &Rc<Self>) {
+        let extensions = printer_file_extensions();
+        let dialog = self
+            .ctrl
+            .dialogs()
+            .file_dialog()
+            .set_title(ctr!("FileDialog", "Printer file to send").to_string())
+            .add_filter(ctr!("FileDialog", "Printer files").to_string(), &extensions);
+        let this = self.clone();
+        let _ = slint::spawn_local(async move {
+            if let Some(file) = dialog.pick_file().await {
+                this.offer_file(file.path().to_path_buf());
+            }
+        });
+    }
+
+    /// Opens the card's name field for `path`, a printer file on the disk,
+    /// with the file's own name in it. Anything but a printer file is
+    /// refused with a word in the card.
+    pub(crate) fn offer_file(&self, path: PathBuf) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        if self.sending.borrow().is_some() {
+            return;
+        }
+        if !is_printer_file(&path) {
+            self.say(
+                ctr!(
+                    "SendToPrinter",
+                    "{} is not a printer file.",
+                    path.file_name().unwrap_or_default().to_string_lossy()
+                ),
+                true,
+            );
+            return;
+        }
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let shown = path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        ui.set_slice_send_disk_file(shown.as_str().into());
+        *self.from_disk.borrow_mut() = Some(path);
+        ui.set_slice_send_naming_start(false);
+        ui.set_slice_send_name(stem.as_str().into());
+        self.show_name(&stem);
+        self.say("", false);
+        ui.set_slice_send_naming(true);
     }
 
     /// Opens the card's name field for Send (`start` false) or Send and
@@ -731,6 +814,8 @@ impl SendToPrinter {
         };
         let stem = crate::scene_export::default_export_stem(&self.ctrl.document())
             .unwrap_or_else(|| "print".to_owned());
+        *self.from_disk.borrow_mut() = None;
+        ui.set_slice_send_disk_file(SharedString::default());
         ui.set_slice_send_naming_start(start);
         ui.set_slice_send_name(stem.as_str().into());
         self.show_name(&stem);
@@ -758,6 +843,18 @@ impl SendToPrinter {
         let Some(printer) = self.picked() else {
             return;
         };
+        let from_disk = self.from_disk.borrow_mut().take();
+        if let Some(path) = from_disk {
+            if let Some(ui) = self.ui.upgrade() {
+                ui.set_slice_send_disk_file(SharedString::default());
+            }
+            let name = name_with(text, &extension_of(&path));
+            let this = self.clone();
+            let _ = slint::spawn_local(async move {
+                this.run(printer, path, name, start, None).await;
+            });
+            return;
+        }
         let Some(format) = self.panel.selected_print_format() else {
             return;
         };
@@ -786,17 +883,20 @@ impl SendToPrinter {
                 this.say("", false);
                 return;
             };
-            this.run(printer, path, name, start, written_in).await;
+            this.run(printer, path, name, start, Some(written_in)).await;
         });
     }
 
+    /// Sends the file at `path` to `printer` as `name`. `written_in` is how
+    /// long writing it took, for a file written for this send, which goes
+    /// once read; a file from the disk (`None`) is left where it is.
     async fn run(
         self: &Rc<Self>,
         printer: Printer,
         path: PathBuf,
         name: String,
         start: bool,
-        written_in: Duration,
+        written_in: Option<Duration>,
     ) {
         let sending = Sending {
             cancel: Arc::new(AtomicBool::new(false)),
@@ -844,7 +944,9 @@ impl SendToPrinter {
         let file_name = name.clone();
         let outcome = on_worker(move || -> Result<(sdcp::Sent, u64), sdcp::Error> {
             let data = std::fs::read(&path).map_err(sdcp::Error::Unreachable)?;
-            let _ = std::fs::remove_file(&path);
+            if written_in.is_some() {
+                let _ = std::fs::remove_file(&path);
+            }
             let sent = sdcp::upload(
                 on.service(),
                 &file_name,
@@ -871,9 +973,12 @@ impl SendToPrinter {
             "send to printer",
             &match &outcome {
                 Ok((sent, bytes)) => format!(
-                    "ok: file written in {:.1} s; {:.1} MB sent in {:.1} s, {} chunks over {} \
+                    "ok: file {}; {:.1} MB sent in {:.1} s, {} chunks over {} \
                      connection(s), sending {:.1} s, waiting for the printer {:.1} s",
-                    written_in.as_secs_f64(),
+                    written_in.map_or_else(
+                        || "from the disk".to_owned(),
+                        |took| format!("written in {:.1} s", took.as_secs_f64())
+                    ),
                     *bytes as f64 / 1e6,
                     sent.elapsed.as_secs_f64(),
                     sent.chunks,
@@ -888,6 +993,10 @@ impl SendToPrinter {
             Ok((sent, bytes)) => {
                 self.used(&printer);
                 let took = took_text(&sent, bytes);
+                let Some(written_in) = written_in else {
+                    self.say(sent_from_disk_text(start, &printer, &name, &took), false);
+                    return;
+                };
                 let written = seconds_text(written_in);
                 if start {
                     self.say(
@@ -918,6 +1027,49 @@ impl SendToPrinter {
             Err(err) => self.say(failure_text(&err, &printer, &name), true),
         }
     }
+}
+
+/// What the card says once a file from the disk is on the printer.
+fn sent_from_disk_text(start: bool, printer: &Printer, name: &str, took: &str) -> SharedString {
+    if start {
+        ctr!(
+            "SendToPrinter",
+            "Printing {} on {}. Sent in {}.",
+            name,
+            printer.name,
+            took
+        )
+    } else {
+        ctr!(
+            "SendToPrinter",
+            "Sent to {}: {} is on the printer, ready to print from its screen. Sent in {}.",
+            printer.name,
+            name,
+            took
+        )
+    }
+}
+
+/// Whether `path` names a printer file, by its extension.
+pub(crate) fn is_printer_file(path: &Path) -> bool {
+    sc_sla_formats::printer_file_family_from_path(path).is_some()
+}
+
+/// The extension of every printer file the app knows, for the file dialog.
+fn printer_file_extensions() -> Vec<&'static str> {
+    use sc_sla_formats::{AnycubicBinaryVariant, AnycubicZipVariant, Sl1Variant};
+    let mut extensions = vec!["goo", "ctb", "cxdlp"];
+    extensions.extend(AnycubicZipVariant::ALL.map(AnycubicZipVariant::extension));
+    extensions.extend(AnycubicBinaryVariant::ALL.map(AnycubicBinaryVariant::extension));
+    extensions.extend(Sl1Variant::ALL.map(Sl1Variant::extension));
+    extensions
+}
+
+/// The extension of `path`, in lower case, without the dot.
+fn extension_of(path: &Path) -> String {
+    path.extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default()
 }
 
 /// The name `text` gives a file of `extension` on the printer: what its
@@ -1120,6 +1272,58 @@ mod tests {
             ui.invoke_slice_send_name_edited("Dental resina".into());
             assert_eq!(ui.get_slice_send_name_preview(), "Dental_resina.goo");
         });
+    }
+
+    /// A printer file from the disk (#727) opens the card's name field with
+    /// its own name and extension; anything else is refused, and Send to
+    /// printer names the plate's file again.
+    #[test]
+    fn a_file_from_the_disk_is_named_with_its_own_name() {
+        use std::cell::RefCell;
+
+        use crate::preferences_bus::{PreferencesBus, PreferencesSnapshot};
+        use crate::profile_catalog::ProfileCatalog;
+        use crate::test_support::catalog_entries::printer_entry;
+
+        crate::test_support::slint_thread::on_fresh_slint_thread(|| {
+            let printer = PrinterId::new("network-printer").expect("valid printer id");
+            let bus = PreferencesBus::new(PreferencesSnapshot {
+                default_printer: Some(printer.clone()),
+                ..PreferencesSnapshot::for_tests()
+            });
+            let catalog = ProfileCatalog::from_entries(
+                vec![printer_entry(printer, "Elegoo", [120.0, 68.0, 150.0])],
+                Vec::new(),
+            );
+            let ui = MainWindow::new().expect("the headless platform creates a main window");
+            let ctrl = Rc::new(ViewportController::new_for_test_with_ui(&ui));
+            let panel = SlicePanelBridge::install(
+                &ui,
+                Rc::new(RefCell::new(Rc::new(catalog))),
+                bus,
+                ctrl.document(),
+            );
+            let _send = SendToPrinter::install(&ui, ctrl, panel);
+
+            ui.invoke_slice_send_file_dropped("C:/prints/Dragón grande.CTB".into());
+            assert!(ui.get_slice_send_naming());
+            assert!(!ui.get_slice_send_naming_start());
+            assert_eq!(ui.get_slice_send_disk_file(), "Dragón grande.CTB");
+            assert_eq!(ui.get_slice_send_name(), "Dragón grande");
+            assert_eq!(ui.get_slice_send_name_preview(), "Drag_n_grande.ctb");
+
+            ui.set_slice_send_naming(false);
+            ui.invoke_slice_send_file_dropped("C:/models/cube.stl".into());
+            assert!(!ui.get_slice_send_naming(), "a model is not sent");
+            assert!(ui.get_slice_send_status_bad());
+
+            ui.invoke_slice_send_name_asked(false);
+            assert_eq!(ui.get_slice_send_disk_file(), "", "the plate's file again");
+            assert_eq!(ui.get_slice_send_name_preview(), "print.goo");
+        });
+        assert!(is_printer_file(Path::new("a.pwsz")));
+        assert!(!is_printer_file(Path::new("a.3mf")));
+        assert!(printer_file_extensions().contains(&"sl1s"));
     }
 
     /// Two printers of the same model saved under names of their own (#631):

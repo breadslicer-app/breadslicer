@@ -11009,3 +11009,39 @@ msgstr "Nada para reforzar: lo débil son refuerzos o barras entre partes."
 msgctxt "SupportDialog"
 msgid "Reinforcing {} supports: their tips or shafts made wider."
 msgstr "Reforzando {} soportes: más gruesa la punta o el tronco."
+
+msgctxt "SlicePanel"
+msgid "Send from disk…"
+msgstr "Enviar desde el disco…"
+
+#, rust-format
+msgctxt "SlicePanel"
+msgid "From the disk: {}"
+msgstr "Desde el disco: {}"
+
+msgctxt "FileDialog"
+msgid "Printer file to send"
+msgstr "Archivo de impresora para enviar"
+
+#, rust-format
+msgctxt "SendToPrinter"
+msgid "{} is not a printer file."
+msgstr "{} no es un archivo de impresora."
+
+#, rust-format
+msgctxt "SendToPrinter"
+msgid "Printing {} on {}. Sent in {}."
+msgstr "Imprimiendo {} en {}. Enviado en {}."
+
+#, rust-format
+msgctxt "SendToPrinter"
+msgid "Sent to {}: {} is on the printer, ready to print from its screen. Sent in {}."
+msgstr "Enviado a {}: {} está en la impresora, listo para imprimir desde su pantalla. Enviado en {}."
+
+msgctxt "ErrorDialog"
+msgid "Printer files are sent, not opened"
+msgstr "Los archivos de impresora se envían, no se abren"
+
+msgctxt "ErrorDialog"
+msgid "A printer file goes to a printer from the Send to printer card of the Slice tab, which shows while the printer in use takes prints over the network."
+msgstr "Un archivo de impresora se manda a una impresora desde la tarjeta Enviar a la impresora de la pestaña Laminar, que aparece cuando la impresora en uso recibe impresiones por la red."

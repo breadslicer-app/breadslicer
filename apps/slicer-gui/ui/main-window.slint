@@ -752,6 +752,11 @@ export component MainWindow inherits Window {
     in property <bool> slice-send-naming-start: false;
     in-out property <string> slice-send-name;
     in property <string> slice-send-name-preview;
+    // A file already sliced, sent from the disk (#727): picked with Send
+    // from disk, or dropped on the window.
+    in property <string> slice-send-disk-file;
+    callback slice-send-from-disk();
+    callback slice-send-file-dropped(string);
     callback slice-send-search(bool);
     callback slice-send-address(string);
     callback slice-send-name-asked(bool);
@@ -2866,6 +2871,10 @@ export component MainWindow inherits Window {
                                 send-naming-start: root.slice-send-naming-start;
                                 send-name <=> root.slice-send-name;
                                 send-name-preview: root.slice-send-name-preview;
+                                send-disk-file: root.slice-send-disk-file;
+                                send-from-disk => {
+                                    root.slice-send-from-disk();
+                                }
                                 send-name-asked(start) => {
                                     root.slice-send-name-asked(start);
                                 }

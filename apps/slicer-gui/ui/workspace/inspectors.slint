@@ -3535,6 +3535,10 @@ export component SliceInspector inherits VerticalLayout {
     in property <bool> send-naming-start;
     in-out property <string> send-name;
     in property <string> send-name-preview;
+    // A file already sliced, sent from the disk (#727): its name while it
+    // is being named, empty for the plate's.
+    in property <string> send-disk-file;
+    callback send-from-disk();
     callback send-name-asked(bool);
     callback send-name-edited(string);
     callback send-search(bool);
@@ -4019,6 +4023,16 @@ export component SliceInspector inherits VerticalLayout {
                 }
             }
         }
+        if !root.send-busy && !root.send-naming: ScButton {
+            text: @tr("SlicePanel" => "Send from disk…");
+            icon: Icons.folder;
+            kind: ButtonKind.ghost;
+            button-height: 30px;
+            enabled: root.send-index >= 0;
+            clicked => {
+                root.send-from-disk();
+            }
+        }
         // Before each send, the name the file goes onto the printer by.
         if !root.send-busy && root.send-naming: VerticalLayout {
             spacing: 6px;
@@ -4041,7 +4055,41 @@ export component SliceInspector inherits VerticalLayout {
             Note {
                 text: @tr("SlicePanel" => "On the printer: {}", root.send-name-preview);
             }
-            HorizontalLayout {
+            if root.send-disk-file != "": Note {
+                text: @tr("SlicePanel" => "From the disk: {}", root.send-disk-file);
+            }
+            if root.send-disk-file != "": HorizontalLayout {
+                spacing: 8px;
+                ScButton {
+                    horizontal-stretch: 1;
+                    text: @tr("SlicePanel" => "Send to printer");
+                    icon: Icons.file;
+                    kind: ButtonKind.primary;
+                    button-height: 34px;
+                    enabled: root.send-index >= 0;
+                    clicked => {
+                        root.send(false, root.send-name);
+                    }
+                }
+                ScButton {
+                    horizontal-stretch: 1;
+                    text: @tr("SlicePanel" => "Send and start");
+                    icon: Icons.slice;
+                    button-height: 34px;
+                    enabled: root.send-index >= 0;
+                    clicked => {
+                        root.send(true, root.send-name);
+                    }
+                }
+                ScButton {
+                    text: @tr("SlicePanel" => "Back");
+                    button-height: 34px;
+                    clicked => {
+                        root.send-naming = false;
+                    }
+                }
+            }
+            if root.send-disk-file == "": HorizontalLayout {
                 spacing: 8px;
                 ScButton {
                     horizontal-stretch: 1;
