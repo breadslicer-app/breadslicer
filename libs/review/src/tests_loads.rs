@@ -319,7 +319,17 @@ fn a_critical_layer_records_what_holds_each_body() {
         .iter()
         .find(|case| case.layer == peak)
         .expect("the body's worst layer is a case");
-    assert!(loads.cases.len() <= CASE_LAYERS);
+    assert!(loads.cases.len() <= CASE_LAYERS + BIRTH_LAYERS);
+    let born = loads.bodies[0]
+        .starts
+        .iter()
+        .map(|(layer, _)| *layer)
+        .min()
+        .expect("the body starts");
+    assert!(
+        loads.cases.iter().any(|case| case.layer == born),
+        "the body's first layer is a case"
+    );
     assert_eq!(case.bodies.len(), 1);
     let body = &case.bodies[0];
     assert!(!body.held);

@@ -65,8 +65,8 @@ pub use finding::{
 };
 pub use input::{LayerSpan, ReviewInput, ReviewInputError, ReviewLeaf};
 pub use loads::{
-    BodyCase, BodyPeak, CASE_LAYERS, CupLoad, LayerCase, LoadOptions, PlateLoads, TipLoad,
-    plate_loads,
+    BIRTH_LAYERS, BodyCase, BodyPeak, CASE_LAYERS, CupLoad, LayerCase, LoadOptions, PlateLoads,
+    TipLoad, plate_loads,
 };
 pub use regions::{
     AIR_CONNECTIVITY, Connectivity, DEFAULT_MIN_LINK_MM2, LayerLinks, LayerPixels, LayerRegions,

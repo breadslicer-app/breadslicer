@@ -27,14 +27,19 @@ pub(crate) fn even_section(d_a: f64, d_b: f64) -> (f64, f64) {
 
 /// The stiffness of a round Timoshenko beam `l` long, of area `a` and second
 /// moment `i`, in its own axes: x along it, y and z across. Degrees of
-/// freedom at each end: u, v, w, θx, θy, θz.
-pub(crate) fn local_k(l: f64, a: f64, i: f64, e: f64, nu: f64) -> M12 {
+/// freedom at each end: u, v, w, θx, θy, θz. Without `shear`, a slender
+/// (Euler-Bernoulli) beam.
+pub(crate) fn local_k(l: f64, a: f64, i: f64, e: f64, nu: f64, shear: bool) -> M12 {
     let g = e / (2.0 * (1.0 + nu));
     let ea = e * a / l;
     let gj = g * 2.0 * i / l;
     let ei = e * i;
     // Shear deformation: phi = 12 E I / (k G A L²).
-    let phi = 12.0 * ei / (shear_factor(nu) * g * a * l * l);
+    let phi = if shear {
+        12.0 * ei / (shear_factor(nu) * g * a * l * l)
+    } else {
+        0.0
+    };
     let den = 1.0 + phi;
     let k1 = 12.0 * ei / (l.powi(3) * den);
     let k2 = 6.0 * ei / (l * l * den);

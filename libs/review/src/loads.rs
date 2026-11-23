@@ -103,12 +103,17 @@ pub struct PlateLoads {
     /// [`TIP_CURVE_POINTS`] layers.
     pub curve_layers: usize,
     /// The critical layers (#244): each body's worst and the plate's
-    /// hardest, at most [`CASE_LAYERS`], with what holds what on each.
+    /// hardest, at most [`CASE_LAYERS`], and the first layer of each body
+    /// tips hold, at most [`BIRTH_LAYERS`], with what holds what on each.
     pub cases: Vec<LayerCase>,
 }
 
 /// The most critical layers kept (#244).
 pub const CASE_LAYERS: usize = 12;
+
+/// The most first layers of bodies kept besides (#244): where a body's
+/// tips have just taken hold and nothing else helps them yet.
+pub const BIRTH_LAYERS: usize = 12;
 
 /// A critical layer as it peels: every body printed so far that tips or
 /// feet tie to the supports.
@@ -322,7 +327,8 @@ pub fn plate_loads(ctx: &ReviewContext<'_>, options: &LoadOptions) -> PlateLoads
 }
 
 /// The layers worth checking as a frame (#244): each body's worst, then the
-/// plate's hardest peaks, at most [`CASE_LAYERS`].
+/// plate's hardest peaks, at most [`CASE_LAYERS`]; and the first layer of
+/// each body tips hold, the worst off first, at most [`BIRTH_LAYERS`].
 fn critical_layers(loads: &PlateLoads) -> BTreeSet<usize> {
     let mut by_worst: Vec<(f64, usize)> = loads
         .bodies
@@ -343,6 +349,24 @@ fn critical_layers(loads: &PlateLoads) -> BTreeSet<usize> {
             break;
         }
         chosen.insert(layer);
+    }
+    let mut births: Vec<(f64, usize)> = loads
+        .bodies
+        .iter()
+        .filter_map(|body| {
+            let first = body.starts.iter().map(|(layer, _)| *layer).min()?;
+            Some((body.utilization, first))
+        })
+        .collect();
+    births.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+    let mut added = 0;
+    for (_, layer) in births {
+        if added >= BIRTH_LAYERS {
+            break;
+        }
+        if chosen.insert(layer) {
+            added += 1;
+        }
     }
     chosen
 }

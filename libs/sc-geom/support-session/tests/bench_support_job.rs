@@ -498,3 +498,132 @@ fn support_frame_timings() {
         );
     }
 }
+
+/// Writes the supports of the models in `SC_BENCH_STL` as frames, with a
+/// load on every tip and this crate's solution, to `SC_FRAME_EXPORT` (a
+/// folder): one JSON per set, to solve again with a program outside (#242).
+/// Each solved with and without shear (`shear` and `slender`).
+#[test]
+#[ignore = "writes frames for an outside check; set SC_BENCH_STL and SC_FRAME_EXPORT"]
+fn export_frames_for_an_outside_check() {
+    use bread_structure::{Hold, Load, Material, Target, solve};
+    use std::fmt::Write as _;
+    let (Ok(paths), Ok(out)) = (
+        std::env::var("SC_BENCH_STL"),
+        std::env::var("SC_FRAME_EXPORT"),
+    ) else {
+        return;
+    };
+    let height = std::env::var("SC_BENCH_HEIGHT")
+        .ok()
+        .and_then(|h| h.parse().ok());
+    let (scene, _) = plate(&paths, height);
+    let request = SupportRequest {
+        options: bread_support_session::SupportOptions {
+            zones: Some(bread_support_session::zone_presets::minis_30()),
+            ..Default::default()
+        },
+        ..SupportRequest::default()
+    };
+    let outcome = start_supports(&scene, request).unwrap().join().unwrap();
+    std::fs::create_dir_all(&out).unwrap();
+    for (k, set) in outcome.sets.iter().enumerate() {
+        let graph = set.session.support_graph();
+        let frame = graph.frame();
+        // Each tip pulled up and a little aside, varied from tip to tip.
+        let loads: Vec<Load> = graph
+            .contacts()
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                let t = i as f64 * 0.7;
+                Load {
+                    target: Target::Node(c.node),
+                    at: frame.nodes()[c.node],
+                    force: [0.01 * t.cos(), 0.01 * t.sin(), 0.05],
+                }
+            })
+            .collect();
+        let mut json = String::from("{");
+        let _ = write!(json, "\"nodes\":[");
+        for (i, p) in frame.nodes().iter().enumerate() {
+            let hold = match frame.holds()[i] {
+                Hold::Free => "free".to_string(),
+                Hold::Fixed => "fixed".to_string(),
+                Hold::Body(b) => format!("body{b}"),
+            };
+            let _ = write!(
+                json,
+                "{}[{},{},{},\"{hold}\"]",
+                if i > 0 { "," } else { "" },
+                p[0],
+                p[1],
+                p[2]
+            );
+        }
+        let _ = write!(json, "],\"members\":[");
+        for (i, m) in frame.members().iter().enumerate() {
+            let _ = write!(
+                json,
+                "{}[{},{},{},{}]",
+                if i > 0 { "," } else { "" },
+                m.a,
+                m.b,
+                m.d_a,
+                m.d_b
+            );
+        }
+        let _ = write!(json, "],\"loads\":[");
+        for (i, l) in loads.iter().enumerate() {
+            let Target::Node(n) = l.target else { continue };
+            let _ = write!(
+                json,
+                "{}[{},{},{},{}]",
+                if i > 0 { "," } else { "" },
+                n,
+                l.force[0],
+                l.force[1],
+                l.force[2]
+            );
+        }
+        let _ = write!(json, "],\"material\":[{},{}]", 1000.0, 0.35);
+        for (name, shear) in [("shear", true), ("slender", false)] {
+            let material = Material {
+                shear,
+                ..Material::GREEN_RESIN
+            };
+            let solved = solve(frame, &material, std::slice::from_ref(&loads)).expect("solved");
+            let _ = write!(
+                json,
+                ",\"{name}\":{{\"left_out\":{},\"residual\":{},\"displacements\":[",
+                solved.left_out, solved.residual
+            );
+            for n in 0..frame.nodes().len() {
+                let d = solved.displacement(0, n).unwrap_or([0.0; 6]);
+                let _ = write!(
+                    json,
+                    "{}[{}]",
+                    if n > 0 { "," } else { "" },
+                    d.map(|v| v.to_string()).join(",")
+                );
+            }
+            let _ = write!(json, "],\"forces\":[");
+            for (i, f) in solved.forces[0].iter().enumerate() {
+                let row = f.map_or("null".to_string(), |f| {
+                    format!("[{}]", f.0.map(|v| v.to_string()).join(","))
+                });
+                let _ = write!(json, "{}{row}", if i > 0 { "," } else { "" });
+            }
+            let _ = write!(json, "]}}");
+        }
+        json.push('}');
+        let path = format!("{out}/set{k}.json");
+        std::fs::write(&path, json).unwrap();
+        eprintln!(
+            "{path}: {} nodes, {} members, {} tips",
+            frame.nodes().len(),
+            frame.members().len(),
+            graph.contacts().len()
+        );
+    }
+}

@@ -518,7 +518,7 @@ impl StressView {
             return;
         }
         ui.set_slice_timeline_frame_note(
-            ctr!("StressCard", "Checking the supports as a frame…").into(),
+            ctr!("StressCard", "Analysing trunks and braces…").into(),
         );
         let cancel = Arc::new(AtomicBool::new(false));
         let slot = Arc::new(Mutex::new(None));
@@ -635,7 +635,7 @@ impl StressView {
         match found.peak {
             Some((worst, layer)) => ctr!(
                 "StressCard",
-                "As a frame, {} layers: worst {}% at layer {} ({} s)",
+                "{} layers: worst {}% at layer {} ({} s)",
                 found.layers.len(),
                 (worst * 100.0).round() as i64,
                 layer + 1,
@@ -644,7 +644,7 @@ impl StressView {
             .to_string(),
             None => ctr!(
                 "StressCard",
-                "As a frame, {} layers: nothing pulled ({} s)",
+                "{} layers: nothing pulled ({} s)",
                 found.layers.len(),
                 seconds
             )

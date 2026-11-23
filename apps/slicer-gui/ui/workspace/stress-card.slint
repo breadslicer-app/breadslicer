@@ -168,7 +168,7 @@ export component StressCard inherits Rectangle {
             if root.has-force-image: HorizontalLayout {
                 spacing: 8px;
                 ScCheckBox {
-                    text: @tr("StressCard" => "As a frame");
+                    text: @tr("StressCard" => "Full analysis");
                     checked <=> root.frame;
                     toggled => {
                         root.frame-toggled(self.checked);

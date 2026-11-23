@@ -23,6 +23,10 @@ pub struct Material {
     pub e_mpa: f64,
     /// Poisson's ratio.
     pub nu: f64,
+    /// Beams bend with their shear too (Timoshenko); without it, as slender
+    /// beams (Euler-Bernoulli), to check against programs that know only
+    /// those.
+    pub shear: bool,
 }
 
 impl Material {
@@ -32,6 +36,7 @@ impl Material {
     pub const GREEN_RESIN: Self = Self {
         e_mpa: 1000.0,
         nu: 0.35,
+        shear: true,
     };
 }
 
@@ -250,7 +255,14 @@ pub fn solve(frame: &Frame, material: &Material, cases: &[Loads]) -> Result<Solv
         let l = crate::frame::distance(pa, pb);
         let r = rotation(pa, pb);
         let (area, inertia) = even_section(m.d_a, m.d_b);
-        let kl = local_k(l, area, inertia, material.e_mpa, material.nu);
+        let kl = local_k(
+            l,
+            area,
+            inertia,
+            material.e_mpa,
+            material.nu,
+            material.shear,
+        );
         let kg = global_k(&r, &kl);
         let ends = [end_of(m.a), end_of(m.b)];
         for p in 0..2 {

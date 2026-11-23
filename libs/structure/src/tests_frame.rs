@@ -14,6 +14,7 @@ use crate::solve::{Load, Material, Solved, Target, solve, world_forces};
 const MAT: Material = Material {
     e_mpa: 1000.0,
     nu: 0.35,
+    shear: true,
 };
 
 fn close(got: f64, want: f64, tol: f64) {
@@ -198,7 +199,7 @@ fn the_forest_holds_its_load_and_its_stresses_do_not_depend_on_e() {
     }
     let stiffer = Material {
         e_mpa: 2500.0,
-        nu: 0.35,
+        ..MAT
     };
     let s2 = solve(&fr, &stiffer, &cases).unwrap();
     let stress = |s: &Solved| -> Vec<f64> {
