@@ -6917,6 +6917,14 @@ msgid_plural "The raft of {n} sets of supports changed; the supports stayed wher
 msgstr[0] "Cambió la balsa de 1 juego de soportes; los soportes quedaron donde estaban."
 msgstr[1] "Cambió la balsa de {n} juegos de soportes; los soportes quedaron donde estaban."
 
+#: src/support_run.rs
+#, rust-format
+msgctxt "Workspace"
+msgid "The supports of 1 model were moved clear of the models next to it."
+msgid_plural "The supports of {n} models were moved clear of the models next to them."
+msgstr[0] "Los soportes de 1 modelo se movieron para no tocar a los modelos de al lado."
+msgstr[1] "Los soportes de {n} modelos se movieron para no tocar a los modelos de al lado."
+
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
 msgid "ISLANDS"

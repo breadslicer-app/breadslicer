@@ -153,7 +153,7 @@ impl ArrangeRun {
         }
         // With several plates, the active one alone (#548).
         let (on, plate) = super::active_plate_job(&self.document, &self.ctrl.build_volume());
-        let Some((bodies, bare, sources)) = gather_fill(&self.document, on) else {
+        let Some((bodies, mut bare, sources)) = gather_fill(&self.document, on) else {
             ui.set_arrange_last_run(ctr!("Inspector", "Select the models to copy."));
             return;
         };
@@ -194,6 +194,9 @@ impl ArrangeRun {
         std::thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let mut bodies = bodies;
+                if options.one_raft {
+                    super::models_alone(&mut bodies, &mut bare);
+                }
                 if let Some(ctx) = &forecast {
                     crate::support_forecast::with_forecasts(&mut bodies, &bare, ctx, &cancel)?;
                 }

@@ -51,7 +51,7 @@ use sc_geom::supports::{
     AddNote, AddOptions, BraceEnd, SupportPrescan, SupportOptions, SupportOutcome, SupportRequest,
     SupportSession, EditError, EditPreview, HandBraceRefusal, HandEditKind, ImportedPlan,
     KeptEdits, LostEdit, LostWhy, PartSizes, RaftMode, ScanCache, scene_model_leaves,
-    start_prescan, start_supports,
+    start_prescan, start_settle, start_supports,
 };
 use sc_mesh_core::presupported::ImportedRoute;
 use sc_mesh_core::transform::Transform3D;
@@ -216,6 +216,9 @@ pub(crate) struct SupportRun {
     prescan: RefCell<Prescan>,
     /// One raft for all (#556), kept in step with its sets.
     plate_rafts: crate::plate_raft::PlateRafts,
+    /// Sets kept clear of the models standing near them, and given those
+    /// models for hand edits (#725).
+    plate_keep: RefCell<PlateKeep>,
     /// Supports computed while the person works on something else.
     ahead: RefCell<Ahead>,
     /// Where supports are recommended while placed by hand (#524).
@@ -854,6 +857,105 @@ struct EditJob {
     leaf: NodeId,
     /// What is known of the points of `op`.
     plans: PointPlans,
+}
+
+/// What [`SupportRun::keep_plate_clear`] does at a scene revision.
+#[derive(Default)]
+struct PlateKeep {
+    /// The last revision looked at.
+    checked: Option<SceneRevision>,
+    /// The look in flight: its revision, its stop, and its answer.
+    running: Option<(
+        SceneRevision,
+        Arc<AtomicBool>,
+        std::sync::mpsc::Receiver<Option<PlateStep>>,
+    )>,
+}
+
+/// What the plate step (#725) found for the scene at `revision`.
+struct PlateStep {
+    revision: SceneRevision,
+    /// The sets placed again clear of their neighbours: leaf, model, mesh
+    /// and session.
+    settled: Vec<(NodeId, NodeId, Arc<sc_mesh_core::IndexedMesh>, SupportSession)>,
+    /// Tips that found no room any more.
+    lost: usize,
+    /// Each session in force given the models now near it.
+    neighboured: Vec<(Arc<SupportSession>, Arc<SupportSession>)>,
+}
+
+/// The plate step of `sets` (leaf, model, session) on `scene` (#725), off
+/// the UI thread: their sessions with the models now standing near them,
+/// and the sets that came too near one placed again round it. `None` when
+/// stopped or the scene could not be read.
+fn plate_step(
+    revision: SceneRevision,
+    scene: &sc_scene::Scene,
+    sets: &[(NodeId, NodeId, Arc<SupportSession>)],
+    groups: Vec<Vec<NodeId>>,
+    stop: &AtomicBool,
+) -> Option<PlateStep> {
+    let everyone = scene_model_leaves(scene, None).ok()?;
+    if everyone.len() < 2 {
+        return Some(PlateStep {
+            revision,
+            settled: Vec::new(),
+            lost: 0,
+            neighboured: Vec::new(),
+        });
+    }
+    let together =
+        |a: NodeId, b: NodeId| a == b || groups.iter().any(|g| g.contains(&a) && g.contains(&b));
+    let mut neighboured = Vec::new();
+    for (_, model, session) in sets {
+        if stop.load(Ordering::Relaxed) {
+            return None;
+        }
+        // Its own model and its group's are never its neighbours.
+        let others: Vec<_> = everyone
+            .iter()
+            .filter(|(leaf, _)| !together(*leaf, *model))
+            .map(|(_, m)| m.clone())
+            .collect();
+        if let Some(next) = session.with_neighbours(&others) {
+            neighboured.push((session.clone(), Arc::new(next)));
+        }
+    }
+    let request = SupportRequest {
+        together: groups.clone(),
+        ..SupportRequest::default()
+    };
+    let job = start_settle(
+        scene,
+        sets.iter()
+            .map(|(_, model, session)| (*model, SupportSession::clone(session)))
+            .collect(),
+        request,
+    );
+    let outcome = loop {
+        if stop.load(Ordering::Relaxed) {
+            job.cancel();
+            return None;
+        }
+        if let Some(done) = job.try_poll() {
+            break done.ok()?;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let settled = outcome
+        .sets
+        .into_iter()
+        .filter_map(|set| {
+            let leaf = sets.iter().find(|(_, m, _)| *m == set.model)?.0;
+            Some((leaf, set.model, Arc::new(set.mesh?), set.session))
+        })
+        .collect();
+    Some(PlateStep {
+        revision,
+        settled,
+        lost: outcome.plate.lost,
+        neighboured,
+    })
 }
 
 /// A hand edit ready for the engine: the sets it edits and, in the same
@@ -2255,6 +2357,7 @@ impl SupportRun {
             poll_timer: Rc::new(slint::Timer::default()),
             prescan: RefCell::new(Prescan::default()),
             plate_rafts: crate::plate_raft::PlateRafts::default(),
+            plate_keep: RefCell::new(PlateKeep::default()),
             ahead: RefCell::new(Ahead::default()),
             hints: RefCell::new(crate::support_hints::Hints::default()),
             last_change,
@@ -3068,6 +3171,7 @@ impl SupportRun {
             self.plate_rafts
                 .tick(&self.document, &self.ctrl.build_volume());
             self.go_on_after_rafts();
+            self.keep_plate_clear();
         }
         self.support_hints(&ui);
         let mut prescan = self.prescan.borrow_mut();
@@ -5272,6 +5376,154 @@ impl SupportRun {
     /// Generate would work on, are drawn again on it, in one undo step. The
     /// supports stay where they are: only the raft and the roots' feet on it
     /// change, so there is nothing to generate again.
+    /// Once the scene stands still with sets on it (#725): places again,
+    /// clear of the models standing near them, the supports of the sets a
+    /// move brought too near one (Arrange, Fill bed, a model moved by hand),
+    /// in the step that moved them; and gives every set the models near it,
+    /// so hand edits keep clear of them too. Off the UI thread; a scene that
+    /// moves on drops it.
+    fn keep_plate_clear(&self) {
+        let revision = self.document.scene_revision();
+        let mut keep = self.plate_keep.borrow_mut();
+        if let Some((at, stop, done)) = &keep.running {
+            if *at != revision {
+                stop.store(true, Ordering::Relaxed);
+                keep.running = None;
+            } else {
+                match done.try_recv() {
+                    Ok(step) => {
+                        keep.running = None;
+                        keep.checked = Some(revision);
+                        drop(keep);
+                        if let Some(step) = step {
+                            self.land_plate_step(step);
+                        }
+                        return;
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => return,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        keep.running = None;
+                        keep.checked = Some(revision);
+                        return;
+                    }
+                }
+            }
+        }
+        if keep.checked == Some(revision)
+            || self.pending_click.borrow().is_some()
+            || !self.queued_clicks.borrow().is_empty()
+        {
+            return;
+        }
+        keep.checked = Some(revision);
+        let sets: Vec<(NodeId, NodeId, Arc<SupportSession>)> = self
+            .document
+            .with_scene(|spatial| {
+                sets_in_force(spatial, &self.sessions)
+                    .into_iter()
+                    // A session stands where its leaf stood when recorded:
+                    // one whose leaf moved since (a live move) waits.
+                    .filter(|d| {
+                        !d.unborn
+                            && spatial
+                                .leaf(d.leaf)
+                                .is_some_and(|q| q.world_transform() == d.leaf_world)
+                    })
+                    .map(|d| (d.leaf, d.model, d.session))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if sets.is_empty() {
+            return;
+        }
+        let Some(scene) = self.run_scene(None) else {
+            return;
+        };
+        let groups = self.document.groups();
+        let stop = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let halt = stop.clone();
+        std::thread::spawn(move || {
+            let step = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                plate_step(revision, &scene, &sets, groups, &halt)
+            }))
+            .ok()
+            .flatten();
+            let _ = tx.send(step);
+        });
+        keep.running = Some((revision, stop, rx));
+    }
+
+    /// Lands what [`plate_step`] found: the sessions given their neighbours
+    /// in place (the same supports, no step of their own), and the sets
+    /// placed again in the newest step.
+    fn land_plate_step(&self, step: PlateStep) {
+        {
+            let mut sessions = self.sessions.borrow_mut();
+            for (old, new) in &step.neighboured {
+                for drawn in sessions.iter_mut() {
+                    if Arc::ptr_eq(&drawn.session, old) {
+                        drawn.session = new.clone();
+                    }
+                }
+            }
+        }
+        if step.settled.is_empty() {
+            return;
+        }
+        let swaps: Option<Vec<SceneEdit>> = step
+            .settled
+            .iter()
+            .map(|(leaf, _, mesh, _)| {
+                self.document
+                    .with_scene(|spatial| leaf_mesh_swap(spatial.graph(), *leaf, mesh.clone()))
+                    .flatten()
+            })
+            .collect();
+        let Some(swaps) = swaps else {
+            return;
+        };
+        if !matches!(
+            self.document
+                .complete_last_edit(step.revision, SceneEdit::Compound(swaps), &[]),
+            Ok(true)
+        ) {
+            return;
+        }
+        let count = step.settled.len();
+        for (leaf, model, _, session) in step.settled {
+            record(&self.document, &self.sessions, leaf, model, Arc::new(session));
+        }
+        crate::breadcrumbs::note(&format!(
+            "supports: {count} set(s) placed again clear of their neighbours, {} tip(s) lost",
+            step.lost
+        ));
+        self.show_status(ctr!(
+            "Workspace",
+            "The supports of 1 model were moved clear of the models next to it.",
+            "The supports of {n} models were moved clear of the models next to them.",
+            count
+        ));
+    }
+
+    /// Runs the plate step (#725) until the scene stands still with it, as
+    /// the watcher does: for tests.
+    #[cfg(test)]
+    pub(crate) fn keep_plate_clear_now(&self) {
+        for _ in 0..4000 {
+            let revision = self.document.scene_revision();
+            self.keep_plate_clear();
+            std::thread::sleep(Duration::from_millis(5));
+            if self.document.scene_revision() == revision
+                && self.plate_keep.borrow().running.is_none()
+                && self.plate_keep.borrow().checked == Some(revision)
+            {
+                return;
+            }
+        }
+        panic!("the plate step never settled");
+    }
+
     fn rafts_follow(&self) {
         self.rafts_follow_for(self.target_models());
     }
@@ -11214,6 +11466,44 @@ mod hand_edit_tests {
         (ctrl, run, leaves)
     }
 
+    /// [`supported`] with boxes: each of size `size` (mm), its middle at
+    /// `at`.
+    fn supported_boxes(
+        window: &MainWindow,
+        boxes: &[([f64; 3], [f64; 3])],
+    ) -> (Rc<SceneDocument>, Rc<SupportRun>, Vec<NodeId>) {
+        let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+        let ctrl = Rc::new(ViewportController::new_for_test());
+        let document = ctrl.document();
+        let mut graph = Scene::new();
+        let mut leaves = Vec::new();
+        for &(size, at) in boxes {
+            let mut mesh = sc_mesh_fixtures::unit_cube_mesh();
+            for v in &mut mesh.vertices {
+                let p = v.as_array();
+                *v = sc_mesh_core::Vertex::new(std::array::from_fn(|i| p[i] * size[i] as f32));
+            }
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation(at)),
+                    LeafPayload::Mesh(Arc::new(mesh)),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            leaves.push(leaf);
+        }
+        document.install_graph(graph.clone(), PathBuf::from("boxes.stl"));
+        let run =
+            SupportRun::install(window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+        let outcome = start_supports(&graph, SupportRequest::default())
+            .unwrap()
+            .join();
+        *run.started_on.borrow_mut() = Some(document.scene_revision());
+        run.finish(outcome);
+        (document, run, leaves)
+    }
+
     fn translation(t: [f64; 3]) -> Transform3D {
         Transform3D::Affine(AffineTransform3D::from_translation(t))
     }
@@ -11306,6 +11596,91 @@ mod hand_edit_tests {
     /// still editable; Undo and Redo take both together. A move in Z leaves
     /// them where they stood while live, and takes them away on commit
     /// (#153 regenerates them).
+    /// A model moved under another one's supports (#725): once the scene
+    /// stands still the supports it came too near are placed again round
+    /// it, in the step of the move, and every set knows the models near it
+    /// for hand edits. One Undo puts the move and the supports back.
+    #[test]
+    fn supports_a_move_brought_too_near_a_model_are_placed_again_round_it() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            // A slab held up at 25 mm, a block standing on the plate aside.
+            let (block, apart) = ([10.0, 10.0, 12.0], [115.0, 5.0, 6.0]);
+            let (document, run, leaves) = supported_boxes(
+                &window,
+                &[([30.0, 10.0, 2.0], [15.0, 5.0, 26.0]), (block, apart)],
+            );
+            let (high, low) = (leaves[0], leaves[1]);
+            let set_of = |model: NodeId| {
+                run.sets_in_force()
+                    .into_iter()
+                    .find(|d| d.model == model)
+                    .expect("each model's set")
+            };
+            let mesh_of = |leaf: NodeId| {
+                document
+                    .with_scene(|spatial| spatial.graph().leaf_mesh_arc(leaf).cloned())
+                    .flatten()
+                    .expect("a mesh")
+            };
+            let before = set_of(high);
+            let shown = mesh_of(before.leaf);
+            // Apart, nothing to do: each set only learns of the other model
+            // if it stands near enough to matter.
+            run.keep_plate_clear_now();
+            assert!(Arc::ptr_eq(&mesh_of(before.leaf), &shown), "apart, the supports stay");
+
+            let steps = document.undo_len();
+            // The block under the slab: the trunks there come down through it.
+            let there = [15.0, 5.0, 6.0];
+            move_live(&document, low, apart, there);
+            commit_move(&document, low, apart, there);
+            assert_eq!(document.undo_len(), steps + 1);
+            run.keep_plate_clear_now();
+            let after = set_of(high);
+            assert!(
+                !Arc::ptr_eq(&mesh_of(after.leaf), &shown),
+                "the supports that went through the moved cube are drawn again"
+            );
+            assert_eq!(document.undo_len(), steps + 1, "in the move's step");
+            // Its supports keep clear of the low cube's faces.
+            let clearance = |session: &SupportSession| {
+                let mut least = f64::INFINITY;
+                for piece in session.pieces() {
+                    for pair in piece.line.windows(2) {
+                        let (a, b) = (pair[0].at, pair[1].at);
+                        let radius = pair[0].diameter_mm.max(pair[1].diameter_mm) / 2.0;
+                        for k in 0..=200 {
+                            let t = f64::from(k) / 200.0;
+                            let p: [f64; 3] = std::array::from_fn(|i| a[i] + (b[i] - a[i]) * t);
+                            let out: f64 = (0..3)
+                                .map(|i| {
+                                    let d = (p[i] - there[i]).abs() - block[i] / 2.0;
+                                    d.max(0.0).powi(2)
+                                })
+                                .sum::<f64>()
+                                .sqrt();
+                            least = least.min(out - radius);
+                        }
+                    }
+                }
+                least
+            };
+            assert!(clearance(&before.session) < 0.2, "the trunk came too near before");
+            assert!(
+                clearance(&after.session) > 0.1,
+                "the trunk keeps clear now: {}",
+                clearance(&after.session)
+            );
+            // Each set now knows the model near it.
+            assert!(after.session.neighbour_count() > 0, "the slab's set knows the block");
+
+            document.undo().expect("undo");
+            assert!(Arc::ptr_eq(&mesh_of(before.leaf), &shown), "one Undo puts them back");
+            assert_eq!(leaf_transform(&document, low), translation(apart));
+        });
+    }
+
     #[test]
     fn supports_move_with_their_model_in_x_and_y() {
         use crate::support_persist::support_documents;

@@ -1474,6 +1474,32 @@ impl SupportSession {
     /// the session's own stands is its own, and is left out; so is one too
     /// far to matter. Moving a model of the session forgets them.
     pub fn set_neighbours(&mut self, others: &[ModelInput]) {
+        let near = self.near_models(others);
+        self.keep_neighbours(near);
+    }
+
+    /// This session with the models of `others` standing near its own as
+    /// its neighbours ([`Self::set_neighbours`]), when they are not the ones
+    /// it has (#725); `None` when nothing would change, so a session given
+    /// the same neighbours again keeps its warm distance fields.
+    pub fn with_neighbours(&self, others: &[ModelInput]) -> Option<SupportSession> {
+        let near = self.near_models(others);
+        let same = near.len() == self.neighbours.len()
+            && near
+                .iter()
+                .zip(self.neighbours.iter())
+                .all(|(a, b)| a.id == b.id && Arc::ptr_eq(&a.bvh, &b.bvh) && a.matrix == b.matrix);
+        if same {
+            return None;
+        }
+        let mut next = self.clone();
+        next.keep_neighbours(near);
+        Some(next)
+    }
+
+    /// The models of `others` standing near this session's own, its own
+    /// left out.
+    fn near_models(&self, others: &[ModelInput]) -> Vec<PlateModel> {
         let own: Vec<PlateModel> = (0..self.models.len())
             .map(|i| self.plate_model(i))
             .collect();
@@ -1495,7 +1521,7 @@ impl SupportSession {
             })
             .filter(|m| own.iter().any(|o| m.near(&o.bounds, NEIGHBOUR_REACH_MM)))
             .collect();
-        self.keep_neighbours(near);
+        near
     }
 
     /// The models standing near it that an edit keeps clear of (#725).

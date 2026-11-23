@@ -110,7 +110,10 @@ impl ArrangeOptions {
         Settings {
             gap: f64::from(gap),
             margin: f64::from(self.margin_mm),
-            shadow_only: self.shadow_only,
+            // Under one raft for all a model takes the room of its whole
+            // shadow (#725): no model stands under another's overhang, so
+            // each overhang keeps its way down to the plate.
+            shadow_only: self.shadow_only || self.one_raft,
             turns: if self.turns { 8 } else { 1 },
             free_below: f64::from(free_below),
             // Under one raft for all the models pack tighter (#556);
@@ -352,6 +355,9 @@ impl ArrangeRun {
         std::thread::spawn(move || {
             let started = Instant::now();
             let drawn = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if now.1.one_raft {
+                    models_alone(&mut gathered.bodies, &mut gathered.bare);
+                }
                 if let Some(ctx) = &forecast
                     && with_forecasts(&mut gathered.bodies, &gathered.bare, ctx, &cancel).is_none()
                 {
@@ -461,7 +467,8 @@ impl ArrangeRun {
         if jobs.is_empty() {
             return;
         }
-        let settings = self.options_now().settings();
+        let options = self.options_now();
+        let settings = options.settings();
         let forecast = self.forecast_now();
         let mut leaves = Vec::new();
         let mut names = Vec::new();
@@ -492,7 +499,10 @@ impl ArrangeRun {
         std::thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 work.into_iter()
-                    .map(|(mut bodies, bare, plate)| {
+                    .map(|(mut bodies, mut bare, plate)| {
+                        if options.one_raft {
+                            models_alone(&mut bodies, &mut bare);
+                        }
                         if let Some(ctx) = &forecast {
                             with_forecasts(&mut bodies, &bare, ctx, &cancel)?;
                         }
@@ -577,7 +587,7 @@ impl ArrangeRun {
         let settings = options.settings();
         let forecast = self.forecast_now();
         let again = last.is_some_and(|(r, _, _)| r == revision);
-        let (mut bodies, bare, stands_on, plates) = (
+        let (mut bodies, mut bare, stands_on, plates) = (
             job.bodies.clone(),
             job.bare.clone(),
             job.stands_on.clone(),
@@ -603,6 +613,9 @@ impl ArrangeRun {
         let ui_weak = self.ui.clone();
         std::thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                if options.one_raft {
+                    models_alone(&mut bodies, &mut bare);
+                }
                 if let Some(ctx) = &forecast {
                     with_forecasts(&mut bodies, &bare, ctx, &cancel)?;
                 }
@@ -1067,6 +1080,22 @@ fn join_groups(gathered: &mut Gathered, groups: &[Vec<NodeId>]) {
     }
 }
 
+/// Under one raft for all (#725) each model is measured as itself alone:
+/// the supports it has or will get stand under its shadow, on the raft all
+/// share, and once it stands where it goes the ones that come near a
+/// neighbour are placed again round it. Supports it came with (#259) stand
+/// on their own and keep their room.
+pub(crate) fn models_alone(bodies: &mut [Body], bare: &mut [bool]) {
+    for (body, bare) in bodies.iter_mut().zip(bare) {
+        if body.parts.iter().any(|p| !is_any_support_mesh(&p.mesh)) {
+            body.parts.retain(|p| {
+                !is_any_support_mesh(&p.mesh) || sc_geom::supports::is_imported_supports(&p.mesh)
+            });
+            *bare = false;
+        }
+    }
+}
+
 /// Every body of the scene, a model with its supports each.
 fn gather_bodies(document: &SceneDocument, selection: bool) -> Option<Gathered> {
     let sessions = document.support_sessions();
@@ -1117,8 +1146,7 @@ fn gather_bodies(document: &SceneDocument, selection: bool) -> Option<Gathered> 
                 continue;
             };
             // One raft for all (#556) is drawn again where its sets go.
-            if !is_any_support_mesh(query.mesh())
-                || sc_geom::supports::is_plate_raft(query.mesh())
+            if !is_any_support_mesh(query.mesh()) || sc_geom::supports::is_plate_raft(query.mesh())
             {
                 continue;
             }
