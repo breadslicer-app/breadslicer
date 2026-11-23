@@ -4352,6 +4352,20 @@ impl ViewportController {
         self.mark_dirty();
     }
 
+    /// The file the model of the object list's row `index` came from
+    /// (#732); `None` for a support set's row.
+    pub(crate) fn file_of_row(&self, index: i32) -> Option<PathBuf> {
+        let document = self.session.document();
+        let index = usize::try_from(index).ok()?;
+        let model = document
+            .with_scene(|spatial| {
+                let id = spatial.leaf_id_at_index(index)?;
+                (!shows_supports(spatial, id)).then_some(id)
+            })
+            .flatten()?;
+        document.model_file(model)
+    }
+
     /// Whether the next click lays a model on a face (#15).
     #[cfg(test)]
     pub(crate) fn laying_on_face(&self) -> bool {

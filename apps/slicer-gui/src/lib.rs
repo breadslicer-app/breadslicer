@@ -103,6 +103,7 @@ mod scene_export;
 mod scene_loader;
 mod scene_save;
 mod selection;
+mod show_in_folder;
 mod single_instance;
 mod slice_panel;
 mod slice_projection;

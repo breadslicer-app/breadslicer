@@ -318,6 +318,9 @@ pub(crate) struct SceneDocument {
     /// "Save As". Used to derive default export/save filenames and as the
     /// "Save" overwrite target. Cleared in lockstep with `spatial`.
     source_path: RefCell<Option<PathBuf>>,
+    /// The file each model imported into the scene came from (#732), for
+    /// Show in folder. A model not in it came with the scene's own file.
+    model_files: RefCell<HashMap<NodeId, PathBuf>>,
     /// Kind of the file at `source_path`: set on install from whether the file
     /// carried project data, and flipped to `Project` by
     /// [`Self::record_project_save_for`].
@@ -569,6 +572,7 @@ impl SceneDocument {
         Rc::new(Self {
             spatial: RefCell::new(None),
             source_path: RefCell::new(None),
+            model_files: RefCell::new(HashMap::new()),
             origin: Cell::new(DocumentOrigin::PlainMesh),
             print_selection: RefCell::new(PrintSelection::default()),
             embedded_profiles: RefCell::new(Vec::new()),
@@ -697,6 +701,7 @@ impl SceneDocument {
         self.bump_scene_generation();
         *self.spatial.borrow_mut() = Some(spatial);
         *self.source_path.borrow_mut() = Some(source_path);
+        self.model_files.borrow_mut().clear();
         let names = project_payload.as_ref().map_or_else(
             || default_plate_names(1),
             |p| {
@@ -771,6 +776,7 @@ impl SceneDocument {
         self.bump_scene_generation();
         *self.spatial.borrow_mut() = None;
         *self.source_path.borrow_mut() = None;
+        self.model_files.borrow_mut().clear();
         self.origin.set(DocumentOrigin::PlainMesh);
         *self.print_selection.borrow_mut() = PrintSelection::default();
         self.embedded_profiles.borrow_mut().clear();
@@ -3183,6 +3189,21 @@ impl SceneDocument {
         for listener in snapshot {
             listener(event);
         }
+    }
+
+    /// Notes the file each of `models`, just imported, came from (#732).
+    pub(crate) fn note_model_files(&self, models: impl IntoIterator<Item = (NodeId, PathBuf)>) {
+        self.model_files.borrow_mut().extend(models);
+    }
+
+    /// The file model `leaf` came from (#732): the one it was imported from,
+    /// else the one the scene opened from or was last saved to.
+    pub(crate) fn model_file(&self, leaf: NodeId) -> Option<PathBuf> {
+        self.model_files
+            .borrow()
+            .get(&leaf)
+            .cloned()
+            .or_else(|| self.source_path.borrow().clone())
     }
 
     /// Returns the path the current scene was loaded from. `None` when no scene

@@ -11072,3 +11072,25 @@ msgstr "Nombre del archivo exportado"
 msgctxt "PreferencesLayer"
 msgid "For example: {}"
 msgstr "Por ejemplo: {}"
+
+msgctxt "Inspector"
+msgid "Show in folder"
+msgstr "Mostrar en la carpeta"
+
+#, rust-format
+msgctxt "StartDialog"
+msgid "Show {} in its folder"
+msgstr "Mostrar {} en su carpeta"
+
+msgctxt "ErrorDialog"
+msgid "Cannot show the file"
+msgstr "No se puede mostrar el archivo"
+
+msgctxt "ErrorDialog"
+msgid "Neither the file nor its folder is there any more."
+msgstr "Ni el archivo ni su carpeta están más ahí."
+
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The file browser did not open: {}"
+msgstr "El explorador de archivos no se abrió: {}"

@@ -126,6 +126,8 @@ export component MainWindow inherits Window {
     callback start-open-recent(int);
     callback start-reopen-last();
     callback start-remove-recent(int);
+    // A recent file in its folder (#732).
+    callback start-show-recent-in-folder(int);
     // Open project or Import model: File > Open's dialog, led by that kind.
     callback start-open-file(StartOpen);
     callback start-dont-show-changed(bool);
@@ -175,6 +177,8 @@ export component MainWindow inherits Window {
     // The scene panel's eye and padlock (#16), by the object's index.
     callback object-hide-toggled(int);
     callback object-lock-toggled(int);
+    // A model's file in its folder (#732), by its index.
+    callback object-show-in-folder(int);
     in property <[int]> object-row-of: [];
     in-out property <int> selected-object-index: -1;
     // Every selected row (#13), indexed like `object-list`, and how many
@@ -2057,6 +2061,9 @@ export component MainWindow inherits Window {
                     }
                     object-lock-toggled(i) => {
                         root.object-lock-toggled(i);
+                    }
+                    object-show-in-folder(i) => {
+                        root.object-show-in-folder(i);
                     }
                     plate-picked(i) => {
                         root.plate-picked(i);
@@ -4171,6 +4178,9 @@ export component MainWindow inherits Window {
         }
         remove-recent(row) => {
             root.start-remove-recent(row);
+        }
+        show-recent-in-folder(row) => {
+            root.start-show-recent-in-folder(row);
         }
         open-file(kind) => {
             root.start-open-file(kind);

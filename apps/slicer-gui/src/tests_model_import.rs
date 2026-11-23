@@ -279,11 +279,19 @@ fn several_files_join_together_as_one_undo_step() {
         let base = scene_with_a_box(&document, [40.0, 30.0, 10.0]);
         let before = rows(&document);
 
-        ctrl.open_models(vec![goblin, pair]);
+        ctrl.open_models(vec![goblin.clone(), pair.clone()]);
         finish_loads(&ctrl);
 
         let now = leaves(&document);
         assert_eq!(now.len(), 4, "the STL and both objects of the 3MF");
+        // Each knows its file, for Show in folder (#732).
+        assert_eq!(document.model_file(now[1]), Some(goblin));
+        assert_eq!(document.model_file(now[3]), Some(pair));
+        assert_eq!(
+            document.model_file(now[0]),
+            document.source_path(),
+            "the scene's own model: the scene's file"
+        );
         let names: Vec<String> = rows(&document).into_iter().map(|r| r.0).collect();
         // The 3MF's parts keep the names it gives them (#731).
         assert_eq!(names, ["Object 1", "goblin", "Knight", "Horse"]);

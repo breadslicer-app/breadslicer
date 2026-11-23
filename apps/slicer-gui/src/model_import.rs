@@ -864,6 +864,11 @@ pub(crate) fn add_to_scene(
     if recorded {
         document.push_edit(edit);
     }
+    // What file each came from, for Show in folder (#732).
+    let paths = files
+        .iter()
+        .flat_map(|file| file.leaves.iter().map(|_| file.path.clone()));
+    document.note_model_files(ids.iter().copied().zip(paths));
     document.set_selection(Selection::of(ids.iter().copied().map(LeafId)));
     Ok(ids)
 }
