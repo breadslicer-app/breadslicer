@@ -11300,3 +11300,8 @@ msgstr "Buscar una versión nueva al abrir"
 msgctxt "PrivacyPreferences"
 msgid "Asks GitHub for the list of Breadslicer's releases when the app opens, and shows a link at the top when a newer one is out. That request is all that leaves this computer."
 msgstr "Al abrir la app le pide a GitHub la lista de versiones de Breadslicer y, si hay una más nueva, muestra un link arriba. Ese pedido es lo único que sale de esta computadora."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "Supports are being made for the pieces cut off."
+msgstr "Se están haciendo los soportes de las piezas cortadas."
