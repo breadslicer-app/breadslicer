@@ -1,0 +1,636 @@
+/*
+ * SPDX-FileCopyrightText: 2026 SynrgStudio
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+// Tools → Calibrate resin (#78): a card over the window that walks through
+// reading a printed XY coupon with calipers, a picture per step, and says
+// what the numbers mean. The coupon is placed on the plate from its first
+// page; it is sliced and printed like any model.
+
+import { Theme } from "kit/theme.slint";
+import { ScrollView } from "std-widgets.slint";
+import { ScButton as Button, ScLineEdit as LineEdit } from "kit/controls.slint";
+import { Icons } from "kit/icons.slint";
+import { DialogHead, DialogRule } from "kit/dialog.slint";
+
+// A line of the result: what it is, its number, and how it reads.
+export struct CalibLine {
+    label: string,
+    value: string,
+    // 0 plain, 1 good, 2 to look at, 3 a reading to check.
+    tone: int,
+}
+
+export global Calib {
+    in-out property <bool> open;
+    // 0 intro, 1 prepare, 2 blocks X, 3 blocks Y, 4 holes, 5 pins,
+    // 6 slits, 7 the foot, 8 the result.
+    in-out property <int> page;
+    in property <string> pair;
+    in property <string> last;
+    // The picture of each step: overview, blocks X, blocks Y, holes, pins,
+    // slits, foot.
+    in property <[image]> pictures;
+
+    in-out property <string> notes;
+    // What is typed in each reading, kept as typed: 0 the temperature, 1–3
+    // the blocks along X (16, 8, 4), 4–6 along Y, 7–13 the drill bits in the
+    // holes (0.6 to 4 mm), 14 the foot at the bottom, 15 near the top.
+    in property <[string]> texts;
+    // Whether a reading is not a number.
+    in property <[bool]> bad;
+    in-out property <int> pin: -1;
+    in-out property <int> slit-x: -1;
+    in-out property <int> slit-y: -1;
+
+    in property <string> result-heading;
+    in property <string> result-advice;
+    // 1 good, 2 adjust, 3 check a reading, 0 not enough.
+    in property <int> result-verdict;
+    in property <[CalibLine]> result-lines;
+    in property <bool> saved;
+    // Whether there is a printer and a resin to keep the reading with.
+    in property <bool> can-save;
+
+    callback place-coupon();
+    callback show-result();
+    callback save();
+    callback edited(int, string);
+}
+
+// A row of choices, one lit.
+component ChoiceRow inherits HorizontalLayout {
+    in property <[string]> choices;
+    in-out property <int> selected: -1;
+    spacing: 6px;
+    alignment: start;
+
+    for choice[i] in root.choices: Rectangle {
+        width: max(54px, label.preferred-width + 20px);
+        height: 30px;
+        border-radius: Theme.radius;
+        border-width: 1px;
+        border-color: i == root.selected ? Theme.accent : Theme.border;
+        background: i == root.selected ? Theme.accent.with-alpha(0.16) : touch.has-hover ? Theme.raised : Theme.panel;
+        label := Text {
+            text: choice;
+            color: i == root.selected ? Theme.accent : Theme.text-soft;
+            font-size: Theme.font;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => {
+                root.selected = i;
+            }
+        }
+    }
+}
+
+component Prose inherits Text {
+    wrap: word-wrap;
+    color: Theme.text-soft;
+    font-size: Theme.font;
+}
+
+// A reading: what is typed goes to the app as typed, so a number written
+// and then Next pressed is the number kept, and a comma reads as a point.
+component FieldRow inherits HorizontalLayout {
+    in property <string> label;
+    in property <int> field;
+    in property <string> unit: "mm";
+    spacing: 10px;
+    alignment: start;
+
+    Text {
+        width: 150px;
+        text: root.label;
+        color: Theme.text-soft;
+        font-size: Theme.font;
+        vertical-alignment: center;
+    }
+
+    Rectangle {
+        width: 112px;
+        height: 26px;
+        background: Theme.well;
+        border-width: 1px;
+        border-color: Calib.bad[root.field] ? Theme.danger : input.has-focus ? Theme.indicator : Theme.border;
+        border-radius: Theme.radius;
+
+        TouchArea {
+            mouse-cursor: text;
+            clicked => {
+                input.focus();
+            }
+        }
+
+        HorizontalLayout {
+            padding-left: 8px;
+            padding-right: 8px;
+            spacing: 6px;
+
+            input := TextInput {
+                text: Calib.texts[root.field];
+                font-family: Theme.mono;
+                font-size: Theme.font-sm;
+                color: Theme.text;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+                single-line: true;
+                input-type: decimal;
+                accessible-label: root.label;
+                edited => {
+                    Calib.edited(root.field, self.text);
+                }
+                changed has-focus => {
+                    if self.has-focus {
+                        self.select-all();
+                    }
+                }
+            }
+
+            Text {
+                text: root.unit;
+                font-family: Theme.mono;
+                font-size: Theme.font-xs;
+                color: Theme.text-muted;
+                vertical-alignment: center;
+            }
+        }
+    }
+}
+
+export component CalibrationLayer inherits Rectangle {
+    visible: Calib.open;
+    background: #0000008c;
+
+    // How many reading steps there are, and the one shown, from 1.
+    property <int> steps: 6;
+    property <int> picture: Calib.page <= 1 ? 0 : Calib.page - 1;
+
+    changed visible => {
+        if (self.visible) {
+            fs.focus();
+        }
+    }
+
+    fs := FocusScope {
+        width: 100%;
+        height: 100%;
+        enabled: Calib.open;
+
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                Calib.open = false;
+            }
+            return accept;
+        }
+
+        // The dimmed window around the card holds the clicks.
+        TouchArea {
+            scroll-event(event) => {
+                return accept;
+            }
+        }
+
+        card := Rectangle {
+            width: Math.min(parent.width - 48px, 1040px);
+            height: Math.min(parent.height - 48px, 660px);
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Theme.card;
+            border-color: Theme.border;
+            border-width: 1px;
+            border-radius: Theme.radius-lg;
+            drop-shadow-blur: 24px;
+            drop-shadow-color: #00000066;
+            clip: true;
+
+            TouchArea {
+                scroll-event(event) => {
+                    return accept;
+                }
+            }
+
+            VerticalLayout {
+                DialogHead {
+                    icon: Icons.calipers;
+                    title: @tr("Calibration" => "Calibrate resin");
+                    subtitle: Calib.pair;
+                    close-label: @tr("Calibration" => "Close");
+                    close => {
+                        Calib.open = false;
+                    }
+                }
+
+                DialogRule { }
+
+                HorizontalLayout {
+                    vertical-stretch: 1;
+                    padding: 20px;
+                    spacing: 24px;
+
+                    if Calib.page < 8: Rectangle {
+                        horizontal-stretch: 3;
+                        background: Theme.ground;
+                        border-radius: Theme.radius;
+                        Image {
+                            x: 12px;
+                            y: 12px;
+                            width: parent.width - 24px;
+                            height: parent.height - 24px;
+                            source: Calib.pictures[root.picture];
+                            image-fit: contain;
+                        }
+                    }
+
+                    ScrollView {
+                        horizontal-stretch: 2;
+                        VerticalLayout {
+                            spacing: 12px;
+                            alignment: start;
+
+                            if Calib.page >= 2 && Calib.page <= 7: Text {
+                                text: @tr("Calibration" => "Step {} of {}", Calib.page - 1, root.steps);
+                                color: Theme.text-faint;
+                                font-size: Theme.font-sm;
+                            }
+
+                            // Intro.
+                            if Calib.page == 0: VerticalLayout {
+                                spacing: 12px;
+                                Text {
+                                    text: @tr("Calibration" => "Quick check, with calipers");
+                                    color: Theme.text;
+                                    font-size: Theme.font-lg;
+                                    font-weight: 600;
+                                }
+
+                                Prose {
+                                    text: @tr("Calibration" => "A small piece, 77 × 34 mm, printed flat on the plate with no supports and no raft. Its blocks, read in X and in Y, tell apart how much the print grows or shrinks (scale) from how far the walls grow past where they were drawn (the light bleeding into the resin). Holes, pins, slits and a column on the plate say the rest.");
+                                }
+
+                                Prose {
+                                    text: @tr("Calibration" => "You need: calipers, and a few drill bits if you want to read the holes. Print it with the printer and resin you calibrate, wash and cure it as always, and read it cold.");
+                                }
+
+                                Rectangle {
+                                    height: tier.preferred-height + 16px;
+                                    border-radius: Theme.radius;
+                                    border-width: 1px;
+                                    border-color: Theme.border;
+                                    tier := VerticalLayout {
+                                        padding: 8px;
+                                        spacing: 4px;
+                                        Text {
+                                            text: @tr("Calibration" => "Full calibration: exposure curve");
+                                            color: Theme.text-faint;
+                                            font-size: Theme.font;
+                                            font-weight: 600;
+                                        }
+
+                                        Prose {
+                                            color: Theme.text-faint;
+                                            text: @tr("Calibration" => "Needs a micrometer, to read layers a few hundredths thick. Coming later.");
+                                        }
+                                    }
+                                }
+
+                                if Calib.last != "": Prose {
+                                    color: Theme.text-muted;
+                                    text: Calib.last;
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    alignment: start;
+                                    Button {
+                                        text: @tr("Calibration" => "Place the piece on the plate");
+                                        icon: Icons.import;
+                                        clicked => {
+                                            Calib.place-coupon();
+                                        }
+                                    }
+
+                                    Button {
+                                        primary: true;
+                                        text: @tr("Calibration" => "I printed it: read it");
+                                        clicked => {
+                                            Calib.page = 1;
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Prepare.
+                            if Calib.page == 1: VerticalLayout {
+                                spacing: 12px;
+                                Text {
+                                    text: @tr("Calibration" => "Before reading");
+                                    color: Theme.text;
+                                    font-size: Theme.font-lg;
+                                    font-weight: 600;
+                                }
+
+                                Prose {
+                                    text: @tr("Calibration" => "Read the piece washed, cured and cold: warm resin is still soft and a little bigger. Close the calipers gently, halfway up each wall, never on the bottom edge. The point of the base shows +X.");
+                                }
+
+                                Prose {
+                                    text: @tr("Calibration" => "Everything is optional: skip what you can't read, two blocks per axis are enough.");
+                                }
+
+                                FieldRow {
+                                    label: @tr("Calibration" => "Room temperature");
+                                    field: 0;
+                                    unit: "°C";
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    Text {
+                                        width: 150px;
+                                        text: @tr("Calibration" => "Notes");
+                                        color: Theme.text-soft;
+                                        font-size: Theme.font;
+                                        vertical-alignment: center;
+                                    }
+
+                                    LineEdit {
+                                        text <=> Calib.notes;
+                                        placeholder-text: @tr("Calibration" => "Batch, film, anything to remember");
+                                    }
+                                }
+                            }
+
+                            // Blocks across X.
+                            if Calib.page == 2: VerticalLayout {
+                                spacing: 12px;
+                                Text {
+                                    text: @tr("Calibration" => "The blocks, along X");
+                                    color: Theme.text;
+                                    font-size: Theme.font-lg;
+                                    font-weight: 600;
+                                }
+
+                                Prose {
+                                    text: @tr("Calibration" => "Close the calipers on each block from left to right, the way the point of the base shows. Write what they read.");
+                                }
+
+                                FieldRow {
+                                    label: @tr("Calibration" => "Block of 16 mm");
+                                    field: 1;
+                                }
+
+                                FieldRow {
+                                    label: @tr("Calibration" => "Block of 8 mm");
+                                    field: 2;
+                                }
+
+                                FieldRow {
+                                    label: @tr("Calibration" => "Block of 4 mm");
+                                    field: 3;
+                                }
+                            }
+
+                            // Blocks across Y.
+                            if Calib.page == 3: VerticalLayout {
+                                spacing: 12px;
+                                Text {
+                                    text: @tr("Calibration" => "The blocks, along Y");
+                                    color: Theme.text;
+                                    font-size: Theme.font-lg;
+                                    font-weight: 600;
+                                }
+
+                                Prose {
+                                    text: @tr("Calibration" => "Now from front to back: turn the calipers a quarter turn. A screen's pixels are not always square, so each axis gets its own numbers.");
+                                }
+
+                                FieldRow {
+                                    label: @tr("Calibration" => "Block of 16 mm");
+                                    field: 4;
+                                }
+
+                                FieldRow {
+                                    label: @tr("Calibration" => "Block of 8 mm");
+                                    field: 5;
+                                }
+
+                                FieldRow {
+                                    label: @tr("Calibration" => "Block of 4 mm");
+                                    field: 6;
+                                }
+                            }
+
+                            // Holes.
+                            if Calib.page == 4: VerticalLayout {
+                                spacing: 10px;
+                                Text {
+                                    text: @tr("Calibration" => "The holes (optional)");
+                                    color: Theme.text;
+                                    font-size: Theme.font-lg;
+                                    font-weight: 600;
+                                }
+
+                                Prose {
+                                    text: @tr("Calibration" => "Try drill bits in the holes by hand, shank first, without forcing. Write the thickest one that goes in. Two or three holes are enough.");
+                                }
+
+                                for size[i] in ["0.6", "0.8", "1.0", "1.5", "2.0", "3.0", "4.0"]: FieldRow {
+                                    label: @tr("Calibration" => "Hole of {} mm", size);
+                                    field: 7 + i;
+                                }
+                            }
+
+                            // Pins.
+                            if Calib.page == 5: VerticalLayout {
+                                spacing: 12px;
+                                Text {
+                                    text: @tr("Calibration" => "The pins");
+                                    color: Theme.text;
+                                    font-size: Theme.font-lg;
+                                    font-weight: 600;
+                                }
+
+                                Prose {
+                                    text: @tr("Calibration" => "Which is the thinnest pin that stood whole, from its foot to its top?");
+                                }
+
+                                ChoiceRow {
+                                    choices: ["0.5", "1", "2", @tr("Calibration" => "None")];
+                                    selected <=> Calib.pin;
+                                }
+                            }
+
+                            // Slits.
+                            if Calib.page == 6: VerticalLayout {
+                                spacing: 12px;
+                                Text {
+                                    text: @tr("Calibration" => "The slits");
+                                    color: Theme.text;
+                                    font-size: Theme.font-lg;
+                                    font-weight: 600;
+                                }
+
+                                Prose {
+                                    text: @tr("Calibration" => "Hold the piece against a light: a slit is open if you see the light through it all along. Which is the thinnest still open? The ones side by side along X, then the ones stacked along Y.");
+                                }
+
+                                Text {
+                                    text: @tr("Calibration" => "Along X (mm)");
+                                    color: Theme.text-soft;
+                                    font-size: Theme.font-sm;
+                                }
+
+                                ChoiceRow {
+                                    choices: ["0.2", "0.3", "0.4", "0.6", @tr("Calibration" => "All closed")];
+                                    selected <=> Calib.slit-x;
+                                }
+
+                                Text {
+                                    text: @tr("Calibration" => "Along Y (mm)");
+                                    color: Theme.text-soft;
+                                    font-size: Theme.font-sm;
+                                }
+
+                                ChoiceRow {
+                                    choices: ["0.2", "0.3", "0.4", "0.6", @tr("Calibration" => "All closed")];
+                                    selected <=> Calib.slit-y;
+                                }
+                            }
+
+                            // The foot.
+                            if Calib.page == 7: VerticalLayout {
+                                spacing: 12px;
+                                Text {
+                                    text: @tr("Calibration" => "The elephant's foot");
+                                    color: Theme.text;
+                                    font-size: Theme.font-lg;
+                                    font-weight: 600;
+                                }
+
+                                Prose {
+                                    text: @tr("Calibration" => "The column stands on the plate, beside the base. Its first layers get more light and spread. Measure it along X right at the bottom, then near its top.");
+                                }
+
+                                FieldRow {
+                                    label: @tr("Calibration" => "At the bottom");
+                                    field: 14;
+                                }
+
+                                FieldRow {
+                                    label: @tr("Calibration" => "Near the top");
+                                    field: 15;
+                                }
+                            }
+
+                            // The result.
+                            if Calib.page == 8: VerticalLayout {
+                                spacing: 10px;
+                                Text {
+                                    text: Calib.result-heading;
+                                    color: Calib.result-verdict == 1 ? Theme.success : Calib.result-verdict == 3 ? Theme.danger : Calib.result-verdict == 2 ? Theme.warning : Theme.text;
+                                    font-size: Theme.font-lg;
+                                    font-weight: 600;
+                                    wrap: word-wrap;
+                                }
+
+                                for line in Calib.result-lines: HorizontalLayout {
+                                    spacing: 12px;
+                                    Text {
+                                        width: 260px;
+                                        text: line.label;
+                                        color: Theme.text-soft;
+                                        font-size: Theme.font;
+                                        wrap: word-wrap;
+                                    }
+
+                                    Text {
+                                        text: line.value;
+                                        font-family: Theme.mono;
+                                        font-size: Theme.font;
+                                        color: line.tone == 1 ? Theme.success : line.tone == 2 ? Theme.warning : line.tone == 3 ? Theme.danger : Theme.text;
+                                    }
+                                }
+
+                                if Calib.result-advice != "": Prose {
+                                    text: Calib.result-advice;
+                                }
+
+                                if Calib.saved: Text {
+                                    text: @tr("Calibration" => "Saved with this printer and resin.");
+                                    color: Theme.success;
+                                    font-size: Theme.font-sm;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 52px;
+                    background: Theme.chrome;
+                    Rectangle {
+                        y: 0;
+                        height: 1px;
+                        background: Theme.border;
+                    }
+
+                    HorizontalLayout {
+                        padding-left: 20px;
+                        padding-right: 20px;
+                        padding-top: 12px;
+                        padding-bottom: 12px;
+                        spacing: 8px;
+                        alignment: end;
+
+                        if Calib.page > 0: Button {
+                            text: @tr("Calibration" => "Back");
+                            clicked => {
+                                Calib.page = Calib.page - 1;
+                            }
+                        }
+
+                        if Calib.page > 0 && Calib.page < 7: Button {
+                            primary: true;
+                            text: @tr("Calibration" => "Next");
+                            clicked => {
+                                Calib.page = Calib.page + 1;
+                            }
+                        }
+
+                        if Calib.page == 7: Button {
+                            primary: true;
+                            text: @tr("Calibration" => "See the result");
+                            clicked => {
+                                Calib.show-result();
+                                Calib.page = 8;
+                            }
+                        }
+
+                        if Calib.page == 8: Button {
+                            primary: !Calib.saved;
+                            enabled: Calib.can-save && !Calib.saved && Calib.result-verdict != 0;
+                            text: @tr("Calibration" => "Save");
+                            clicked => {
+                                Calib.save();
+                            }
+                        }
+
+                        if Calib.page == 8: Button {
+                            text: @tr("Calibration" => "Close");
+                            clicked => {
+                                Calib.open = false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -21,6 +21,7 @@ mimalloc.workspace = true
 rayon = { workspace = true }
 sc-app-paths = { workspace = true }
 bread-arrange = { workspace = true }
+bread-calibration = { workspace = true }
 bread-cut = { workspace = true }
 bread-orient = { workspace = true }
 sc-geom = { workspace = true }

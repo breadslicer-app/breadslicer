@@ -11428,3 +11428,391 @@ msgid "{n} layer"
 msgid_plural "{n} layers"
 msgstr[0] "{n} capa"
 msgstr[1] "{n} capas"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Calibrate resin"
+msgstr "Calibrar resina"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Close"
+msgstr "Cerrar"
+
+#: src/calibration_wizard.rs
+#, rust-format
+msgctxt "Calibration"
+msgid "Step {} of {}"
+msgstr "Paso {} de {}"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Quick check, with calipers"
+msgstr "Revisión rápida, con calibre"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "A small piece, 77 × 34 mm, printed flat on the plate with no supports and no raft. Its blocks, read in X and in Y, tell apart how much the print grows or shrinks (scale) from how far the walls grow past where they were drawn (the light bleeding into the resin). Holes, pins, slits and a column on the plate say the rest."
+msgstr "Una pieza chica, de 77 × 34 mm, que se imprime plana sobre la cama, sin soportes ni balsa. Sus bloques, medidos en X y en Y, separan cuánto crece o se achica la impresión (la escala) de cuánto crecen las paredes más allá de donde se dibujaron (la luz que se corre en la resina). Agujeros, pernos, ranuras y una columna sobre la cama dicen el resto."
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "You need: calipers, and a few drill bits if you want to read the holes. Print it with the printer and resin you calibrate, wash and cure it as always, and read it cold."
+msgstr "Hace falta: un calibre, y algunas mechas si querés medir los agujeros. Imprimila con la impresora y la resina que calibrás, lavala y curala como siempre, y medila fría."
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Full calibration: exposure curve"
+msgstr "Calibración completa: curva de exposición"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Needs a micrometer, to read layers a few hundredths thick. Coming later."
+msgstr "Necesita un micrómetro, para medir capas de pocas centésimas. Más adelante."
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Place the piece on the plate"
+msgstr "Poner la pieza en la cama"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "I printed it: read it"
+msgstr "Ya la imprimí: medir"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Before reading"
+msgstr "Antes de medir"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Read the piece washed, cured and cold: warm resin is still soft and a little bigger. Close the calipers gently, halfway up each wall, never on the bottom edge. The point of the base shows +X."
+msgstr "Medí la pieza lavada, curada y fría: la resina tibia todavía está blanda y un poco más grande. Cerrá el calibre suave, a media altura de cada pared, nunca en el borde de abajo. La punta de la base marca +X."
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Everything is optional: skip what you can't read, two blocks per axis are enough."
+msgstr "Todo es opcional: saltá lo que no puedas medir, con dos bloques por eje alcanza."
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Room temperature"
+msgstr "Temperatura ambiente"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Notes"
+msgstr "Notas"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Batch, film, anything to remember"
+msgstr "Lote, film, lo que quieras recordar"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "The blocks, along X"
+msgstr "Los bloques, en X"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Close the calipers on each block from left to right, the way the point of the base shows. Write what they read."
+msgstr "Cerrá el calibre sobre cada bloque de izquierda a derecha, hacia donde marca la punta de la base. Anotá lo que dice."
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Block of 16 mm"
+msgstr "Bloque de 16 mm"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Block of 8 mm"
+msgstr "Bloque de 8 mm"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Block of 4 mm"
+msgstr "Bloque de 4 mm"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "The blocks, along Y"
+msgstr "Los bloques, en Y"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Now from front to back: turn the calipers a quarter turn. A screen's pixels are not always square, so each axis gets its own numbers."
+msgstr "Ahora de adelante hacia atrás: girá el calibre un cuarto de vuelta. Los píxeles de una pantalla no siempre son cuadrados, así que cada eje tiene sus números."
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "The holes (optional)"
+msgstr "Los agujeros (opcional)"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Try drill bits in the holes by hand, shank first, without forcing. Write the thickest one that goes in. Two or three holes are enough."
+msgstr "Probá mechas en los agujeros a mano, por el lado liso, sin forzar. Anotá la más gruesa que entra. Con dos o tres agujeros alcanza."
+
+#: src/calibration_wizard.rs
+#, rust-format
+msgctxt "Calibration"
+msgid "Hole of {} mm"
+msgstr "Agujero de {} mm"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "The pins"
+msgstr "Los pernos"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Which is the thinnest pin that stood whole, from its foot to its top?"
+msgstr "¿Cuál es el perno más fino que quedó entero, del pie a la punta?"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "None"
+msgstr "Ninguno"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "The slits"
+msgstr "Las ranuras"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Hold the piece against a light: a slit is open if you see the light through it all along. Which is the thinnest still open? The ones side by side along X, then the ones stacked along Y."
+msgstr "Mirá la pieza contra una luz: una ranura está abierta si se ve la luz a lo largo de toda ella. ¿Cuál es la más fina que sigue abierta? Primero las que están una al lado de otra en X, después las apiladas en Y."
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Along X (mm)"
+msgstr "En X (mm)"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "All closed"
+msgstr "Todas cerradas"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Along Y (mm)"
+msgstr "En Y (mm)"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "The elephant's foot"
+msgstr "La pata de elefante"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "The column stands on the plate, beside the base. Its first layers get more light and spread. Measure it along X right at the bottom, then near its top."
+msgstr "La columna está sobre la cama, al lado de la base. Sus primeras capas reciben más luz y se ensanchan. Medila en X bien abajo, y después cerca de arriba."
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "At the bottom"
+msgstr "Abajo"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Near the top"
+msgstr "Cerca de arriba"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Saved with this printer and resin."
+msgstr "Guardada con esta impresora y resina."
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Back"
+msgstr "Atrás"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Next"
+msgstr "Siguiente"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "See the result"
+msgstr "Ver el resultado"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Save"
+msgstr "Guardar"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Not enough readings: two blocks along one axis are needed"
+msgstr "Faltan medidas: hacen falta dos bloques en un eje"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Well calibrated: the piece comes out as drawn"
+msgstr "Bien calibrada: la pieza sale como se dibujó"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Worth adjusting"
+msgstr "Conviene ajustar"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Check a reading before trusting the rest"
+msgstr "Revisá una medida antes de confiar en el resto"
+
+#: src/calibration_wizard.rs
+#, rust-format
+msgctxt "Calibration"
+msgid "Block of {} mm along X"
+msgstr "Bloque de {} mm en X"
+
+#: src/calibration_wizard.rs
+#, rust-format
+msgctxt "Calibration"
+msgid "Block of {} mm along Y"
+msgstr "Bloque de {} mm en Y"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "The column"
+msgstr "La columna"
+
+#: src/calibration_wizard.rs
+#, rust-format
+msgctxt "Calibration"
+msgid "Bit in the hole of {} mm"
+msgstr "Mecha en el agujero de {} mm"
+
+#: src/calibration_wizard.rs
+#, rust-format
+msgctxt "Calibration"
+msgid "Check: {}"
+msgstr "Revisá: {}"
+
+#: src/calibration_wizard.rs
+#, rust-format
+msgctxt "Calibration"
+msgid "Scale along {}"
+msgstr "Escala en {}"
+
+#: src/calibration_wizard.rs
+#, rust-format
+msgctxt "Calibration"
+msgid "Each wall along {}"
+msgstr "Cada pared en {}"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "The holes close by"
+msgstr "Los agujeros se cierran"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Elephant's foot, per side"
+msgstr "Pata de elefante, por lado"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Thinnest pin that stood"
+msgstr "Perno más fino entero"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "none"
+msgstr "ninguno"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "all closed"
+msgstr "todas cerradas"
+
+#: src/calibration_wizard.rs
+#, rust-format
+msgctxt "Calibration"
+msgid "Thinnest slit open along {}"
+msgstr "Ranura más fina abierta en {}"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "A reading is more than 1 mm off what was drawn: go back and check it, it is likely a slip."
+msgstr "Una medida se aleja más de 1 mm de lo dibujado: volvé a revisarla, seguro fue un error al anotar."
+
+#: src/calibration_wizard.rs
+#, rust-format
+msgctxt "Calibration"
+msgid "Scale: set the resin's scale compensation to {} (Printer & resin, edit the resin)."
+msgstr "Escala: poné la compensación de escala de la resina en {} (Impresora y resina, editar la resina)."
+
+#: src/calibration_wizard.rs
+#, rust-format
+msgctxt "Calibration"
+msgid "The walls grow: there is light to spare. Try the normal exposure at {} s instead of {} s and print the piece again."
+msgstr "Las paredes crecen: sobra luz. Probá la exposición normal en {} s en vez de {} s y volvé a imprimir la pieza."
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "The walls grow: there is light to spare. Try a normal exposure 10 % shorter and print the piece again."
+msgstr "Las paredes crecen: sobra luz. Probá una exposición normal un 10 % más corta y volvé a imprimir la pieza."
+
+#: src/calibration_wizard.rs
+#, rust-format
+msgctxt "Calibration"
+msgid "The walls shrink: the light falls short. Try the normal exposure at {} s instead of {} s and print the piece again."
+msgstr "Las paredes se achican: falta luz. Probá la exposición normal en {} s en vez de {} s y volvé a imprimir la pieza."
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "The walls shrink: the light falls short. Try a normal exposure 10 % longer and print the piece again."
+msgstr "Las paredes se achican: falta luz. Probá una exposición normal un 10 % más larga y volvé a imprimir la pieza."
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "The exposure is right for the walls."
+msgstr "La exposición está bien para las paredes."
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "The first layers spread: a shorter bottom exposure, or fewer bottom layers, makes the foot smaller."
+msgstr "Las primeras capas se ensanchan: una exposición de base más corta, o menos capas de base, achica la pata."
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Pick a printer and a resin first to keep the reading"
+msgstr "Elegí una impresora y una resina para poder guardar la medición"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "well calibrated"
+msgstr "bien calibrada"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "worth adjusting"
+msgstr "conviene ajustar"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "incomplete"
+msgstr "incompleta"
+
+#: src/calibration_wizard.rs
+#, rust-format
+msgctxt "Calibration"
+msgid "Last reading with this printer and resin: {}, {}."
+msgstr "Última medición con esta impresora y resina: {}, {}."
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "XY calibration piece"
+msgstr "Pieza de calibración XY"
+
+#: ui/main-window.slint
+msgctxt "MenuBar"
+msgid "Calibrate Resin…"
+msgstr "Calibrar resina…"

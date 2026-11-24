@@ -740,6 +740,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bread-calibration"
+version = "0.1.0"
+dependencies = [
+ "earcutr",
+ "serde",
+]
+
+[[package]]
 name = "bread-cut"
 version = "0.1.0"
 dependencies = [
@@ -6461,6 +6469,7 @@ dependencies = [
  "anyhow",
  "block2 0.6.2",
  "bread-arrange",
+ "bread-calibration",
  "bread-cut",
  "bread-format",
  "bread-gui-base",
