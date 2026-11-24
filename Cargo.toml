@@ -118,9 +118,9 @@ bread-islands = { path = "libs/sc-geom/islands", version = "0.1.0" }
 
 # The GUI's own crates, split from `apps/slicer-gui` so that an edit rebuilds
 # less of it (#361).
-bread-gui-base = { path = "apps/slicer-gui/crates/base", version = "0.4.0-alpha.1" }
-bread-gui-render = { path = "apps/slicer-gui/crates/render", version = "0.4.0-alpha.1" }
-bread-gui-ui = { path = "apps/slicer-gui/crates/ui", version = "0.4.0-alpha.1" }
+bread-gui-base = { path = "apps/slicer-gui/crates/base", version = "0.5.0-beta.1" }
+bread-gui-render = { path = "apps/slicer-gui/crates/render", version = "0.5.0-beta.1" }
+bread-gui-ui = { path = "apps/slicer-gui/crates/ui", version = "0.5.0-beta.1" }
 
 # Slint's default feature set minus FemtoVG renderer. One spec for every GUI
 # crate, so the generated interface and the code that drives it agree.

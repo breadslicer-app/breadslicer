@@ -3,12 +3,13 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Builds the portable Windows zip of a release.
 
-    python packages/windows/portable/package.py --version 0.4.0 --bin-dir target/release --out dist
+    python packages/windows/portable/package.py --version 0.5.0 --bin-dir target/release         --runtime-dir "<VS>/VC/Redist/MSVC/<v>/x64/Microsoft.VC143.CRT"         --thumbnails <bread-format>/target/release/bread_thumbnails.dll --out dist
 
-Takes the two release executables from --bin-dir and, from the repository,
-only what a release ships: the bundled printer and resin profiles, the
-licence and the notices, and the two read-me files with the version filled
-in. Writes the folder Breadslicer-<version>-windows-x64 under --out, a
+Takes the two release executables from --bin-dir, the Visual C++ runtime
+they need from --runtime-dir (so they run on a computer without it), the
+Explorer thumbnail provider of .bread files, and, from the repository, only
+what a release ships: the bundled printer and resin profiles, the licence
+and the notices, and the two read-me files with the version filled in. Writes the folder Breadslicer-<version>-windows-x64 under --out, a
 SHA256SUMS.txt of every file in it, and the zip of the folder. Nothing else
 of the checkout or the machine goes in. Prints the zip's path, size and
 SHA-256.
@@ -25,6 +26,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
 
 EXES = ["breadslicer.exe", "sc-slicer-cli.exe"]
+# The Visual C++ runtime the executables load, shipped beside them.
+RUNTIME = ["vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"]
 # What goes in from the repository, by where it lands.
 FILES = {
     "LICENSE.md": "LICENSE.md",
@@ -47,6 +50,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--version", required=True, help="the release version, without the v")
     ap.add_argument("--bin-dir", required=True, help="where the release executables are")
+    ap.add_argument("--runtime-dir", required=True, help="the Microsoft.VC*.CRT folder of the Visual C++ redistributable")
+    ap.add_argument("--thumbnails", required=True, help="bread_thumbnails.dll, built from bread-format")
     ap.add_argument("--out", required=True, help="where the folder and the zip go")
     args = ap.parse_args()
 
@@ -62,6 +67,14 @@ def main():
         if not os.path.isfile(src):
             sys.exit(f"missing {src}")
         shutil.copy2(src, os.path.join(folder, exe))
+    for dll in RUNTIME:
+        src = os.path.join(args.runtime_dir, dll)
+        if not os.path.isfile(src):
+            sys.exit(f"missing {src}")
+        shutil.copy2(src, os.path.join(folder, dll))
+    if not os.path.isfile(args.thumbnails):
+        sys.exit(f"missing {args.thumbnails}")
+    shutil.copy2(args.thumbnails, os.path.join(folder, "bread_thumbnails.dll"))
     for dest, src in FILES.items():
         shutil.copy2(os.path.join(ROOT, src), os.path.join(folder, dest))
     shutil.copytree(os.path.join(ROOT, PROFILES), os.path.join(folder, "slicer", "profiles"))
