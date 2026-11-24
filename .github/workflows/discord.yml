@@ -1,6 +1,7 @@
 # Announces published releases and public issue updates on the Discord server (PRODUCT below).
-# Secrets: DISCORD_WEBHOOK_RELEASES and (optional) DISCORD_WEBHOOK_ISSUES. Drafts are never announced.
-# Manual run: re-announce the latest release, or post a connection test to the issues channel.
+# Secrets: DISCORD_WEBHOOK_RELEASES and (optional) DISCORD_WEBHOOK_ISSUES. Drafts are never announced;
+# pre-releases (Breadslicer Dev builds) are, marked as dev builds (PRERELEASES below).
+# Manual run: re-announce the latest release or pre-release, or post a connection test to the issues channel.
 name: Discord
 on:
   release:
@@ -12,7 +13,7 @@ on:
       what:
         description: What to post
         type: choice
-        options: [latest-release, test-issues]
+        options: [latest-release, latest-prerelease, test-issues]
         default: latest-release
 permissions:
   contents: read
@@ -31,4 +32,5 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           WHAT: ${{ inputs.what }}
           PRODUCT: Breadslicer
+          PRERELEASES: '1'
         run: python3 .github/scripts/discord_notify.py
