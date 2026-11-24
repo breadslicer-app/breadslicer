@@ -203,7 +203,7 @@ pub(crate) fn check(asked: bool) {
     if cfg!(test) || CHECKING.swap(true, Ordering::SeqCst) {
         return;
     }
-    let current = env!("CARGO_PKG_VERSION");
+    let current = crate::VERSION;
     let _ = std::thread::Builder::new()
         .name("update-check".into())
         .spawn(move || {
@@ -387,10 +387,7 @@ fn fetch_setup(
         .new_agent();
     let mut answer = agent
         .get(&setup.url)
-        .header(
-            "User-Agent",
-            concat!("Breadslicer/", env!("CARGO_PKG_VERSION")),
-        )
+        .header("User-Agent", format!("Breadslicer/{}", crate::VERSION))
         .call()
         .map_err(|e| e.to_string())?;
     let mut reader = answer
@@ -455,10 +452,7 @@ fn fetch() -> Result<serde_json::Value, String> {
     let mut answer = agent
         .get(RELEASES)
         .header("Accept", "application/vnd.github+json")
-        .header(
-            "User-Agent",
-            concat!("Breadslicer/", env!("CARGO_PKG_VERSION")),
-        )
+        .header("User-Agent", format!("Breadslicer/{}", crate::VERSION))
         .call()
         .map_err(|e| e.to_string())?;
     answer
@@ -537,6 +531,21 @@ pub(crate) fn newest(current: &str, releases: &serde_json::Value) -> Option<Newe
         ));
     }
     best.map(|(_, n)| n)
+}
+
+/// Whether `version` is a build of `dev` (`X.Y.Z-dev.N`), as `Version::is_dev`
+/// says, at compile time.
+pub(crate) const fn is_dev_version(version: &str) -> bool {
+    let bytes = version.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() && bytes[i] != b'-' && bytes[i] != b'+' {
+        i += 1;
+    }
+    if i + 4 > bytes.len() || bytes[i] != b'-' {
+        return false;
+    }
+    let ends = i + 4 == bytes.len() || bytes[i + 4] == b'.' || bytes[i + 4] == b'+';
+    bytes[i + 1] == b'd' && bytes[i + 2] == b'e' && bytes[i + 3] == b'v' && ends
 }
 
 /// A version as semver orders it: numbers, then a release before which
@@ -709,6 +718,22 @@ mod tests {
         std::fs::write(dir.join(&setup.name), b"something else").unwrap();
         assert!(fetch_setup(&setup, &dir, &percent, &AtomicBool::new(false)).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_dev_version_is_told_at_compile_time_as_at_run_time() {
+        for (text, dev) in [
+            ("0.5.0-dev.1", true),
+            ("0.5.0-dev", true),
+            ("0.5.0-dev+abc", true),
+            ("0.5.0-beta.2", false),
+            ("0.5.0", false),
+            ("0.5.0-devel.1", false),
+            ("0.5.0+dev", false),
+        ] {
+            assert_eq!(is_dev_version(text), dev, "{text}");
+            assert_eq!(Version::parse(text).expect(text).is_dev(), dev, "{text}");
+        }
     }
 
     #[test]

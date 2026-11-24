@@ -686,6 +686,7 @@ impl AppState {
         // has no compile-time platform branch, so the choice is made here and
         // pushed into the UI.
         ui.set_is_macos(cfg!(target_os = "macos"));
+        ui.set_app_name(crate::APP_NAME.into());
         let snapshot = self.prefs.snapshot();
         ui.apply_preferences(&snapshot);
         restore_panels(&ui, &snapshot);
@@ -3043,7 +3044,7 @@ mod subscribe_window_preferences_tests {
         let dir = tempfile::tempdir().expect("a temporary folder");
         let log = on_fresh_slint_thread(|| {
             crate::breadcrumbs::write_log_into(dir.path());
-            crate::breadcrumbs::start(env!("CARGO_PKG_VERSION"), crate::diagnostics::commit());
+            crate::breadcrumbs::start(crate::VERSION, crate::diagnostics::commit());
             let subscribed = subscribed_window();
             let _card = test_card(&subscribed);
             subscribed.window.show().expect("the headless platform shows it");

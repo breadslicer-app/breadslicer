@@ -25,7 +25,7 @@ pub(crate) fn build_about_window(
 ) -> Result<WiredAboutWindow, slint::PlatformError> {
     let about = AboutWindow::new()?;
     crate::window_chrome::wire_framed!(&about);
-    about.set_app_version(env!("CARGO_PKG_VERSION").into());
+    about.set_app_version(crate::VERSION.into());
     about.apply_preferences(&bus.snapshot());
 
     let about_weak = about.as_weak();

@@ -78,6 +78,8 @@ def main():
             f"/DVersionNumbers={file_version}",
             f"/DSourceDir={folder}",
             f"/DOutputDir={out}",
+            # A dev build installs as Breadslicer Dev, beside the release (#766).
+            *(["/DDev=1"] if re.search(r"-dev(\.|$)", version) else []),
             os.path.join(HERE, "breadslicer.iss"),
         ],
         check=True,
