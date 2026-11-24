@@ -451,8 +451,13 @@ fn is_default_reload_on_change(on: &bool) -> bool {
     *on
 }
 
-fn is_false(on: &bool) -> bool {
-    !*on
+/// Breadslicer asks GitHub for a newer version once at start (#762).
+fn default_check_updates() -> bool {
+    true
+}
+
+fn is_default_check_updates(on: &bool) -> bool {
+    *on
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -619,9 +624,12 @@ pub(crate) struct AppSettings {
         skip_serializing_if = "is_default_reload_on_change"
     )]
     reload_on_change: bool,
-    /// Whether Breadslicer asks GitHub, at start, if a newer one is out.
-    /// Off unless the person turns it on; omitted in TOML while off.
-    #[serde(default, skip_serializing_if = "is_false")]
+    /// Whether Breadslicer asks GitHub, a few seconds after it opens, if a
+    /// newer one is out (#762). On by default; omitted in TOML while on.
+    #[serde(
+        default = "default_check_updates",
+        skip_serializing_if = "is_default_check_updates"
+    )]
     check_updates: bool,
     /// The files last opened or saved, newest first (#381). User data: the
     /// diagnostics file leaves them out. Omitted in TOML while empty.
@@ -672,7 +680,7 @@ impl Default for AppSettings {
             show_start_dialog: default_show_start_dialog(),
             repair_on_import: default_repair_on_import(),
             reload_on_change: default_reload_on_change(),
-            check_updates: false,
+            check_updates: default_check_updates(),
             recent_files: Vec::new(),
             resin_prices: BTreeMap::new(),
             dead_zones: BTreeMap::new(),

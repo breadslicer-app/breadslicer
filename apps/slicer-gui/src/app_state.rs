@@ -1875,11 +1875,24 @@ impl AppState {
         }
     }
 
-    /// Asks GitHub whether a newer Breadslicer is out, when the person
-    /// turned that on in Privacy.
-    pub(crate) fn check_updates_if_asked(&self) {
+    /// Asks GitHub whether a newer Breadslicer is out (#762), a few seconds
+    /// after the window opens, unless the person turned it off in Privacy.
+    /// An update installs only while nothing is unsaved or running.
+    pub(crate) fn check_updates_if_asked(self: &Rc<Self>) {
+        let app = Rc::downgrade(self);
+        crate::update_check::set_safe_check(move || {
+            let Some(app) = app.upgrade() else {
+                return true;
+            };
+            app.main_windows.borrow().values().all(|w| {
+                !w.controller.document().is_dirty()
+                    && !w.window.get_loading()
+                    && !w.window.get_slicing_in_progress()
+                    && !w.window.get_repairing_in_progress()
+            })
+        });
         if self.prefs.snapshot().check_updates {
-            crate::update_check::start();
+            crate::update_check::check_after(std::time::Duration::from_secs(3));
         }
     }
 
@@ -1888,12 +1901,8 @@ impl AppState {
         // AppState -> main_windows(MainWindow) chain forms no strong cycle.
         ui.on_support_page_requested(|page| open_in_browser(support_page_url(page)));
         // A newer release (asked for in Privacy): its page on GitHub alone.
+        // A newer release (#762): its button, and Help > Check for Updates….
         crate::update_check::show_in(ui);
-        ui.on_update_clicked(|url| {
-            if url.starts_with("https://github.com/") {
-                open_in_browser(&url);
-            }
-        });
         // The creator's source (#745): a web address alone opens.
         ui.on_credit_link_clicked(|url| {
             let credit = crate::credit::Credit {
