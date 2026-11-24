@@ -149,9 +149,10 @@ Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#GuiExe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#GuiExe}"; Tasks: desktopicon
 
 [Registry]
-; .bread: opens with Breadslicer, when asked.
+; .bread: opens with Breadslicer, when asked. Uninstalling takes it off only
+; while it is still Breadslicer (see [Code]).
 Root: HKA; Subkey: "Software\Classes\.bread"; ValueType: string; ValueName: ""; \
-    ValueData: "{#ProgIdBread}"; Flags: uninsdeletevalue; Tasks: assocbread
+    ValueData: "{#ProgIdBread}"; Tasks: assocbread
 Root: HKA; Subkey: "Software\Classes\.bread\OpenWithProgids"; ValueType: string; \
     ValueName: "{#ProgIdBread}"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\{#ProgIdBread}"; ValueType: string; ValueName: ""; \
@@ -189,15 +190,18 @@ Root: HKA; Subkey: "Software\Classes\.obj\OpenWithProgids"; ValueType: string; \
 
 ; Explorer thumbnails of .bread files (bread-format's provider), whichever
 ; program opens them: on the .bread key, not on the ProgID. Not through the
-; DLL's own registration, which writes for the current user alone.
+; DLL's own registration, which writes for the current user alone. Other
+; programs ship the same provider: one already registered and in place is
+; left as it is, and uninstalling takes these keys off only while they point
+; here (see [Code]).
 Root: HKA; Subkey: "Software\Classes\CLSID\{#ThumbClsid}"; ValueType: string; ValueName: ""; \
-    ValueData: "Bread thumbnail provider"; Flags: uninsdeletekey
+    ValueData: "Bread thumbnail provider"; Check: ThumbnailsAreOurs
 Root: HKA; Subkey: "Software\Classes\CLSID\{#ThumbClsid}\InprocServer32"; ValueType: string; ValueName: ""; \
-    ValueData: "{app}\bread_thumbnails.dll"
+    ValueData: "{app}\bread_thumbnails.dll"; Check: ThumbnailsAreOurs
 Root: HKA; Subkey: "Software\Classes\CLSID\{#ThumbClsid}\InprocServer32"; ValueType: string; \
-    ValueName: "ThreadingModel"; ValueData: "Apartment"
+    ValueName: "ThreadingModel"; ValueData: "Apartment"; Check: ThumbnailsAreOurs
 Root: HKA; Subkey: "Software\Classes\.bread\ShellEx\{#ThumbHandler}"; ValueType: string; ValueName: ""; \
-    ValueData: "{#ThumbClsid}"; Flags: uninsdeletekey
+    ValueData: "{#ThumbClsid}"; Check: ThumbnailsAreOurs
 
 ; The command-line tool on the PATH, when asked.
 Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; \
@@ -257,8 +261,53 @@ begin
   RegWriteExpandStringValue(RootKey, SubKey, 'Path', Path);
 end;
 
+// The registry root the install wrote its classes to.
+function ClassesRoot(): Integer;
+begin
+  if IsAdminInstallMode then
+    Result := HKEY_LOCAL_MACHINE
+  else
+    Result := HKEY_CURRENT_USER;
+end;
+
+const
+  ThumbKey = 'Software\Classes\CLSID\{AF9572F8-199D-4710-88C0-5D553D38F093}';
+  ThumbShellKey = 'Software\Classes\.bread\ShellEx\{E357FCCD-A995-4576-B01F-234630154E96}';
+
+// Whether the thumbnail provider is Breadslicer's to register: no other one
+// registered whose file is still in place.
+function ThumbnailsAreOurs(): Boolean;
+var
+  Dll: string;
+begin
+  if not RegQueryStringValue(ClassesRoot(), ThumbKey + '\InprocServer32', '', Dll) then
+    Result := True
+  else
+    Result := (CompareText(Dll, ExpandConstant('{app}\bread_thumbnails.dll')) = 0) or not FileExists(Dll);
+end;
+
+// Takes off what of .bread is still Breadslicer's: the program that opens
+// it, and the thumbnail provider while it is the one installed here. What
+// another program put there since stays.
+procedure ForgetBread();
+var
+  Value: string;
+begin
+  if RegQueryStringValue(ClassesRoot(), 'Software\Classes\.bread', '', Value) and
+     (Value = '{#ProgIdBread}') then
+    RegDeleteValue(ClassesRoot(), 'Software\Classes\.bread', '');
+  if RegQueryStringValue(ClassesRoot(), ThumbKey + '\InprocServer32', '', Value) and
+     (CompareText(Value, ExpandConstant('{app}\bread_thumbnails.dll')) = 0) then
+  begin
+    RegDeleteKeyIncludingSubkeys(ClassesRoot(), ThumbKey);
+    RegDeleteKeyIncludingSubkeys(ClassesRoot(), ThumbShellKey);
+  end;
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
+  if CurUninstallStep = usUninstall then
+    ForgetBread();
   if CurUninstallStep = usPostUninstall then
   begin
     RemoveFromPath(HKEY_CURRENT_USER, 'Environment', ExpandConstant('{app}'));
