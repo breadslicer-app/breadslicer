@@ -1845,3 +1845,68 @@ mod again_tests {
         });
     }
 }
+
+#[cfg(test)]
+mod typed_numbers_tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use i_slint_backend_testing::{AccessibleRole, ElementHandle};
+    use slint::ComponentHandle;
+
+    use crate::MainWindow;
+
+    fn shown(window: &MainWindow, label: &str, role: AccessibleRole) -> ElementHandle {
+        ElementHandle::find_by_accessible_label(window, label)
+            .find(|e| e.size().height > 0.0 && e.accessible_role() == Some(role))
+            .unwrap_or_else(|| panic!("{label} is shown"))
+    }
+
+    /// A number typed in the arrange card and not entered with Enter is the
+    /// one its buttons use: Max copies 10, then Fill bed, fills 10 at most.
+    #[test]
+    fn a_number_typed_and_not_entered_counts_when_a_button_is_pressed() {
+        crate::test_support::slint_thread::on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("a main window");
+            window.show().expect("the headless platform shows it");
+            window
+                .window()
+                .set_size(slint::LogicalSize::new(1600.0, 1600.0));
+            window.set_has_scene(true);
+            window.set_selection_valid(true);
+            let row = slint::StandardListViewItem::from("Boar");
+            window.set_object_list(slint::ModelRc::new(slint::VecModel::from(vec![row])));
+            let seen = Rc::new(RefCell::new(Vec::<String>::new()));
+            {
+                let seen = seen.clone();
+                window.on_arrange_option_changed(move |code, value| {
+                    seen.borrow_mut().push(format!("option {code} {value}"));
+                });
+            }
+            {
+                let seen = seen.clone();
+                window.on_arrange_fill_requested(move || seen.borrow_mut().push("fill".into()));
+            }
+            {
+                let seen = seen.clone();
+                window.on_arrange_requested(move |selection| {
+                    seen.borrow_mut().push(format!("arrange {selection}"));
+                });
+            }
+            shown(&window, "Max copies", AccessibleRole::TextInput).set_accessible_value("10");
+            shown(&window, "Fill bed", AccessibleRole::Button).invoke_accessible_default_action();
+            assert_eq!(*seen.borrow(), ["option 4 10", "fill"]);
+            // Entered already: pressed again, nothing is committed twice.
+            seen.borrow_mut().clear();
+            window.set_arrange_max_copies(10.0);
+            shown(&window, "Fill bed", AccessibleRole::Button).invoke_accessible_default_action();
+            assert_eq!(*seen.borrow(), ["fill"]);
+            // The gap too, before Arrange all.
+            seen.borrow_mut().clear();
+            shown(&window, "Gap", AccessibleRole::TextInput).set_accessible_value("2.5");
+            shown(&window, "Arrange all", AccessibleRole::Button)
+                .invoke_accessible_default_action();
+            assert_eq!(*seen.borrow(), ["option 0 2.5", "arrange false"]);
+        });
+    }
+}

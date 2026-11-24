@@ -602,6 +602,20 @@ export component NumberField inherits HorizontalLayout {
         }
         return round(root.value * pow(10, root.decimals)) / pow(10, root.decimals);
     }
+
+    // Commits what is typed and not yet entered: a button that acts on this
+    // value calls it first, so a number typed and then the button pressed
+    // without Enter is the number used.
+    public function commit() {
+        if input.text == root.shown() {
+            return;
+        }
+        if input.text.is-float() {
+            root.committed(input.text.to-float());
+        } else if input.text == "" && root.placeholder != "" {
+            root.committed(0);
+        }
+    }
     changed value => {
         if !input.has-focus {
             input.text = root.shown();
