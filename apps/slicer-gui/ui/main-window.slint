@@ -75,8 +75,11 @@ export component MainWindow inherits Window {
     // `*` prefix while there are unsaved changes); with no file open it
     // falls back to the application name.
     title: root.document-name != ""
-        ? (root.scene-dirty ? "* " : "") + root.document-name + " — Breadslicer"
-        : "Breadslicer";
+        ? (root.scene-dirty ? "* " : "") + root.document-name + " — " + root.app-name
+        : root.app-name;
+    // Breadslicer, or Breadslicer Dev for a dev build installed beside the
+    // release (#766).
+    in property <string> app-name: "Breadslicer";
     icon: @image-url("../assets/images/breadslicer.png");
     default-font-family: "Noto Sans";
 
@@ -1703,7 +1706,7 @@ export component MainWindow inherits Window {
                             y: (parent.height - self.height) / 2;
                         }
                         Text {
-                            text: "Breadslicer";
+                            text: root.app-name;
                             font-weight: 600;
                             color: Theme.text;
                             vertical-alignment: center;

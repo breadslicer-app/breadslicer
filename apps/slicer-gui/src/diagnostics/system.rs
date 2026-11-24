@@ -74,7 +74,7 @@ pub(crate) fn report(
     let mut out = String::new();
     let _ = writeln!(out, "Breadslicer diagnostics");
     let _ = writeln!(out, "exported: {exported} UTC");
-    let _ = writeln!(out, "version: {}", env!("CARGO_PKG_VERSION"));
+    let _ = writeln!(out, "version: {}", crate::VERSION);
     let _ = writeln!(out, "commit: {}", super::commit());
     let _ = writeln!(
         out,
@@ -223,7 +223,7 @@ mod tests {
             monitors: vec![(2560, 1440, 1.25, Some(164.9)), (1920, 1080, 1.0, None)],
         };
         let text = report("2026-10-29 21:14", "es", &screens, true);
-        assert!(text.contains(&format!("version: {}", env!("CARGO_PKG_VERSION"))));
+        assert!(text.contains(&format!("version: {}", crate::VERSION)));
         assert!(text.contains("commit: "));
         assert!(text.contains("window: 1600 x 900 px, scale 1.25"));
         assert!(text.contains("monitor 1: 2560 x 1440 px, scale 1.25, 165 Hz"));

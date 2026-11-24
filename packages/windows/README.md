@@ -1,8 +1,8 @@
 # Windows packaging
 
 A release ships two files: an installer and a portable zip. Both are built
-from the same release folder, by `.github/workflows/release.yml` on a tag or
-by hand:
+from the same release folder, on the development machine (or by
+`.github/workflows/release.yml`, run by hand):
 
 1. `portable/package.py` writes the release folder and its zip: the two
    executables, the Visual C++ runtime they load (`vcruntime140.dll`,
@@ -21,5 +21,11 @@ registers the thumbnail provider (on the .bread key, whichever program opens
 them from the program that opens them now, and can add the command-line tool
 to the PATH. Uninstalling takes all of it off; the person's settings and
 profiles stay in their data folder.
+
+A dev build (version `X.Y.Z-dev.N`, built with `BREADSLICER_VERSION` set to it)
+gets an installer of its own, Breadslicer Dev: its own app id, folder, Start
+menu entry and uninstaller, so it installs beside the release and each one
+updates on its own. It takes .bread only when asked, and leaves the thumbnail
+provider to the release when that one registered it.
 
 Neither file is signed.

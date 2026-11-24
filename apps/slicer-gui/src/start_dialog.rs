@@ -136,7 +136,7 @@ impl StartDialog {
             }
         }));
         dialog.wire(window);
-        window.set_start_version(format!("v{}", env!("CARGO_PKG_VERSION")).into());
+        window.set_start_version(format!("v{}", crate::VERSION).into());
         dialog
     }
 

@@ -63,7 +63,7 @@ pub(crate) fn run_export(
 ) -> Result<()> {
     let file = File::create(dest)
         .with_context(|| format!("could not create the output archive {}", dest.display()))?;
-    let manifest = ExportManifest::stamped_now(env!("CARGO_PKG_VERSION"));
+    let manifest = ExportManifest::stamped_now(crate::VERSION);
     export_package(library_dir, selection, &manifest, file)
         .map_err(|e| anyhow!("could not export the profile package: {e}"))
 }

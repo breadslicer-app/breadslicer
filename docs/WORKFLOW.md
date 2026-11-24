@@ -20,6 +20,9 @@ Since 2026-10-26 the working tracker is the **issues of [breadslicer-app/breadsl
 - **Branches:** `dev` holds the work in progress; `main` holds what was released. A task branch,
   `issue/<n>-<slug>` (for example `issue/3-support-without-prism`), starts from `dev` and its PR goes
   back into `dev`. At a release, `dev` goes into `main` in one PR and the version tag is put on `main`.
+- **Two channels:** a release is built from `main` and installs as Breadslicer; a dev build is built
+  from `dev` with `BREADSLICER_VERSION=X.Y.Z-dev.N`, installs as Breadslicer Dev beside it and is
+  published as a GitHub pre-release. Each one's updater offers only versions of its own channel.
 - **PR content:** what changed and why; how it was tested (which tests ran; what still needs testing by hand); and `Closes #n`, or `Part of #n` if it covers one part.
 - **Merge:** Damian does it. Until we have our own CI, the PR states which tests ran.
 - **Repository rules that still apply:**
