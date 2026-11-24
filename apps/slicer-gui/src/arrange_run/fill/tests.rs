@@ -47,6 +47,7 @@ fn plate() -> Plate {
         min: [0.0, 0.0],
         max: [50.0, 40.0],
         floor: 0.0,
+        keep_out: bread_arrange::KeepOut::default(),
     }
 }
 
@@ -102,6 +103,7 @@ fn a_model_in_the_middle_moves_to_let_more_copies_in() {
         min: [0.0, 0.0],
         max: [50.0, 22.0],
         floor: 0.0,
+        keep_out: bread_arrange::KeepOut::default(),
     };
     let filled = fill_now(&document, &plate, old_margin()).expect("filled").0;
     assert!(moved(&filled, 0), "it moves");
@@ -218,6 +220,7 @@ fn a_fill_takes_at_most_the_copies_asked_for() {
         min: [3.0, 3.0],
         max: [17.0, 17.0],
         floor: 0.0,
+        keep_out: bread_arrange::KeepOut::default(),
     };
     let none = fill_now(&document, &small, old_margin()).expect("ran").0;
     assert!(none.copies.is_empty());
@@ -352,6 +355,7 @@ fn fill_bed_on_a_real_model() {
         min: [-w / 2.0, -h / 2.0],
         max: [w / 2.0, h / 2.0],
         floor: 0.0,
+        keep_out: bread_arrange::KeepOut::default(),
     };
     // In the plate's middle, as it stands.
     let t = world.translation();
@@ -501,6 +505,7 @@ fn fill_then_generate_keeps_the_supports_on_the_plate() {
         min: [-w / 2.0, -h / 2.0],
         max: [w / 2.0, h / 2.0],
         floor: 0.0,
+        keep_out: bread_arrange::KeepOut::default(),
     };
     let one_raft = std::env::var_os("BREADSLICER_EDGE_ONE_RAFT").is_some();
     let options = sc_geom::supports::SupportOptions {

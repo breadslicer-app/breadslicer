@@ -172,7 +172,7 @@ impl Job<'_> {
             target: [self.frame.width as i32 / 2, self.frame.height as i32 / 2],
             cell: self.frame.geo.cell,
             origin: self.frame.origin,
-            balance: free,
+            balance: free && self.frame.keep_out.rects().is_empty(),
             passes: self.settings.passes,
             deadline: Instant::now() + self.settings.time_limit,
             tight: self.settings.tight || rows,
@@ -698,6 +698,7 @@ mod tests {
             min: [0.0, 0.0],
             max: [60.0, 60.0],
             floor: 0.0,
+            keep_out: crate::KeepOut::default(),
         };
         let settings = Settings {
             turns: 1,

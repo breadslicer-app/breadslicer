@@ -163,6 +163,7 @@ pub(crate) fn m7() -> Plate {
         min: [-w / 2.0, -h / 2.0],
         max: [w / 2.0, h / 2.0],
         floor: 0.0,
+        keep_out: crate::KeepOut::default(),
     }
 }
 

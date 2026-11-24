@@ -93,6 +93,28 @@ impl Occupancy {
 }
 
 impl Occupancy {
+    /// Fills cells `lo` to `hi` (inclusive, clipped to the plate) in every
+    /// band: nothing may stand there at any height (#726).
+    pub(crate) fn block(&mut self, lo: [i64; 2], hi: [i64; 2]) {
+        let (width, height) = (self.width, self.height);
+        if width == 0 || height == 0 {
+            return;
+        }
+        let x0 = lo[0].max(0);
+        let x1 = hi[0].min(width as i64 - 1);
+        let y0 = lo[1].max(0);
+        let y1 = hi[1].min(height as i64 - 1);
+        if x0 > x1 || y0 > y1 {
+            return;
+        }
+        for slot in &mut self.bands {
+            let grid = slot.get_or_insert_with(|| BitGrid::new(width, height));
+            for y in y0..=y1 {
+                grid.set_span(y as usize, x0 as usize, x1 as usize);
+            }
+        }
+    }
+
     /// The plate with every `group` bands in one, which holds what any of
     /// them holds (#555).
     pub(crate) fn grouped(&self, group: usize) -> Occupancy {

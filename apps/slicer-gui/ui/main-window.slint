@@ -399,6 +399,11 @@ export component MainWindow inherits Window {
     in property <bool> support-hide-rafts-under-plate: true;
     callback support-hide-rafts-under-plate-toggled(bool);
     in property <bool> support-lines-under-plate;
+    // The screen's dead zones (#726): the drawing tool, and how many the
+    // printer has.
+    in-out property <bool> dead-zone-tool;
+    in property <int> dead-zone-count;
+    callback dead-zone-tool-toggled(bool);
     callback support-lines-under-plate-toggled(bool);
     // The Supports tab's IMPORTED SUPPORTS card (#259): the bodies of the
     // selected model's imported supports, 0 for none.
@@ -2911,6 +2916,22 @@ export component MainWindow inherits Window {
                                             toggled => {
                                                 root.support-lines-under-plate-toggled(self.checked);
                                             }
+                                        }
+                                    }
+                                    Card {
+                                        title: @tr("Inspector" => "SCREEN");
+
+                                        ScCheckBox {
+                                            text: @tr("Inspector" => "Mark dead zones");
+                                            checked: root.dead-zone-tool;
+                                            toggled => {
+                                                root.dead-zone-tool-toggled(self.checked);
+                                            }
+                                        }
+                                        Note {
+                                            text: root.dead-zone-count > 0
+                                                ? @tr("Inspector" => "{} dead zones on this printer's screen: Arrange keeps away from them, and Slice warns about what lands on one.", root.dead-zone-count)
+                                                : @tr("Inspector" => "Where the screen's pixels are dead, nothing is placed: drag on the plate to mark them, click one to take it away.");
                                         }
                                     }
                                 }

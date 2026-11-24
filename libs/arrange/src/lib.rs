@@ -86,6 +86,36 @@ pub struct Plate {
     pub max: [f64; 2],
     /// The plate's height.
     pub floor: f64,
+    /// Where nothing may stand, at any height: the dead zones of the
+    /// printer's screen (#726).
+    pub keep_out: KeepOut,
+}
+
+/// Rectangles of a plate nothing may stand on (#726), world mm
+/// `[x0, y0, x1, y1]`; as many as [`KeepOut::MAX`].
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct KeepOut {
+    rects: [[f64; 4]; KeepOut::MAX],
+    len: usize,
+}
+
+impl KeepOut {
+    /// How many rectangles a plate keeps out.
+    pub const MAX: usize = 16;
+
+    /// The first [`Self::MAX`] of `rects`.
+    pub fn new(rects: &[[f64; 4]]) -> Self {
+        let mut out = Self::default();
+        for rect in rects.iter().take(Self::MAX) {
+            out.rects[out.len] = *rect;
+            out.len += 1;
+        }
+        out
+    }
+
+    pub fn rects(&self) -> &[[f64; 4]] {
+        &self.rects[..self.len]
+    }
 }
 
 /// How to arrange.
@@ -212,6 +242,8 @@ struct Frame {
     height: usize,
     /// The angles a body may take.
     angles: Vec<f64>,
+    /// What the plate keeps clear (#726).
+    keep_out: KeepOut,
 }
 
 impl Frame {
@@ -243,6 +275,7 @@ impl Frame {
             angles: (0..turns)
                 .map(|k| TAU * f64::from(k) / f64::from(turns))
                 .collect(),
+            keep_out: plate.keep_out,
         }
     }
 
@@ -317,6 +350,21 @@ impl Frame {
                 ((fp.reference[1] - self.origin[1]) / cell).round() as i32 - fp.radius,
             ];
             occupancy.stamp(&fp.shapes[0], at);
+        }
+        // What the plate keeps clear holds every band, grown by half the
+        // gap as a body's footprint is (#726).
+        for rect in self.keep_out.rects() {
+            let half = self.geo.gap * 0.5;
+            let cell_of = |v: f64, k: usize| (v - self.origin[k]) / cell;
+            let lo = [
+                cell_of(rect[0] - half, 0).floor() as i64,
+                cell_of(rect[1] - half, 1).floor() as i64,
+            ];
+            let hi = [
+                cell_of(rect[2] + half, 0).ceil() as i64,
+                cell_of(rect[3] + half, 1).ceil() as i64,
+            ];
+            occupancy.block(lo, hi);
         }
         occupancy
     }
@@ -507,7 +555,9 @@ pub fn arrange(
         target: [frame.width as i32 / 2, frame.height as i32 / 2],
         cell,
         origin: frame.origin,
-        balance: fixed.is_empty(),
+        // A pile shifts to balance only on a plate nothing holds: neither
+        // a body that stays nor what the plate keeps out (#726).
+        balance: fixed.is_empty() && frame.keep_out.rects().is_empty(),
         passes: settings.passes,
         deadline: started + settings.time_limit,
         tight: settings.tight,

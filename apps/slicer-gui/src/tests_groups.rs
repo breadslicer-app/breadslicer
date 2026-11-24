@@ -101,6 +101,7 @@ fn a_group_is_picked_as_one_and_arranged_as_one_body() {
         min: [-60.0, -60.0],
         max: [60.0, 60.0],
         floor: 0.0,
+        keep_out: bread_arrange::KeepOut::default(),
     };
     document.set_selection(Selection::None);
     arrange_now(&document, &plate, ArrangeOptions::default(), false).expect("arranged");

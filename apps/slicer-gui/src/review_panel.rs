@@ -2915,7 +2915,13 @@ fn fix_all_leaves(finding: &Finding, drains: Option<usize>) -> SharedString {
             "Review",
             "Left by Fix All: more tips here are placed by hand, in the Supports tab."
         ),
-        (CheckKind::PlateEdge | CheckKind::TooTall | CheckKind::EmptyLayer, _) => ctr!(
+        (
+            CheckKind::PlateEdge
+            | CheckKind::TooTall
+            | CheckKind::EmptyLayer
+            | CheckKind::DeadZone,
+            _,
+        ) => ctr!(
             "Review",
             "Left by Fix All: it does not move or resize models. Arrange the plate by hand."
         ),

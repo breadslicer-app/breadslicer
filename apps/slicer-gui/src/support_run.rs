@@ -12704,6 +12704,7 @@ mod hand_edit_tests {
                 min: [0.0, 0.0],
                 max: [60.0, 40.0],
                 floor: 0.0,
+                keep_out: bread_arrange::KeepOut::default(),
             };
             let outcome =
                 arrange_now(&document, &plate, ArrangeOptions::default(), false).expect("arranged");
@@ -12774,6 +12775,7 @@ mod hand_edit_tests {
                 min: [0.0, 0.0],
                 max: [60.0, 40.0],
                 floor: 0.0,
+                keep_out: bread_arrange::KeepOut::default(),
             };
             let options = ArrangeOptions {
                 max_copies: 3,
@@ -12917,6 +12919,7 @@ mod hand_edit_tests {
                 min: [0.0, 0.0],
                 max: [223.642, 126.976],
                 floor: 0.0,
+                keep_out: bread_arrange::KeepOut::default(),
             };
             let t = Instant::now();
             let (filled, sets) =
@@ -12988,6 +12991,7 @@ mod hand_edit_tests {
                 min: [20.0 - 2.0 * size[0] - 5.0, 20.0 - size[1] / 2.0 - 5.0],
                 max: [20.0 + 2.0 * size[0] + 5.0, 20.0 + size[1] / 2.0 + 5.0],
                 floor: 0.0,
+                keep_out: bread_arrange::KeepOut::default(),
             };
             document.set_selection(Selection::One(LeafId(model)));
             let options = ArrangeOptions {

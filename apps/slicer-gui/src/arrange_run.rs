@@ -883,6 +883,8 @@ pub(crate) fn plate_of(volume: &crate::build_volume::BuildVolume) -> Plate {
         min: [f64::from(lo.x), f64::from(lo.y)],
         max: [f64::from(hi.x), f64::from(hi.y)],
         floor: f64::from(lo.z),
+        // The printer's dead zones, on the first plate's middle (#726).
+        keep_out: crate::dead_zones::keep_out_at([0.0, 0.0]),
     }
 }
 

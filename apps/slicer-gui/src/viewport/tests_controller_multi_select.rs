@@ -574,6 +574,7 @@ fn arrange_selection_moves_every_selected_model_and_nothing_else() {
         min: [0.0, 0.0],
         max: [60.0, 40.0],
         floor: 0.0,
+        keep_out: bread_arrange::KeepOut::default(),
     };
     crate::arrange_run::arrange_now(
         &ctrl.document(),

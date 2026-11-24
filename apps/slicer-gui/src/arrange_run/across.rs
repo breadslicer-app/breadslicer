@@ -55,6 +55,7 @@ pub(crate) fn plate_at(volume: &BuildVolume, index: u32) -> Plate {
     let (dx, dy) = (f64::from(at.x), f64::from(at.y));
     plate.min = [plate.min[0] + dx, plate.min[1] + dy];
     plate.max = [plate.max[0] + dx, plate.max[1] + dy];
+    plate.keep_out = crate::dead_zones::keep_out_at([dx, dy]);
     plate
 }
 

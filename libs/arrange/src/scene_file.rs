@@ -134,6 +134,7 @@ impl SceneJob {
                 min: [v[0], v[1]],
                 max: [v[2], v[3]],
                 floor: v[4],
+                keep_out: crate::KeepOut::default(),
             });
         }
         job.raft_top = get_f64(inp)?;

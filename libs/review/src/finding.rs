@@ -50,11 +50,13 @@ pub enum CheckKind {
     /// What the review took off the layers by itself: debris and pixels
     /// thinner than the printer can make (#432). A note, nothing to do.
     CleanUp,
+    /// Something that lands on a dead zone of the printer's screen (#726).
+    DeadZone,
 }
 
 impl CheckKind {
     /// Every kind, in listing order.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Island,
         Self::ResinTrap,
         Self::SuctionCup,
@@ -66,6 +68,7 @@ impl CheckKind {
         Self::EmptyLayer,
         Self::ModelInRaft,
         Self::CleanUp,
+        Self::DeadZone,
     ];
 
     /// A stable machine name, as the JSON output spells it
@@ -83,6 +86,7 @@ impl CheckKind {
             Self::EmptyLayer => "empty-layer",
             Self::ModelInRaft => "model-in-raft",
             Self::CleanUp => "clean-up",
+            Self::DeadZone => "dead-zone",
         }
     }
 
@@ -100,6 +104,7 @@ impl CheckKind {
             Self::EmptyLayer => "Empty layer",
             Self::ModelInRaft => "Model in raft",
             Self::CleanUp => "Clean-up",
+            Self::DeadZone => "Dead zone",
         }
     }
 }

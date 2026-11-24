@@ -138,6 +138,7 @@ fn job() -> Option<(SceneJob, String)> {
                 min: [x, 0.0],
                 max: [x + M7[0], M7[1]],
                 floor: 0.0,
+                keep_out: crate::KeepOut::default(),
             }
         })
         .collect();

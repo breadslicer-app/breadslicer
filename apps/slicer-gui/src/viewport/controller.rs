@@ -277,6 +277,21 @@ pub(crate) struct ViewportController {
     on_emptied: RefCell<Option<Rc<dyn Fn()>>>,
     /// What reloads models from their files (#721).
     on_reload: RefCell<Option<Rc<dyn Fn(Vec<sc_scene::NodeId>)>>>,
+    /// The screen's dead zones (#726): those of the printer, the drawing
+    /// tool, the one being drawn, what an edit goes to, and their marks
+    /// joined to the overlay.
+    dead_zones: RefCell<(Vec<crate::dead_zones::DeadZone>, u32)>,
+    dead_zone_tool: Cell<bool>,
+    dead_zone_drawing: Cell<Option<(u32, [f64; 2], [f64; 2])>>,
+    on_dead_zone_edit: RefCell<Option<Rc<dyn Fn(crate::dead_zones::DeadZoneEdit)>>>,
+    dead_zone_marks: RefCell<Option<crate::mesh_render::Overlay>>,
+    dead_zone_joined: RefCell<
+        Option<(
+            Option<crate::mesh_render::Overlay>,
+            crate::mesh_render::Overlay,
+            crate::mesh_render::Overlay,
+        )>,
+    >,
     /// The drag tool armed, for tests that run without a window.
     #[cfg(test)]
     drag_tool_for_test: Cell<Option<SupportDragKind>>,
@@ -457,6 +472,12 @@ impl ViewportController {
             queued_imports: RefCell::new(Vec::new()),
             on_emptied: RefCell::new(None),
             on_reload: RefCell::new(None),
+            dead_zones: RefCell::new((Vec::new(), 1)),
+            dead_zone_tool: Cell::new(false),
+            dead_zone_drawing: Cell::new(None),
+            on_dead_zone_edit: RefCell::new(None),
+            dead_zone_marks: RefCell::new(None),
+            dead_zone_joined: RefCell::new(None),
             #[cfg(test)]
             drag_tool_for_test: Cell::new(None),
             surface_brush: RefCell::new(None),
@@ -547,6 +568,12 @@ impl ViewportController {
             queued_imports: RefCell::new(Vec::new()),
             on_emptied: RefCell::new(None),
             on_reload: RefCell::new(None),
+            dead_zones: RefCell::new((Vec::new(), 1)),
+            dead_zone_tool: Cell::new(false),
+            dead_zone_drawing: Cell::new(None),
+            on_dead_zone_edit: RefCell::new(None),
+            dead_zone_marks: RefCell::new(None),
+            dead_zone_joined: RefCell::new(None),
             #[cfg(test)]
             drag_tool_for_test: Cell::new(None),
             surface_brush: RefCell::new(None),
@@ -3122,6 +3149,138 @@ impl ViewportController {
         *self.on_emptied.borrow_mut() = Some(emptied);
     }
 
+    /// The dead zones of the printer's screen (#726), drawn on each of the
+    /// `plates`.
+    pub(crate) fn set_dead_zones(&self, zones: Vec<crate::dead_zones::DeadZone>, plates: u32) {
+        *self.dead_zones.borrow_mut() = (zones, plates);
+        self.redraw_dead_zones();
+    }
+
+    /// Sets what a drawing of a dead zone goes to (#726).
+    pub(crate) fn set_on_dead_zone_edit(&self, edit: Rc<dyn Fn(crate::dead_zones::DeadZoneEdit)>) {
+        *self.on_dead_zone_edit.borrow_mut() = Some(edit);
+    }
+
+    /// Arms or puts away the dead zones' drawing tool (#726).
+    pub(crate) fn set_dead_zone_tool(&self, on: bool) {
+        self.dead_zone_tool.set(on);
+        self.dead_zone_drawing.set(None);
+        self.redraw_dead_zones();
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_dead_zone_tool(on);
+            ui.set_status_notice(if on {
+                ctr!(
+                    "DeadZones",
+                    "Drag on the plate where the screen's pixels are dead; click a zone to take it away."
+                )
+            } else {
+                Default::default()
+            });
+        }
+    }
+
+    fn redraw_dead_zones(&self) {
+        let (zones, plates) = self.dead_zones.borrow().clone();
+        let drawing = self
+            .dead_zone_drawing
+            .get()
+            .map(|(plate, a, b)| (plate, crate::dead_zones::DeadZone::between(a, b)));
+        let volume = self.session.build_volume();
+        *self.dead_zone_marks.borrow_mut() =
+            crate::dead_zones::overlay(&volume, plates, &zones, drawing);
+        self.mark_dirty();
+    }
+
+    /// Where `cursor` meets the plate's floor: the plate, and the point
+    /// from its middle, mm.
+    fn floor_under(&self, cursor: ScreenPoint) -> Option<(u32, [f64; 2])> {
+        let vp = self.render.viewport()?;
+        let camera = self.camera.camera_cell().borrow();
+        let ray = picking::ray_from_pixel(
+            camera.as_ref()?,
+            crate::mesh_render::default_fov_y(),
+            vp.width(),
+            vp.height(),
+            cursor.x,
+            cursor.y,
+        );
+        let (x, y) = picking::ray_z_plane_intersection(&ray, 0.0)?;
+        let volume = self.session.build_volume();
+        let plate = self.session.document().plates().active();
+        let at = crate::plates::offset(&volume, plate);
+        Some((plate, [f64::from(x - at.x), f64::from(y - at.y)]))
+    }
+
+    fn dead_zone_down(&self, cursor: ScreenPoint) -> bool {
+        if !self.dead_zone_tool.get() {
+            return false;
+        }
+        if let Some((plate, p)) = self.floor_under(cursor) {
+            self.dead_zone_drawing.set(Some((plate, p, p)));
+        }
+        true
+    }
+
+    fn dead_zone_move(&self, cursor: ScreenPoint) -> bool {
+        let Some((plate, a, _)) = self.dead_zone_drawing.get() else {
+            return false;
+        };
+        if let Some((_, b)) = self.floor_under(cursor) {
+            self.dead_zone_drawing.set(Some((plate, a, b)));
+            self.redraw_dead_zones();
+        }
+        true
+    }
+
+    fn dead_zone_up(&self) -> bool {
+        if !self.dead_zone_tool.get() {
+            return false;
+        }
+        let Some((_, a, b)) = self.dead_zone_drawing.take() else {
+            return true;
+        };
+        let zone = crate::dead_zones::DeadZone::between(a, b);
+        let edit = if zone.max[0] - zone.min[0] < 0.3 && zone.max[1] - zone.min[1] < 0.3 {
+            // A click: the zone under it goes.
+            let zones = self.dead_zones.borrow().0.clone();
+            zones
+                .iter()
+                .position(|z| z.holds(a))
+                .map(crate::dead_zones::DeadZoneEdit::Remove)
+        } else {
+            Some(crate::dead_zones::DeadZoneEdit::Add(zone))
+        };
+        self.redraw_dead_zones();
+        let on_edit = self.on_dead_zone_edit.borrow().clone();
+        if let (Some(edit), Some(on_edit)) = (edit, on_edit) {
+            on_edit(edit);
+        }
+        true
+    }
+
+    /// `overlay` with the dead zones' marks (#726).
+    fn with_dead_zones(
+        &self,
+        overlay: Option<crate::mesh_render::Overlay>,
+    ) -> Option<crate::mesh_render::Overlay> {
+        let Some(marks) = self.dead_zone_marks.borrow().clone() else {
+            return overlay;
+        };
+        let Some(base) = overlay else {
+            return Some(marks);
+        };
+        let mut joined = self.dead_zone_joined.borrow_mut();
+        if let Some((b, m, both)) = joined.as_ref()
+            && b.as_ref().is_some_and(|b| Arc::ptr_eq(b, &base))
+            && Arc::ptr_eq(m, &marks)
+        {
+            return Some(both.clone());
+        }
+        let both: crate::mesh_render::Overlay = base.iter().chain(marks.iter()).cloned().collect();
+        *joined = Some((Some(base), marks, both.clone()));
+        Some(both)
+    }
+
     /// Sets what reloads models from their files (#721).
     pub(crate) fn set_on_reload(&self, reload: Rc<dyn Fn(Vec<sc_scene::NodeId>)>) {
         *self.on_reload.borrow_mut() = Some(reload);
@@ -3655,7 +3814,11 @@ impl ViewportController {
 
     pub(crate) fn on_pointer_down(&self, cursor: ScreenPoint, mut modifiers: PointerModifiers) {
         self.pointer_mods.set((modifiers.control, modifiers.shift));
-        if self.lasso_down(cursor) || self.brush_down(cursor, &modifiers) || self.cut_down(cursor) {
+        if self.dead_zone_down(cursor)
+            || self.lasso_down(cursor)
+            || self.brush_down(cursor, &modifiers)
+            || self.cut_down(cursor)
+        {
             return;
         }
         // Shift+click with Add armed hangs the support from the nearest one
@@ -3709,7 +3872,10 @@ impl ViewportController {
         // gizmo drag and hover run in Prepare and Transform.
         self.input.note_hover_cursor(cursor);
         self.pointer_mods.set((modifiers.control, modifiers.shift));
-        if self.lasso_move(cursor) || self.brush_move(cursor, &modifiers) {
+        if self.dead_zone_move(cursor)
+            || self.lasso_move(cursor)
+            || self.brush_move(cursor, &modifiers)
+        {
             return;
         }
         if self.support_drag_move(cursor) || self.cut_move(cursor) {
@@ -3751,7 +3917,7 @@ impl ViewportController {
     /// Shift, the object joins the selection or leaves it, #13), or selects
     /// what a Shift drag's box touches, on top of the selection.
     pub(crate) fn on_pointer_up(&self, cursor: ScreenPoint, modifiers: PointerModifiers) {
-        if self.lasso_up(cursor) || self.brush_up() || self.cut_up(cursor) {
+        if self.dead_zone_up() || self.lasso_up(cursor) || self.brush_up() || self.cut_up(cursor) {
             return;
         }
         if let Some(ui) = self.ui.upgrade() {
@@ -6756,6 +6922,7 @@ impl ViewportController {
             .over(self.overlay.borrow().as_ref(), marks_shown);
         let overlay = self.with_measure(overlay);
         let overlay = self.with_lay_hover(overlay);
+        let overlay = self.with_dead_zones(overlay);
         renderer.set_overlay(overlay.as_ref());
         let hints = (self.session.section() == WorkspaceSection::Supports)
             .then(|| self.hint_marks.borrow().clone())

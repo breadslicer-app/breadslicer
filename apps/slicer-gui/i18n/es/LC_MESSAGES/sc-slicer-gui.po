@@ -11256,3 +11256,27 @@ msgstr "{} recargado desde el disco; ahuecándolo otra vez."
 msgctxt "Reload"
 msgid "Reloaded {} from disk."
 msgstr "{} recargado desde el disco."
+
+msgctxt "DeadZones"
+msgid "Pick your printer first: the dead zones are its own."
+msgstr "Elegí primero tu impresora: las zonas muertas son de ella."
+
+msgctxt "DeadZones"
+msgid "Drag on the plate where the screen's pixels are dead; click a zone to take it away."
+msgstr "Arrastrá sobre la cama donde la pantalla tiene píxeles muertos; un clic sobre una zona la quita."
+
+msgctxt "Inspector"
+msgid "SCREEN"
+msgstr "PANTALLA"
+
+msgctxt "Inspector"
+msgid "Mark dead zones"
+msgstr "Marcar zonas muertas"
+
+msgctxt "Inspector"
+msgid "{} dead zones on this printer's screen: Arrange keeps away from them, and Slice warns about what lands on one."
+msgstr "{} zonas muertas en la pantalla de esta impresora: Acomodar las esquiva y Laminar avisa si algo cae en una."
+
+msgctxt "Inspector"
+msgid "Where the screen's pixels are dead, nothing is placed: drag on the plate to mark them, click one to take it away."
+msgstr "Donde la pantalla tiene píxeles muertos no se pone nada: arrastrá sobre la cama para marcarlos, un clic sobre una zona la quita."

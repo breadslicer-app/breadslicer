@@ -167,6 +167,8 @@ pub(crate) struct PreferencesSnapshot {
     pub recent_files: Vec<RecentFile>,
     /// What the user pays for each resin (#101).
     pub resin_prices: BTreeMap<MaterialId, crate::resin_cost::ResinPrice>,
+    /// The dead zones of each printer's screen (#726).
+    pub dead_zones: crate::dead_zones::DeadZonesByPrinter,
 }
 
 impl From<&PreferencesSnapshot> for PrintDefaults {
@@ -238,6 +240,7 @@ impl PreferencesSnapshot {
             reload_on_change: true,
             recent_files: Vec::new(),
             resin_prices: BTreeMap::new(),
+            dead_zones: BTreeMap::new(),
         }
     }
 }
@@ -288,6 +291,8 @@ pub(crate) enum PreferencesChange {
     RepairOnImport,
     /// Reload a model when its file changes (#721).
     ReloadOnChange,
+    /// The dead zones of a printer's screen (#726).
+    DeadZones,
     /// A file was opened or saved, or taken off the recent list (#381).
     RecentFiles,
     /// A resin's price (#101).

@@ -624,6 +624,10 @@ pub(crate) struct AppSettings {
     /// it changes with the country and the shop. Omitted in TOML while empty.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     resin_prices: BTreeMap<MaterialId, crate::resin_cost::ResinPrice>,
+    /// The dead zones of each of the person's printers' screens (#726):
+    /// theirs, not the shared profile's. Omitted in TOML while empty.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    dead_zones: crate::dead_zones::DeadZonesByPrinter,
 }
 
 impl Default for AppSettings {
@@ -662,6 +666,7 @@ impl Default for AppSettings {
             reload_on_change: default_reload_on_change(),
             recent_files: Vec::new(),
             resin_prices: BTreeMap::new(),
+            dead_zones: BTreeMap::new(),
         }
     }
 }
@@ -1121,6 +1126,14 @@ impl AppSettings {
         prices: BTreeMap<MaterialId, crate::resin_cost::ResinPrice>,
     ) {
         self.resin_prices = prices;
+    }
+
+    pub(crate) fn dead_zones(&self) -> crate::dead_zones::DeadZonesByPrinter {
+        self.dead_zones.clone()
+    }
+
+    pub(crate) fn set_dead_zones(&mut self, zones: crate::dead_zones::DeadZonesByPrinter) {
+        self.dead_zones = zones;
     }
 }
 

@@ -323,21 +323,31 @@ fn review_stacks(
                 .map(|report| without_deleted(report, deleted))
             {
                 None => ReviewOutcome::Cancelled,
-                Some(mut report) => ReviewOutcome::Reviewed {
-                    tips: tip_plan(&report.islands, &report.growths, supports).map(|plan| {
-                        plan.note_too_small(&mut report.findings, &report.islands);
-                        plan.note_no_room(&mut report.findings, &report.growths);
-                        Box::new(plan)
-                    }),
-                    growths: report.growths,
-                    frame: supports.frame.clone(),
-                    findings: report.findings,
-                    fills: report.fills,
-                    erased: report.erased,
-                    islands: report.islands,
-                    took: report.timings.total,
-                    loads: Arc::new(report.loads),
-                },
+                Some(mut report) => {
+                    // What lands on the screen's dead zones (#726).
+                    let zones = crate::dead_zones::current();
+                    if !zones.is_empty() {
+                        report
+                            .findings
+                            .extend(crate::dead_zones::findings(leaves, &zones));
+                        sort_findings(&mut report.findings);
+                    }
+                    ReviewOutcome::Reviewed {
+                        tips: tip_plan(&report.islands, &report.growths, supports).map(|plan| {
+                            plan.note_too_small(&mut report.findings, &report.islands);
+                            plan.note_no_room(&mut report.findings, &report.growths);
+                            Box::new(plan)
+                        }),
+                        growths: report.growths,
+                        frame: supports.frame.clone(),
+                        findings: report.findings,
+                        fills: report.fills,
+                        erased: report.erased,
+                        islands: report.islands,
+                        took: report.timings.total,
+                        loads: Arc::new(report.loads),
+                    }
+                }
             },
         )
     })
@@ -606,6 +616,26 @@ mod review_tests {
         profile: &SliceProfile,
     ) -> ReviewOutcome {
         review_for_test(leaves, filled, profile, &[])
+    }
+
+    /// #726: a model or a support standing on a dead zone of the screen
+    /// is found, over the layers it stands there; a zone nothing stands on
+    /// says nothing.
+    #[test]
+    fn what_stands_on_a_dead_zone_is_found() {
+        use crate::dead_zones::{DeadZone, findings};
+        let leaves = slice_scene(&model_and_support(), &profile(4)).expect("the scene slices");
+        // Under the support, the cube at x 3.
+        let under = DeadZone::between([2.8, -0.2], [3.2, 0.2]);
+        let found = findings(&leaves, &[under]);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].check, CheckKind::DeadZone);
+        assert_eq!((found[0].first_layer, found[0].last_layer), (0, 3));
+        // Inside the cube, past its edges: its ring has no corner there.
+        let inside = DeadZone::between([-0.1, -0.1], [0.1, 0.1]);
+        assert_eq!(findings(&leaves, &[inside]).len(), 1);
+        let far = DeadZone::between([7.0, 7.0], [8.0, 8.0]);
+        assert!(findings(&leaves, &[far]).is_empty());
     }
 
     #[test]

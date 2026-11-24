@@ -43,6 +43,7 @@ fn plate(w: f64, h: f64) -> Plate {
         min: [0.0, 0.0],
         max: [w, h],
         floor: 0.0,
+        keep_out: crate::KeepOut::default(),
     }
 }
 
@@ -214,6 +215,36 @@ fn a_body_that_stays_is_kept_clear_of() {
     assert_eq!(out.placements[0], None, "it stays");
     assert!(out.left_off().is_empty());
     assert_kept_apart(&bodies, &out.placements, &plate, &settings);
+}
+
+/// What the plate keeps out (#726) holds nothing: a body goes elsewhere,
+/// and Fill bed leaves it free too.
+#[test]
+fn what_the_plate_keeps_out_holds_nothing() {
+    let mesh = cube();
+    let bodies: Vec<Body> = (0..4)
+        .map(|_| body(vec![boxed(&mesh, [8.0, 8.0, 5.0], [0.0, 0.0, 0.0])]))
+        .collect();
+    let mut plate = plate(60.0, 40.0);
+    // The left half.
+    plate.keep_out = crate::KeepOut::new(&[[0.0, 0.0, 30.0, 40.0]]);
+    let settings = quarter_turns();
+    let out = arrange(&bodies, &plate, &settings, &AtomicBool::new(false)).unwrap();
+    assert!(out.left_off().is_empty());
+    for (body, placement) in bodies.iter().zip(&out.placements) {
+        for (lo, _) in boxes(body, *placement) {
+            assert!(lo[0] >= 30.0 - 1e-6, "{lo:?} in the zone");
+        }
+    }
+    let filled = fill_now(&bodies[..1], &[0], &plate, &settings, None);
+    let (all, placements) = filled_plate(&bodies[..1], &filled);
+    assert!(all.len() > 1, "copies fit beside the zone");
+    // The original stays where it stood; the copies keep out.
+    for (body, placement) in all.iter().zip(&placements).filter(|(_, p)| p.is_some()) {
+        for (lo, _) in boxes(body, *placement) {
+            assert!(lo[0] >= 30.0 - 1e-6, "{lo:?} in the zone");
+        }
+    }
 }
 
 #[test]
@@ -446,6 +477,7 @@ fn plates_in_a_row(count: usize, w: f64, h: f64) -> Vec<Plate> {
                 min: [x, 0.0],
                 max: [x + w, h],
                 floor: 0.0,
+                keep_out: crate::KeepOut::default(),
             }
         })
         .collect()

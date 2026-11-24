@@ -51,6 +51,7 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
         reload_on_change,
         recent_files,
         resin_prices,
+        dead_zones,
     } = theirs;
     AppSettings {
         version,
@@ -154,6 +155,7 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
             recent_files,
         ),
         resin_prices: merge_map(&base.resin_prices, &ours.resin_prices, resin_prices),
+        dead_zones: merge_map(&base.dead_zones, &ours.dead_zones, dead_zones),
     }
 }
 

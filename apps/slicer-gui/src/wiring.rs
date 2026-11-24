@@ -251,6 +251,10 @@ pub(crate) fn wire_viewport_input(
     }
     {
         let ctrl = ctrl.clone();
+        ui.on_dead_zone_tool_toggled(move |on| ctrl.set_dead_zone_tool(on));
+    }
+    {
+        let ctrl = ctrl.clone();
         ui.on_toggle_projection_requested(move || {
             remember_projection(&prefs, ctrl.on_toggle_projection())
         });
