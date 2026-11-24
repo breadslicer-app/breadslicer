@@ -1,11 +1,14 @@
-Breadslicer {version} (pre-release, Windows)
+Breadslicer {version} (open beta, Windows)
 
-A resin (MSLA) slicer. This is an early alpha: it works, but expect rough edges.
+A resin (MSLA) slicer. This is a beta: it works, and it still has rough edges.
+There is also an installer (Breadslicer-{version}-windows-x64-setup.exe) on the
+same release page; this zip is the version that needs no installing.
 
 Getting started
 - Unzip the whole folder anywhere and open breadslicer.exe. Nothing to install.
-- Keep the "slicer/profiles" folder next to the exe: it holds the printers and resins.
-- The exe is not signed yet, so Windows may say "Windows protected your PC".
+- Keep the "slicer/profiles" folder and the .dll files next to the exe: they hold the
+  printers and resins, and the Visual C++ runtime the app needs.
+- The exe is not signed, so Windows may say "Windows protected your PC".
   Click "More info", then "Run anyway".
 - sc-slicer-cli.exe is the command-line slicer (run it with --help).
 

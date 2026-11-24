@@ -66,6 +66,7 @@ export global Prefs {
     in-out property <bool> show-start-dialog: true;
     in-out property <bool> repair-on-import: true;
     in-out property <bool> reload-on-change: true;
+    in-out property <bool> check-updates: false;
     in property <int> silenced-message-count: 0;
     // The template printer files are named by (#730), and a name it gives.
     in-out property <string> export-name-template;
@@ -124,6 +125,7 @@ export global Prefs {
     callback show-start-dialog-changed(bool);
     callback repair-on-import-changed(bool);
     callback reload-on-change-changed(bool);
+    callback check-updates-changed(bool);
     callback export-name-template-edited(string);
     callback show-all-messages-again();
 
@@ -913,6 +915,22 @@ component PrivacyPage inherits VerticalLayout {
                 wrap: word-wrap;
                 font-weight: 600;
                 color: Theme.text;
+            }
+        }
+    }
+    PrefSection {
+        text: @tr("PreferencesLayer" => "NEW VERSIONS");
+    }
+    PrefRow {
+        title: @tr("PrivacyPreferences" => "Check for a new version at start");
+        hint: @tr("PrivacyPreferences" => "Asks GitHub for the list of Breadslicer's releases when the app opens, and shows a link at the top when a newer one is out. That request is all that leaves this computer.");
+        ScCheckBox {
+            text: "";
+            checked: Prefs.check-updates;
+            accessible-label: @tr("PrivacyPreferences" => "Check for a new version at start");
+            toggled => {
+                Prefs.check-updates = self.checked;
+                Prefs.check-updates-changed(self.checked);
             }
         }
     }

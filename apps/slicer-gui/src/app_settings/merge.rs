@@ -49,6 +49,7 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
         show_start_dialog,
         repair_on_import,
         reload_on_change,
+        check_updates,
         recent_files,
         resin_prices,
         dead_zones,
@@ -149,6 +150,7 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
             &ours.reload_on_change,
             reload_on_change,
         ),
+        check_updates: pick(&base.check_updates, &ours.check_updates, check_updates),
         recent_files: crate::recent_files::merge(
             &base.recent_files,
             &ours.recent_files,

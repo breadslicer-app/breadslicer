@@ -49,3 +49,19 @@ the source as their licenses require:
   factorisation solves the supports' beam frame. Used as a crate. See
   libs/structure.
   https://github.com/sarah-quinones/faer-rs
+
+- ureq (Martin Algesten and contributors; MIT or Apache-2.0), with rustls
+  (MIT, Apache-2.0 or ISC), ring (Apache-2.0 and ISC) and webpki-roots
+  (CDLA-Permissive-2.0, https://cdla.dev/permissive-2-0/; the root
+  certificates of Mozilla's trust store): the check for a new version, off
+  unless the person turns it on. Used as crates.
+  https://github.com/algesten/ureq
+  https://github.com/rustls/rustls
+  https://github.com/rustls/webpki-roots
+
+- The Windows release ships, beside the executables, the Visual C++ runtime
+  DLLs (vcruntime140.dll, vcruntime140_1.dll, msvcp140.dll) under Microsoft's
+  terms for redistributable code, and bread_thumbnails.dll, the Explorer
+  thumbnail provider of .bread files built from bread-format (Apache-2.0,
+  see NOTICE.bread-format).
+  https://github.com/breadslicer-app/bread-format

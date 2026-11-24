@@ -14,6 +14,7 @@
 mod aa_level;
 mod caliper;
 mod credit;
+mod update_check;
 mod dead_zones;
 mod about_window;
 mod app_settings;
@@ -434,6 +435,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     // Scenes an earlier run left unsaved (#18), then the start dialog (#381)
     // when the launch opened no file.
     app.greet(empty_window);
+    // Whether a newer Breadslicer is out, when the person asked to hear.
+    app.check_updates_if_asked();
     startup_timing::mark("recovery scan");
 
     #[cfg(target_os = "macos")]

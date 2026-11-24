@@ -245,6 +245,10 @@ export component MainWindow inherits Window {
     // A short note of what the last action did, shown in the status bar in
     // place of the hint until Rust clears it a few seconds later.
     in property <string> status-notice: "";
+    // A newer Breadslicer, when the person asked to hear of it: its version
+    // and its page ("" while none).
+    in property <string> update-version: "";
+    in property <string> update-url: "";
     // What the last load changed or left out of the file (#301), such as
     // "Opened with 2 notes"; empty when nothing. A click opens the list.
     in property <string> import-notes: "";
@@ -978,6 +982,7 @@ export component MainWindow inherits Window {
     callback export-diagnostics-requested();
     // The top bar's links to support the project; Rust opens the page.
     callback support-page-requested(SupportPage);
+    callback update-clicked(string);
     callback show-preferences-requested();
     callback new-window-requested();
     // Requests the persisted menu layout be switched to the given value.
@@ -1792,6 +1797,37 @@ export component MainWindow inherits Window {
                         spacing: 4px;
                         alignment: end;
 
+                        if root.update-version != "": Rectangle {
+                            y: (parent.height - self.height) / 2;
+                            height: 26px;
+                            border-radius: Theme.radius;
+                            background: update-touch.has-hover ? Theme.raised : transparent;
+                            border-width: 1px;
+                            border-color: Theme.brand;
+                            accessible-role: button;
+                            accessible-label: update-text.text;
+                            accessible-action-default => {
+                                root.update-clicked(root.update-url);
+                            }
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                padding-right: 8px;
+                                update-text := Text {
+                                    text: root.bar-compact
+                                        ? root.update-version
+                                        : @tr("Breadslicer {} is out", root.update-version);
+                                    color: Theme.text;
+                                    font-size: Theme.font-sm;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            update-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.update-clicked(root.update-url);
+                                }
+                            }
+                        }
                         if !root.bar-tiny: SupportLink {
                             label: @tr("Support us on Patreon");
                             compact: root.bar-compact;

@@ -1,12 +1,14 @@
-Breadslicer {version} (versión preliminar, Windows)
+Breadslicer {version} (beta abierta, Windows)
 
-Un laminador para resina (MSLA). Es una alfa temprana: funciona, pero puede tener errores.
+Un laminador para resina (MSLA). Es una beta: funciona, y todavía puede tener errores.
+En la misma página de la versión también está el instalador
+(Breadslicer-{version}-windows-x64-setup.exe); este zip es la versión sin instalar.
 
 Cómo usarlo
 - Descomprimí la carpeta entera donde quieras y abrí breadslicer.exe. No hace falta instalar nada.
-- La carpeta "slicer/profiles" tiene que quedar al lado del exe: ahí están las impresoras
-  y las resinas.
-- El exe todavía no está firmado, así que Windows puede mostrar "Windows protegió tu PC".
+- La carpeta "slicer/profiles" y los archivos .dll tienen que quedar al lado del exe: ahí
+  están las impresoras y las resinas, y el runtime de Visual C++ que necesita la app.
+- El exe no está firmado, así que Windows puede mostrar "Windows protegió tu PC".
   Hacé clic en "Más información" y después en "Ejecutar de todos modos".
 - sc-slicer-cli.exe es el laminador por línea de comandos (probá con --help).
 

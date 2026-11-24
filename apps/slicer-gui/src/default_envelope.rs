@@ -279,6 +279,7 @@ mod default_envelope_tests {
             PreferencesChange::StartDialog,
             PreferencesChange::RepairOnImport,
             PreferencesChange::ReloadOnChange,
+            PreferencesChange::CheckUpdates,
             PreferencesChange::DeadZones,
             PreferencesChange::RecentFiles,
         ] {

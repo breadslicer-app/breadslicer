@@ -451,6 +451,10 @@ fn is_default_reload_on_change(on: &bool) -> bool {
     *on
 }
 
+fn is_false(on: &bool) -> bool {
+    !*on
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub(crate) struct AppSettings {
     /// On-disk schema version. Files predating this field are read with the
@@ -615,6 +619,10 @@ pub(crate) struct AppSettings {
         skip_serializing_if = "is_default_reload_on_change"
     )]
     reload_on_change: bool,
+    /// Whether Breadslicer asks GitHub, at start, if a newer one is out.
+    /// Off unless the person turns it on; omitted in TOML while off.
+    #[serde(default, skip_serializing_if = "is_false")]
+    check_updates: bool,
     /// The files last opened or saved, newest first (#381). User data: the
     /// diagnostics file leaves them out. Omitted in TOML while empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -664,6 +672,7 @@ impl Default for AppSettings {
             show_start_dialog: default_show_start_dialog(),
             repair_on_import: default_repair_on_import(),
             reload_on_change: default_reload_on_change(),
+            check_updates: false,
             recent_files: Vec::new(),
             resin_prices: BTreeMap::new(),
             dead_zones: BTreeMap::new(),
@@ -1107,6 +1116,14 @@ impl AppSettings {
 
     pub(crate) fn set_reload_on_change(&mut self, on: bool) {
         self.reload_on_change = on;
+    }
+
+    pub(crate) fn check_updates(&self) -> bool {
+        self.check_updates
+    }
+
+    pub(crate) fn set_check_updates(&mut self, on: bool) {
+        self.check_updates = on;
     }
 
     pub(crate) fn recent_files(&self) -> Vec<RecentFile> {

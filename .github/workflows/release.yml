@@ -1,7 +1,8 @@
-# Builds the portable Windows zip of a release from a clean checkout of a tag (#46).
-# A pushed tag v* makes a draft release with the zip attached, for a person to check and publish
-# (drafts are never announced on Discord). A manual run builds the zip of the branch it runs on
-# and keeps it as a workflow artifact, with no release.
+# Builds the portable Windows zip and the installer of a release from a clean checkout of a tag
+# (#46, #205). A pushed tag v* makes a draft release with both attached, for a person to check and
+# publish (drafts are never announced on Discord), unless the release exists already (made by hand).
+# A manual run builds both from the branch it runs on and keeps them as a workflow artifact, with
+# no release.
 name: Release
 on:
   push:
@@ -9,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Version written in the zip's name and read-me files, without the v
+        description: Version written in the files' names and read-me files, without the v
         required: true
         default: 0.0.0-test
 permissions:
@@ -17,7 +18,7 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -35,26 +36,52 @@ jobs:
         run: |
           cargo build --release --locked -p sc-slicer-gui --bin breadslicer
           cargo build --release --locked -p sc-slicer-cli
+      - name: Explorer thumbnails of .bread files (bread-format's provider)
+        shell: bash
+        run: |
+          git clone --depth 1 --branch bread-thumbnails-v0.1.0 https://github.com/breadslicer-app/bread-format bread-format
+          cd bread-format
+          RUSTFLAGS="-C target-feature=+crt-static" cargo build --release -p bread-thumbnails
+          echo "THUMBNAILS=$PWD/target/release/bread_thumbnails.dll" >> "$GITHUB_ENV"
+      - name: Visual C++ runtime and Inno Setup
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $vs = & $vswhere -latest -products * -property installationPath
+          $crt = Get-ChildItem (Join-Path $vs 'VC/Redist/MSVC/*/x64/Microsoft.VC*.CRT') -Directory |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          "RUNTIME_DIR=$($crt.FullName)" >> $env:GITHUB_ENV
+          choco install innosetup --no-progress -y
       - name: Package
         shell: bash
         run: |
-          python packages/windows/portable/package.py --version "$VERSION" --bin-dir target/release --out dist | tee dist-summary.txt
+          python packages/windows/portable/package.py --version "$VERSION" --bin-dir target/release \
+            --runtime-dir "$RUNTIME_DIR" --thumbnails "$THUMBNAILS" --out dist | tee dist-summary.txt
           echo "ZIP=$(grep '^ZIP ' dist-summary.txt | cut -d' ' -f2-)" >> "$GITHUB_ENV"
           echo "ZIP_SHA256=$(grep '^SHA256 ' dist-summary.txt | cut -d' ' -f2)" >> "$GITHUB_ENV"
-      - name: Keep the zip (manual run)
+          python packages/windows/installer.py --release-dir "dist/Breadslicer-$VERSION-windows-x64" --out dist | tee setup-summary.txt
+          echo "SETUP=$(grep '^SETUP ' setup-summary.txt | cut -d' ' -f2-)" >> "$GITHUB_ENV"
+          echo "SETUP_SHA256=$(grep '^SHA256 ' setup-summary.txt | cut -d' ' -f2)" >> "$GITHUB_ENV"
+      - name: Keep the files (manual run)
         if: github.ref_type != 'tag'
         uses: actions/upload-artifact@v4
         with:
           name: Breadslicer-${{ env.VERSION }}-windows-x64
-          path: ${{ env.ZIP }}
+          path: |
+            ${{ env.ZIP }}
+            ${{ env.SETUP }}
       - name: Draft release (tag)
         if: github.ref_type == 'tag'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            echo "The release exists already: nothing to do."
+            exit 0
+          fi
           prerelease=""
           case "$VERSION" in *-*) prerelease="--prerelease" ;; esac
-          printf 'Breadslicer %s for Windows, portable: unzip it anywhere and open breadslicer.exe.\n\nSHA-256 of the zip: %s\n\nSource code of this version: https://github.com/%s/tree/%s\n' \
-            "$VERSION" "$ZIP_SHA256" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" > notes.md
-          gh release create "$GITHUB_REF_NAME" "$ZIP" --draft $prerelease --title "Breadslicer $VERSION" --notes-file notes.md
+          printf 'Breadslicer %s for Windows: the installer, or the portable zip (unzip it anywhere and open breadslicer.exe).\n\nSHA-256 of the installer: %s\nSHA-256 of the zip: %s\n\nSource code of this version: https://github.com/%s/tree/%s\n' \
+            "$VERSION" "$SETUP_SHA256" "$ZIP_SHA256" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" > notes.md
+          gh release create "$GITHUB_REF_NAME" "$SETUP" "$ZIP" --draft $prerelease --title "Breadslicer $VERSION" --notes-file notes.md

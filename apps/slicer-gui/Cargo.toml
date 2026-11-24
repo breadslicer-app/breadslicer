@@ -1,6 +1,6 @@
 [package]
 name = "sc-slicer-gui"
-version = "0.4.0-alpha.1"
+version = "0.5.0-beta.1"
 edition.workspace = true
 license = "AGPL-3.0-or-later"
 autotests = false
@@ -68,6 +68,7 @@ pollster = "0.4"
 serde = { version = "1.0.228", features = ["derive"] }
 sys-locale = "0.3.2"
 toml = "1.1.2"
+ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6.2"
