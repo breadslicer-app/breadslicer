@@ -66,7 +66,7 @@ export global Prefs {
     in-out property <bool> show-start-dialog: true;
     in-out property <bool> repair-on-import: true;
     in-out property <bool> reload-on-change: true;
-    in-out property <bool> check-updates: false;
+    in-out property <bool> check-updates: true;
     in property <int> silenced-message-count: 0;
     // The template printer files are named by (#730), and a name it gives.
     in-out property <string> export-name-template;
@@ -923,7 +923,7 @@ component PrivacyPage inherits VerticalLayout {
     }
     PrefRow {
         title: @tr("PrivacyPreferences" => "Check for a new version at start");
-        hint: @tr("PrivacyPreferences" => "Asks GitHub for the list of Breadslicer's releases when the app opens, and shows a link at the top when a newer one is out. That request is all that leaves this computer.");
+        hint: @tr("PrivacyPreferences" => "A few seconds after the app opens, it asks GitHub for the list of Breadslicer's releases, once. When a newer one is out, a button at the top downloads it, checks it and installs it when you say so. That request is all that leaves this computer unless you click it.");
         ScCheckBox {
             text: "";
             checked: Prefs.check-updates;
