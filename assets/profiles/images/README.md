@@ -37,15 +37,14 @@ From the DragonFruit printer plugins, MIT (same terms as above):
 - `uniformation-gk3-pro.png`: https://github.com/Open-Resin-Alliance/df-plugin-uniformation (`printers/assets/gk3-series/gk3-pro.png`)
 - `uniformation-gk3-ultra.png`: https://github.com/Open-Resin-Alliance/df-plugin-uniformation (`printers/assets/gk3-series/gk3-ultra.png`)
 - `uniformation-gktwo.png`: https://github.com/Open-Resin-Alliance/df-plugin-uniformation (`printers/assets/gktwo-series/gktwo.png`)
-- `uniformation-gktwo-12k-upgrade.png`: https://github.com/Open-Resin-Alliance/df-plugin-uniformation (`printers/assets/gktwo-series/gktwo.png`)
 
 The manufacturers' own product photos, cut out onto a transparent
 background and scaled to 320 x 320 px; each depicts the maker's hardware,
 and product names are trademarks of their respective owners:
 
-- anycubic: `anycubic-photon`, `anycubic-photon-mono-screen`, `anycubic-photon-s-upgrade`
+- anycubic: `anycubic-photon`
 - creality: `creality-halot-lite`, `creality-halot-mage`, `creality-halot-mage-pro`, `creality-halot-max`, `creality-halot-one`, `creality-halot-one-plus`, `creality-halot-one-pro`, `creality-halot-ray`, `creality-halot-sky`, `creality-halot-sky-plus`, `creality-halot-x1`, `creality-halot-x1-max`, `creality-ld-002h`, `creality-ld-002r`, `creality-ld-006`
-- elegoo: `elegoo-mars`, `elegoo-mars-c`, `elegoo-mars-mono-screen`, `elegoo-mars-pro`, `elegoo-mars-pro-fhd`, `elegoo-mars-rgb-screen-v2`, `elegoo-saturn`, `elegoo-saturn-8k`, `elegoo-saturn-s`
+- elegoo: `elegoo-mars`, `elegoo-mars-c`, `elegoo-mars-pro`, `elegoo-saturn`, `elegoo-saturn-8k`, `elegoo-saturn-s`
 - epax: `epax-e10-5k`, `epax-e10-8k`, `epax-e10-mono`, `epax-e6-mono`, `epax-x1`, `epax-x1-4ks`, `epax-x10`, `epax-x10-4k-mono`, `epax-x10-5k`, `epax-x133-4k-mono`, `epax-x133-6k`, `epax-x156-4k-color`, `epax-x1k-2k-mono`
 - flashforge: `flashforge-explorer-max`, `flashforge-foto-6-0`, `flashforge-foto-8-9`
 - kelant: `kelant-s400`
@@ -62,14 +61,8 @@ and product names are trademarks of their respective owners:
 
 A printer with no photo of its own shows a sibling with the same body:
 
-- `anycubic-photon-mono-screen.png`: the Photon body with a mono screen.
-- `anycubic-photon-s-upgrade.png`: the Photon S body.
-- `elegoo-mars-mono-screen.png`: the Mars body with a mono screen.
-- `elegoo-mars-pro-fhd.png`: the Mars Pro body with an FHD screen.
-- `elegoo-mars-rgb-screen-v2.png`: the Mars body with a new screen.
 - `phrozen-sonic-mighty-12k-upgrade.png`: the 12K upgrade kit goes into the Mighty 8K body.
 - `phrozen-sonic-mighty-revo-16k.png`: Phrozen sells the 16K screen as an upgrade kit for the Revo body.
-- `uniformation-gktwo-12k-upgrade.png`: same photo as uniformation-gktwo: the 12K upgrade is a new screen in the same body.
 - `uniz-ibee-klipper.png`: the IBEE with Klipper firmware.
 - `voxelab-proxima-6-svgx.png`: the Proxima 6 with SVGX firmware.
 
