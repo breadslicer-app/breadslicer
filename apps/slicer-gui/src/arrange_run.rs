@@ -1909,4 +1909,64 @@ mod typed_numbers_tests {
             assert_eq!(*seen.borrow(), ["option 0 2.5", "arrange false"]);
         });
     }
+
+    /// #774: the whole box of a number field takes the click, not just
+    /// where its digits sit: a click near the right edge of the empty Max
+    /// copies field puts the caret there, and what is typed then counts.
+    #[test]
+    fn a_click_anywhere_in_a_number_field_puts_the_caret_in_it() {
+        use slint::platform::{PointerEventButton, WindowEvent};
+        crate::test_support::slint_thread::on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("a main window");
+            window.show().expect("the headless platform shows it");
+            window
+                .window()
+                .set_size(slint::LogicalSize::new(1600.0, 1600.0));
+            window.set_has_scene(true);
+            window.set_selection_valid(true);
+            let row = slint::StandardListViewItem::from("Boar");
+            window.set_object_list(slint::ModelRc::new(slint::VecModel::from(vec![row])));
+            let seen = Rc::new(RefCell::new(Vec::<String>::new()));
+            {
+                let seen = seen.clone();
+                window.on_arrange_option_changed(move |code, value| {
+                    seen.borrow_mut().push(format!("option {code} {value}"));
+                });
+            }
+            {
+                let seen = seen.clone();
+                window.on_arrange_fill_requested(move || seen.borrow_mut().push("fill".into()));
+            }
+            crate::test_support::slint_thread::render_frames();
+            // The box ends where the Gap field's box ends: the fields share
+            // one width and line up on the right.
+            let max = shown(&window, "Max copies", AccessibleRole::TextInput);
+            let gap = shown(&window, "Gap", AccessibleRole::TextInput);
+            let (at, size) = (max.absolute_position(), max.size());
+            let gap_end = gap.absolute_position().x + gap.size().width;
+            let x = gap_end.max(at.x + size.width) + 4.0;
+            let position = slint::LogicalPosition::new(x, at.y + size.height / 2.0);
+            for event in [
+                WindowEvent::PointerMoved { position },
+                WindowEvent::PointerPressed {
+                    position,
+                    button: PointerEventButton::Left,
+                },
+                WindowEvent::PointerReleased {
+                    position,
+                    button: PointerEventButton::Left,
+                },
+            ] {
+                window.window().dispatch_event(event);
+            }
+            for event in [
+                WindowEvent::KeyPressed { text: "7".into() },
+                WindowEvent::KeyReleased { text: "7".into() },
+            ] {
+                window.window().dispatch_event(event);
+            }
+            shown(&window, "Fill bed", AccessibleRole::Button).invoke_accessible_default_action();
+            assert_eq!(*seen.borrow(), ["option 4 7", "fill"], "clicked at x {x}");
+        });
+    }
 }

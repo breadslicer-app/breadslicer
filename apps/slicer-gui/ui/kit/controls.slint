@@ -641,6 +641,15 @@ export component NumberField inherits HorizontalLayout {
         border-color: input.has-focus ? Theme.indicator : Theme.border;
         border-radius: Theme.radius;
 
+        // The whole box takes the click, not just where the digits sit.
+        TouchArea {
+            enabled: root.enabled;
+            mouse-cursor: text;
+            clicked => {
+                input.focus();
+            }
+        }
+
         HorizontalLayout {
             padding-left: 8px;
             padding-right: 8px;
