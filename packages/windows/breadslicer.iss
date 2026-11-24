@@ -24,19 +24,31 @@
   #define OutputDir "."
 #endif
 
-#define AppName "Breadslicer"
+; A dev build (`installer.py` passes /DDev for a version X.Y.Z-dev.N, #766)
+; is an app of its own, Breadslicer Dev: its own id, folder, Start menu
+; entry, file types and uninstaller, so it installs and updates beside the
+; release. It takes .bread only when asked.
+#ifdef Dev
+  #define AppName "Breadslicer Dev"
+  #define AppGuid "{{507E3DB7-48BE-4AD6-91B7-94FE0B2420A9}"
+  #define ProgPrefix "BreadslicerDev"
+#else
+  #define AppName "Breadslicer"
+  #define AppGuid "{{125F8ED7-70C9-43A4-8622-F4E435433124}"
+  #define ProgPrefix "Breadslicer"
+#endif
 #define GuiExe "breadslicer.exe"
-#define ProgIdBread "Breadslicer.bread"
-#define ProgIdStl "Breadslicer.stl"
-#define ProgId3mf "Breadslicer.3mf"
-#define ProgIdObj "Breadslicer.obj"
+#define ProgIdBread ProgPrefix + ".bread"
+#define ProgIdStl ProgPrefix + ".stl"
+#define ProgId3mf ProgPrefix + ".3mf"
+#define ProgIdObj ProgPrefix + ".obj"
 ; The thumbnail provider (bread-format's crate bread-thumbnails) and the
 ; shell's key for thumbnail handlers. `{{` is a literal `{`.
 #define ThumbClsid "{{AF9572F8-199D-4710-88C0-5D553D38F093}"
 #define ThumbHandler "{{E357FCCD-A995-4576-B01F-234630154E96}"
 
 [Setup]
-AppId={{125F8ED7-70C9-43A4-8622-F4E435433124}
+AppId={#AppGuid}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
@@ -127,7 +139,11 @@ it.TypeObj=Modello 3D OBJ
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+#ifdef Dev
+Name: "assocbread"; Description: "{cm:AssocBread}"; GroupDescription: "{cm:AssocGroup}"; Flags: unchecked
+#else
 Name: "assocbread"; Description: "{cm:AssocBread}"; GroupDescription: "{cm:AssocGroup}"
+#endif
 Name: "openwith"; Description: "{cm:OpenWith}"; GroupDescription: "{cm:AssocGroup}"
 Name: "addtopath"; Description: "{cm:AddCliToPath}"; Flags: unchecked
 

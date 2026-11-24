@@ -240,7 +240,7 @@ fn wire_general(prefs: &Prefs, bus: &Rc<PreferencesBus>, _weak: &slint::Weak<Mai
                 PreferencesChange::CheckUpdates
             });
             if on {
-                crate::update_check::start();
+                crate::update_check::check(false);
             }
         }
     });

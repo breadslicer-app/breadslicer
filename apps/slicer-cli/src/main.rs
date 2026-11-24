@@ -19,6 +19,13 @@
 static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod commands;
+
+/// The version this build calls itself: `BREADSLICER_VERSION` when it was
+/// built (a dev build, #766), the package's version otherwise.
+pub(crate) const VERSION: &str = match option_env!("BREADSLICER_VERSION") {
+    Some(version) => version,
+    None => env!("CARGO_PKG_VERSION"),
+};
 mod config;
 mod filesystem;
 
@@ -134,8 +141,7 @@ fn main() -> Result<()> {
             &libraries,
         ),
         CmdOptions::Version => {
-            const SLICER_CLI_VERSION: &str = env!("CARGO_PKG_VERSION");
-            println!("Version: {SLICER_CLI_VERSION}");
+            println!("Version: {VERSION}");
             Ok(())
         }
     }

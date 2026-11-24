@@ -96,7 +96,7 @@ pub(crate) fn export(
         )
     })?;
 
-    let manifest = ExportManifest::stamped_now(env!("CARGO_PKG_VERSION"));
+    let manifest = ExportManifest::stamped_now(crate::VERSION);
 
     export_package(library_dir, &selection, &manifest, file)
         .map_err(|e| anyhow!("could not export the profile package: {e}"))?;

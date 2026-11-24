@@ -75,8 +75,11 @@ export component MainWindow inherits Window {
     // `*` prefix while there are unsaved changes); with no file open it
     // falls back to the application name.
     title: root.document-name != ""
-        ? (root.scene-dirty ? "* " : "") + root.document-name + " — Breadslicer"
-        : "Breadslicer";
+        ? (root.scene-dirty ? "* " : "") + root.document-name + " — " + root.app-name
+        : root.app-name;
+    // Breadslicer, or Breadslicer Dev for a dev build installed beside the
+    // release (#766).
+    in property <string> app-name: "Breadslicer";
     icon: @image-url("../assets/images/breadslicer.png");
     default-font-family: "Noto Sans";
 
@@ -245,10 +248,9 @@ export component MainWindow inherits Window {
     // A short note of what the last action did, shown in the status bar in
     // place of the hint until Rust clears it a few seconds later.
     in property <string> status-notice: "";
-    // A newer Breadslicer, when the person asked to hear of it: its version
-    // and its page ("" while none).
-    in property <string> update-version: "";
-    in property <string> update-url: "";
+    // A newer Breadslicer (#762): the button's text, as the update goes
+    // (offered, downloading, ready to install); "" hides it.
+    in property <string> update-label: "";
     // What the last load changed or left out of the file (#301), such as
     // "Opened with 2 notes"; empty when nothing. A click opens the list.
     in property <string> import-notes: "";
@@ -982,7 +984,9 @@ export component MainWindow inherits Window {
     callback export-diagnostics-requested();
     // The top bar's links to support the project; Rust opens the page.
     callback support-page-requested(SupportPage);
-    callback update-clicked(string);
+    callback update-clicked();
+    // Help > Check for Updates… (#762).
+    callback check-updates-requested();
     callback show-preferences-requested();
     callback new-window-requested();
     // Requests the persisted menu layout be switched to the given value.
@@ -1571,7 +1575,9 @@ export component MainWindow inherits Window {
 
             MenuItem {
                 title: @tr("MenuBar" => "Check for Updates…");
-                enabled: false;
+                activated => {
+                    root.check-updates-requested();
+                }
             }
 
             MenuSeparator { }
@@ -1700,7 +1706,7 @@ export component MainWindow inherits Window {
                             y: (parent.height - self.height) / 2;
                         }
                         Text {
-                            text: "Breadslicer";
+                            text: root.app-name;
                             font-weight: 600;
                             color: Theme.text;
                             vertical-alignment: center;
@@ -1797,7 +1803,7 @@ export component MainWindow inherits Window {
                         spacing: 4px;
                         alignment: end;
 
-                        if root.update-version != "": Rectangle {
+                        if root.update-label != "": Rectangle {
                             y: (parent.height - self.height) / 2;
                             height: 26px;
                             border-radius: Theme.radius;
@@ -1807,15 +1813,13 @@ export component MainWindow inherits Window {
                             accessible-role: button;
                             accessible-label: update-text.text;
                             accessible-action-default => {
-                                root.update-clicked(root.update-url);
+                                root.update-clicked();
                             }
                             HorizontalLayout {
                                 padding-left: 8px;
                                 padding-right: 8px;
                                 update-text := Text {
-                                    text: root.bar-compact
-                                        ? root.update-version
-                                        : @tr("Breadslicer {} is out", root.update-version);
+                                    text: root.update-label;
                                     color: Theme.text;
                                     font-size: Theme.font-sm;
                                     vertical-alignment: center;
@@ -1824,7 +1828,7 @@ export component MainWindow inherits Window {
                             update-touch := TouchArea {
                                 mouse-cursor: pointer;
                                 clicked => {
-                                    root.update-clicked(root.update-url);
+                                    root.update-clicked();
                                 }
                             }
                         }
@@ -4087,7 +4091,9 @@ export component MainWindow inherits Window {
 
                 MenuItem {
                     title: @tr("MenuBar" => "Check for Updates…");
-                    enabled: false;
+                    activated => {
+                        root.check-updates-requested();
+                    }
                 }
 
                 MenuSeparator { }

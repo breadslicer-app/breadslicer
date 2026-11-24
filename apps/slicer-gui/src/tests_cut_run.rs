@@ -624,8 +624,26 @@ fn imported_supports_of_a_piece_cut_off_go_with_the_cut() {
         f.run.apply();
         // The two under the bottom half stay; the column goes.
         assert_eq!(faces(), 24, "the column holding the top half went");
+        // The top half, left with no supports, gets Breadslicer's (#763);
+        // the bottom half keeps the imported ones.
+        let (_, wanted) = f
+            .document
+            .supports_wanted()
+            .expect("the piece cut off waits for supports");
+        assert_eq!(wanted.ids().len(), 1, "one piece: {:?}", wanted.ids());
+        let top = wanted.ids()[0];
+        let lowest = f
+            .document
+            .with_scene(|s| {
+                let q = s.leaf(top)?;
+                q.minimum_world_z(q.world_transform())
+            })
+            .flatten()
+            .expect("the piece");
+        assert!(lowest > -1.0, "the top half, not the bottom one: {lowest}");
         assert!(f.document.undo().unwrap());
         assert_eq!(faces(), 36, "undo brings it back");
+        assert!(f.document.supports_wanted().is_none(), "nothing waits");
     });
 }
 
@@ -676,6 +694,9 @@ fn a_real_presupported_model_cut() {
             leaves(&f)
         );
         assert!(bodies() < before, "some supports held the piece cut off");
+        let wanted = f.document.supports_wanted().map(|(_, w)| w.ids());
+        eprintln!("pieces waiting for Breadslicer supports: {wanted:?}");
+        assert_eq!(wanted.map(|w| w.len()), Some(1), "the piece cut off waits (#763)");
     });
 }
 

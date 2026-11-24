@@ -1,6 +1,6 @@
 [package]
 name = "bread-gui-render"
-version = "0.5.0-beta.1"
+version = "0.5.0-beta.2"
 edition.workspace = true
 license = "AGPL-3.0-or-later"
 description = "The 3D view of the Breadslicer GUI: the wgpu renderer, the camera, picking, the transform gizmo and the print file previews, apart from the Slint interface."

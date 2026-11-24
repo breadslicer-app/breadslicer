@@ -6,7 +6,7 @@
 
 **A native resin (MSLA) slicer. Slice by slice.**
 
-[![Latest release](https://img.shields.io/github/v/release/breadslicer-app/breadslicer?include_prereleases&label=release&color=e08a3c)](https://github.com/breadslicer-app/breadslicer/releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/breadslicer-app/breadslicer?label=release&color=e08a3c)](https://github.com/breadslicer-app/breadslicer/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/breadslicer-app/breadslicer/total?color=e08a3c)](https://github.com/breadslicer-app/breadslicer/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows-0078D4?logo=windows&logoColor=white)](https://github.com/breadslicer-app/breadslicer/releases/latest)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE.md)

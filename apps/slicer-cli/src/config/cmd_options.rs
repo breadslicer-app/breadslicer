@@ -563,7 +563,7 @@ pub(crate) fn get_cmd_options() -> OptionParser<CmdOptions> {
         // .header(header) // TODO: Implement these lines for the embedded help
         .footer("Add `--help` after any of the subcommands to learn more about them.")
         .fallback_to_usage()
-        .version(env!("CARGO_PKG_VERSION"))
+        .version(crate::VERSION)
 }
 
 #[cfg(test)]

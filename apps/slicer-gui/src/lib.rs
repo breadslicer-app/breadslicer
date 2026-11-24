@@ -15,6 +15,22 @@ mod aa_level;
 mod caliper;
 mod credit;
 mod update_check;
+
+/// The version this build calls itself: `BREADSLICER_VERSION` when it was
+/// built, so a dev build (`X.Y.Z-dev.N`, #766) comes from the same code as
+/// the release; the package's version otherwise.
+pub(crate) const VERSION: &str = match option_env!("BREADSLICER_VERSION") {
+    Some(version) => version,
+    None => env!("CARGO_PKG_VERSION"),
+};
+
+/// The name the app goes by: dev builds are Breadslicer Dev, so they tell
+/// themselves apart from the release installed beside them (#766).
+pub(crate) const APP_NAME: &str = if update_check::is_dev_version(VERSION) {
+    "Breadslicer Dev"
+} else {
+    "Breadslicer"
+};
 mod dead_zones;
 mod about_window;
 mod app_settings;
@@ -222,7 +238,7 @@ fn install_crash_log() {
                 file,
                 "=== panic at unix {stamp} (v{}): {info}
 {}",
-                env!("CARGO_PKG_VERSION"),
+                VERSION,
                 std::backtrace::Backtrace::force_capture()
             );
             // What the app was doing just before, kept in memory even with the
@@ -266,7 +282,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     // Before anything reads or writes the per-user folders (logs, settings).
     let migrated = sc_app_paths::migrate_legacy_user_dirs();
     install_crash_log();
-    breadcrumbs::start(env!("CARGO_PKG_VERSION"), diagnostics::commit());
+    breadcrumbs::start(VERSION, diagnostics::commit());
     // `breadslicer://` links start this program (#114).
     link_scheme::register();
     for dir in &migrated {
@@ -435,7 +451,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     // Scenes an earlier run left unsaved (#18), then the start dialog (#381)
     // when the launch opened no file.
     app.greet(empty_window);
-    // Whether a newer Breadslicer is out, when the person asked to hear.
+    // Whether a newer Breadslicer is out (#762), once, a few seconds in.
     app.check_updates_if_asked();
     startup_timing::mark("recovery scan");
 

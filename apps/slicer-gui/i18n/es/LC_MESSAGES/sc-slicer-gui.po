@@ -11281,11 +11281,6 @@ msgctxt "Inspector"
 msgid "Where the screen's pixels are dead, nothing is placed: drag on the plate to mark them, click one to take it away."
 msgstr "Donde la pantalla tiene píxeles muertos no se pone nada: arrastrá sobre la cama para marcarlos, un clic sobre una zona la quita."
 
-#: ui/main-window.slint
-msgctxt "MainWindow"
-msgid "Breadslicer {} is out"
-msgstr "Salió Breadslicer {}"
-
 #: ui/preferences/preferences-layer.slint
 msgctxt "PreferencesLayer"
 msgid "NEW VERSIONS"
@@ -11298,5 +11293,57 @@ msgstr "Buscar una versión nueva al abrir"
 
 #: ui/preferences/preferences-layer.slint
 msgctxt "PrivacyPreferences"
+msgid "A few seconds after the app opens, it asks GitHub for the list of Breadslicer's releases, once. When a newer one is out, a button at the top downloads it, checks it and installs it when you say so. That request is all that leaves this computer unless you click it."
+msgstr "Unos segundos después de abrir la app, le pide una vez a GitHub la lista de versiones de Breadslicer. Si hay una más nueva, un botón arriba la baja, la verifica y la instala cuando vos digas. Ese pedido es lo único que sale de esta computadora, salvo que toques el botón."
+
+#: src/update_check.rs
+msgctxt "UpdateCheck"
+msgid "Breadslicer {} available · Update"
+msgstr "Breadslicer {} disponible · Actualizar"
+
+#: src/update_check.rs
+msgctxt "UpdateCheck"
+msgid "Downloading update · {}% · Cancel"
+msgstr "Bajando la actualización · {}% · Cancelar"
+
+#: src/update_check.rs
+msgctxt "UpdateCheck"
+msgid "Install Breadslicer {}"
+msgstr "Instalar Breadslicer {}"
+
+#: src/update_check.rs
+msgctxt "UpdateCheck"
+msgid "Breadslicer will close · Install now"
+msgstr "Breadslicer se va a cerrar · Instalar ahora"
+
+#: src/update_check.rs
+msgctxt "UpdateCheck"
+msgid "Breadslicer is up to date"
+msgstr "Breadslicer está al día"
+
+#: src/update_check.rs
+msgctxt "UpdateCheck"
+msgid "Could not reach GitHub"
+msgstr "No se pudo conectar con GitHub"
+
+#: src/update_check.rs
+msgctxt "UpdateCheck"
+msgid "Save your work and let it finish first"
+msgstr "Primero guardá y esperá a que termine lo que está corriendo"
+
+#: src/update_check.rs
+msgctxt "UpdateCheck"
+msgid "Windows did not start the installer"
+msgstr "Windows no abrió el instalador"
+
+#: src/update_check.rs
+msgctxt "UpdateCheck"
+msgid "The download failed: try again"
+msgstr "La descarga falló: probá de nuevo"
 msgid "Asks GitHub for the list of Breadslicer's releases when the app opens, and shows a link at the top when a newer one is out. That request is all that leaves this computer."
 msgstr "Al abrir la app le pide a GitHub la lista de versiones de Breadslicer y, si hay una más nueva, muestra un link arriba. Ese pedido es lo único que sale de esta computadora."
+
+#: src/cut_run.rs
+msgctxt "CutRun"
+msgid "Supports are being made for the pieces cut off."
+msgstr "Se están haciendo los soportes de las piezas cortadas."
