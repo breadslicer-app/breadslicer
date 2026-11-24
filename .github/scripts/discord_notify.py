@@ -7,7 +7,8 @@ download link; default: the first .exe, else .msi/.zip/.dmg/.AppImage asset).
 Reads the triggering event from GITHUB_EVENT_PATH; event text is never interpolated into a
 shell, and mentions are disabled, so issue titles cannot ping @everyone or run commands.
 Secrets: DISCORD_WEBHOOK_RELEASES (releases) and DISCORD_WEBHOOK_ISSUES (issues; falls back
-to the releases webhook). A missing webhook is reported and skipped, never a failure.
+to the releases webhook). Pre-releases are skipped unless PRERELEASES=1 (then they are posted
+marked as a dev build). A missing webhook is reported and skipped, never a failure.
 Local preview: python discord_notify.py --print EVENT_NAME EVENT.json
 """
 import json, os, re, sys, urllib.error, urllib.request
@@ -48,9 +49,13 @@ def setup_asset(assets):
             return found
     return None
 
+def prereleases_wanted():
+    return os.environ.get('PRERELEASES', '').strip().lower() in ('1', 'true', 'yes')
+
 def release_message(event):
     r = event['release']
-    if r.get('draft') or r.get('prerelease'):
+    pre = bool(r.get('prerelease'))
+    if r.get('draft') or (pre and not prereleases_wanted()):
         return None
     text, sha = sections(r.get('body'))
     setup = setup_asset(r.get('assets', []))
@@ -60,8 +65,12 @@ def release_message(event):
     if sha:
         fields.append({'name': 'SHA-256', 'value': f'`{sha}`', 'inline': False})
     name = r.get('name') or f"{product()} {r['tag_name']}"
-    return 'DISCORD_WEBHOOK_RELEASES', {'embeds': [{'title': f'{name} is out', 'url': r['html_url'], 'color': 0xF0A04B,
-            'description': (text + '\n\n' if text else '') + f"[Full release notes]({r['html_url']})", 'fields': fields}]}
+    embed = {'title': f'{name} is out', 'url': r['html_url'], 'color': 0x9B6BD6 if pre else 0xF0A04B,
+             'description': (text + '\n\n' if text else '') + f"[Full release notes]({r['html_url']})", 'fields': fields}
+    if pre:
+        embed['author'] = {'name': 'Dev build (pre-release)'}
+        embed['footer'] = {'text': 'Work in progress. For everyday prints, use the latest release.'}
+    return 'DISCORD_WEBHOOK_RELEASES', {'embeds': [embed]}
 
 def issue_message(event):
     action, issue = event['action'], event['issue']
@@ -97,10 +106,23 @@ def manual_message(what, latest):
         return 'DISCORD_WEBHOOK_ISSUES', {'embeds': [{'author': {'name': 'Connected'}, 'title': f'{product()} issue updates will appear here',
                 'url': f'https://github.com/{repo}/issues', 'color': 0x5865F2,
                 'description': 'New reports and resolved issues from the public tracker are posted in this channel.'}]}
-    return release_message({'release': latest()}) if what == 'latest-release' else None
+    if what == 'latest-release':
+        return release_message({'release': latest()})
+    if what == 'latest-prerelease':
+        return release_message({'release': latest(prerelease=True)})
+    return None
 
-def latest_release():
-    request = urllib.request.Request(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/releases/latest",
+def latest_release(prerelease=False):
+    """The newest published release, or the newest published pre-release (/releases/latest never gives one)."""
+    if prerelease:
+        found = next((r for r in github_get('releases?per_page=30') if r.get('prerelease') and not r.get('draft')), None)
+        if not found:
+            raise SystemExit('No published pre-release yet; nothing to announce.')
+        return found
+    return github_get('releases/latest')
+
+def github_get(path):
+    request = urllib.request.Request(f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/{path}",
                                      headers={'Accept': 'application/vnd.github+json', 'User-Agent': 'discord-notify',
                                               **({'Authorization': 'Bearer ' + os.environ['GITHUB_TOKEN']} if os.environ.get('GITHUB_TOKEN') else {})})
     try:
