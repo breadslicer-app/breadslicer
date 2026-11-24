@@ -303,10 +303,7 @@ impl Mask {
                 let mut ring = vec![start];
                 let mut at = start;
                 let mut came = (0, 0);
-                loop {
-                    let Some(outs) = from.get_mut(&at) else {
-                        break;
-                    };
+                while let Some(outs) = from.get_mut(&at) {
                     if outs.is_empty() {
                         break;
                     }

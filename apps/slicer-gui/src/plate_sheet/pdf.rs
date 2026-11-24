@@ -180,16 +180,8 @@ impl Pen<'_, '_> {
         self.path(|pb| rounded(pb, x, y, w, h, 0.0), f, st);
     }
 
-    fn rounded(
-        &mut self,
-        x: f32,
-        y: f32,
-        w: f32,
-        h: f32,
-        r: f32,
-        f: Option<Fill>,
-        st: Option<Stroke>,
-    ) {
+    /// The box `[x, y, w, h]` with its corners rounded `r`.
+    fn rounded(&mut self, [x, y, w, h]: [f32; 4], r: f32, f: Option<Fill>, st: Option<Stroke>) {
         self.path(|pb| rounded(pb, x, y, w, h, r), f, st);
     }
 
@@ -228,8 +220,7 @@ impl Pen<'_, '_> {
         &mut self,
         face: &Face,
         size: f32,
-        x: f32,
-        y: f32,
+        [x, y]: [f32; 2],
         text: &str,
         tracking: f32,
         c: Rgb,
@@ -351,8 +342,7 @@ fn heading(pen: &mut Pen, sheet: &Sheet, page: usize, pages: usize) {
     pen.spaced(
         &f.bold,
         6.2 * PT,
-        MARGIN + 3.6,
-        top + 3.6,
+        [MARGIN + 3.6, top + 3.6],
         "BREADSLICER",
         0.62,
         INK_SOFT,
@@ -407,10 +397,7 @@ fn footer(pen: &mut Pen, sheet: &Sheet) {
     let w = f.regular.width(hint, 6.2 * PT) + 3.4;
     let x = (PAGE_W - w) / 2.0;
     pen.rounded(
-        x,
-        y - 2.0,
-        2.2,
-        2.2,
+        [x, y - 2.0, 2.2, 2.2],
         0.35,
         None,
         Some(stroke(MUTED, 0.45 * PT)),
@@ -611,12 +598,16 @@ fn plan(pen: &mut Pen, sheet: &Sheet, plate: &SheetPlate, left: f32, top: f32, s
         mm += 10.0;
     }
     // The front, as the plate says it in the app.
-    pen.rounded(tab_l, top + h + 0.9, tab_w, 3.0, 0.5, Some(fill(INK)), None);
+    pen.rounded(
+        [tab_l, top + h + 0.9, tab_w, 3.0],
+        0.5,
+        Some(fill(INK)),
+        None,
+    );
     pen.spaced(
         &f.bold,
         5.0 * PT,
-        tab_l + 2.0,
-        top + h + 3.05,
+        [tab_l + 2.0, top + h + 3.05],
         &sheet.texts.front,
         0.35,
         PAPER,
@@ -783,8 +774,7 @@ fn list(pen: &mut Pen, sheet: &Sheet, plate: &SheetPlate, left: f32, top: f32, b
     pen.spaced(
         &f.bold,
         5.6 * PT,
-        left,
-        top + 2.0,
+        [left, top + 2.0],
         &sheet.texts.parts,
         0.45,
         MUTED,
@@ -868,10 +858,7 @@ fn list(pen: &mut Pen, sheet: &Sheet, plate: &SheetPlate, left: f32, top: f32, b
             let bx = x0 + cx;
             let by = y + cy + (fit_.chip_line() - side) / 2.0 - 0.15 * fit_.k;
             pen.rounded(
-                bx,
-                by,
-                side,
-                side,
+                [bx, by, side, side],
                 0.4 * fit_.k,
                 Some(fill(PAPER)),
                 Some(stroke(INK_SOFT, 0.5 * PT)),
