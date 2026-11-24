@@ -1464,7 +1464,7 @@ export component TransformInspector inherits VerticalLayout {
                 root.arrange-grid-regenerate();
             }
         }
-        NumberField {
+        arrange-gap-field := NumberField {
             label: @tr("Inspector" => "Gap");
             unit: "mm";
             decimals: 1;
@@ -1474,7 +1474,7 @@ export component TransformInspector inherits VerticalLayout {
                 root.arrange-option-changed(0, v);
             }
         }
-        NumberField {
+        arrange-margin-field := NumberField {
             label: @tr("Inspector" => "Edge margin");
             unit: "mm";
             decimals: 1;
@@ -1512,6 +1512,10 @@ export component TransformInspector inherits VerticalLayout {
                     if root.arranging {
                         root.arrange-cancel();
                     } else {
+                        // Numbers typed and not entered count too.
+                        arrange-gap-field.commit();
+                        arrange-margin-field.commit();
+                        arrange-max-field.commit();
                         root.arrange-requested(false);
                     }
                 }
@@ -1521,11 +1525,15 @@ export component TransformInspector inherits VerticalLayout {
                 horizontal-stretch: 1;
                 enabled: root.arrange-enabled && root.selection-valid && !root.arranging;
                 clicked => {
+                    // Numbers typed and not entered count too.
+                    arrange-gap-field.commit();
+                    arrange-margin-field.commit();
+                    arrange-max-field.commit();
                     root.arrange-requested(true);
                 }
             }
         }
-        NumberField {
+        arrange-max-field := NumberField {
             label: @tr("Inspector" => "Max copies");
             placeholder: @tr("Inspector" => "All that fit");
             decimals: 0;
@@ -1542,6 +1550,10 @@ export component TransformInspector inherits VerticalLayout {
                 if root.arrange-filling {
                     root.arrange-cancel();
                 } else {
+                    // Numbers typed and not entered count too.
+                    arrange-gap-field.commit();
+                    arrange-margin-field.commit();
+                    arrange-max-field.commit();
                     root.arrange-fill-requested();
                 }
             }
