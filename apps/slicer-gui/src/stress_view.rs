@@ -465,7 +465,6 @@ impl StressView {
                     "StressCard",
                     "Imported supports: not painted, their tips are not known"
                 )
-                .into()
             } else {
                 Default::default()
             });

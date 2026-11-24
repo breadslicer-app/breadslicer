@@ -17,9 +17,6 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use bread_arrange::{Body, Part};
-use sc_mesh_core::IndexedMesh;
-use sc_mesh_core::transform::AffineTransform3D;
 use sc_print_primitives::PrinterId;
 use serde::{Deserialize, Serialize};
 
@@ -285,76 +282,6 @@ fn quad(mesh: &mut (Vec<[f32; 3]>, Vec<u32>), zone: &DeadZone, at: [f32; 2]) {
         .extend([base, base + 1, base + 2, base, base + 2, base + 3]);
 }
 
-/// The zones as bodies that never move, on plate `plate` of `volume`, as
-/// tall as the plate takes: Arrange and Fill bed keep away from them.
-pub(crate) fn bodies(volume: &BuildVolume, plate: u32, zones: &[DeadZone]) -> Vec<Body> {
-    let at = crate::plates::offset(volume, plate);
-    let height = f64::from(volume.height_mm());
-    let cube = unit_cube();
-    zones
-        .iter()
-        .map(|zone| {
-            let size = [zone.max[0] - zone.min[0], zone.max[1] - zone.min[1], height];
-            let corner = [
-                zone.min[0] + f64::from(at.x),
-                zone.min[1] + f64::from(at.y),
-                0.0,
-            ];
-            Body {
-                parts: vec![Part {
-                    mesh: cube.clone(),
-                    world: AffineTransform3D::from_linear_and_translation(
-                        [
-                            [size[0], 0.0, 0.0],
-                            [0.0, size[1], 0.0],
-                            [0.0, 0.0, size[2]],
-                        ],
-                        corner,
-                    ),
-                }],
-                fixed: true,
-            }
-        })
-        .collect()
-}
-
-/// A cube from the origin to (1, 1, 1).
-fn unit_cube() -> Arc<IndexedMesh> {
-    use sc_mesh_core::{IndexedTriangle, Vertex};
-    let corners = [
-        [0.0, 0.0, 0.0],
-        [1.0, 0.0, 0.0],
-        [1.0, 1.0, 0.0],
-        [0.0, 1.0, 0.0],
-        [0.0, 0.0, 1.0],
-        [1.0, 0.0, 1.0],
-        [1.0, 1.0, 1.0],
-        [0.0, 1.0, 1.0],
-    ];
-    let faces = [
-        [0, 3, 2],
-        [0, 2, 1],
-        [4, 5, 6],
-        [4, 6, 7],
-        [3, 7, 6],
-        [3, 6, 2],
-        [0, 1, 5],
-        [0, 5, 4],
-        [1, 2, 6],
-        [1, 6, 5],
-        [0, 4, 7],
-        [0, 7, 3],
-    ];
-    Arc::new(IndexedMesh {
-        meta: None,
-        vertices: corners.into_iter().map(Vertex::new).collect(),
-        faces: faces
-            .into_iter()
-            .map(IndexedTriangle::from_raw_indices)
-            .collect(),
-    })
-}
-
 /// Keeps the view's marks of the printer's dead zones, and the settings
 /// as the person draws them.
 pub(crate) struct DeadZones {
@@ -495,17 +422,10 @@ mod dead_zone_tests {
     }
 
     #[test]
-    fn every_plate_shows_the_zones_and_a_body_stands_on_each() {
+    fn every_plate_shows_the_zones() {
         let volume = BuildVolume::new(100.0, 60.0, 120.0);
         let zones = [DeadZone::between([0.0, 0.0], [10.0, 5.0])];
         let overlay = overlay(&volume, 3, &zones, None).expect("marks");
         assert_eq!(overlay[0].indices.len(), 3 * 6);
-        let bodies = bodies(&volume, 0, &zones);
-        assert_eq!(bodies.len(), 1);
-        assert!(bodies[0].fixed);
-        let far = bodies[0].parts[0]
-            .world
-            .apply_to_vertex(sc_mesh_core::Vertex::new([1.0, 1.0, 1.0]));
-        assert_eq!(far.coords(), [10.0, 5.0, 120.0]);
     }
 }

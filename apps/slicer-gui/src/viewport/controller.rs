@@ -147,6 +147,19 @@ type EstimateListener = Rc<dyn Fn()>;
 /// Told the pixel of a click in the Slice tab (#245).
 type SliceClick = Rc<dyn Fn(f32, f32)>;
 
+/// What reloads models from their files (#721).
+type ReloadHook = Rc<dyn Fn(Vec<sc_scene::NodeId>)>;
+/// Where a dead zone being drawn started and is now, on its plate (#726).
+type ZoneDrawing = (u32, [f64; 2], [f64; 2]);
+/// What an edit of the dead zones goes to (#726).
+type DeadZoneHook = Rc<dyn Fn(crate::dead_zones::DeadZoneEdit)>;
+/// The overlay the dead zones were joined to, their marks, and the two
+/// joined (#726).
+type JoinedMarks = (
+    Option<crate::mesh_render::Overlay>,
+    crate::mesh_render::Overlay,
+    crate::mesh_render::Overlay,
+);
 pub(crate) struct ViewportController {
     ui: slint::Weak<MainWindow>,
     session: SessionState,
@@ -276,22 +289,16 @@ pub(crate) struct ViewportController {
     /// Runs when Delete takes the scene's last object (#397).
     on_emptied: RefCell<Option<Rc<dyn Fn()>>>,
     /// What reloads models from their files (#721).
-    on_reload: RefCell<Option<Rc<dyn Fn(Vec<sc_scene::NodeId>)>>>,
+    on_reload: RefCell<Option<ReloadHook>>,
     /// The screen's dead zones (#726): those of the printer, the drawing
     /// tool, the one being drawn, what an edit goes to, and their marks
     /// joined to the overlay.
     dead_zones: RefCell<(Vec<crate::dead_zones::DeadZone>, u32)>,
     dead_zone_tool: Cell<bool>,
-    dead_zone_drawing: Cell<Option<(u32, [f64; 2], [f64; 2])>>,
-    on_dead_zone_edit: RefCell<Option<Rc<dyn Fn(crate::dead_zones::DeadZoneEdit)>>>,
+    dead_zone_drawing: Cell<Option<ZoneDrawing>>,
+    on_dead_zone_edit: RefCell<Option<DeadZoneHook>>,
     dead_zone_marks: RefCell<Option<crate::mesh_render::Overlay>>,
-    dead_zone_joined: RefCell<
-        Option<(
-            Option<crate::mesh_render::Overlay>,
-            crate::mesh_render::Overlay,
-            crate::mesh_render::Overlay,
-        )>,
-    >,
+    dead_zone_joined: RefCell<Option<JoinedMarks>>,
     /// The drag tool armed, for tests that run without a window.
     #[cfg(test)]
     drag_tool_for_test: Cell<Option<SupportDragKind>>,
@@ -7526,9 +7533,7 @@ mod lasso_region_tests {
                 .add_leaf(
                     None,
                     Transform3D::Identity,
-                    sc_scene::node::LeafPayload::Mesh(Arc::new(
-                        sc_mesh_fixtures::unit_cube_mesh(),
-                    )),
+                    sc_scene::node::LeafPayload::Mesh(Arc::new(sc_mesh_fixtures::unit_cube_mesh())),
                 )
                 .unwrap();
             graph.add_root(leaf).unwrap();
@@ -7550,9 +7555,16 @@ mod lasso_region_tests {
             document.install_project_graph(graph, "goblin.bread".into(), payload);
             assert!(window.get_credit_line().contains("Studio"));
             assert!(window.get_credit_line().contains("CC-BY-4.0"));
-            assert_eq!(window.get_credit_link().as_str(), "https://example.com/goblin");
+            assert_eq!(
+                window.get_credit_link().as_str(),
+                "https://example.com/goblin"
+            );
             document.set_selection(Selection::One(LeafId(leaf)));
-            assert!(window.get_credit_line().contains("Fulano"), "{}", window.get_credit_line());
+            assert!(
+                window.get_credit_line().contains("Fulano"),
+                "{}",
+                window.get_credit_line()
+            );
             assert_eq!(window.get_credit_link().as_str(), "");
             document.clear_scene();
             assert_eq!(window.get_credit_line().as_str(), "");

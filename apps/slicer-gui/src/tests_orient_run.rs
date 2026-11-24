@@ -1080,7 +1080,7 @@ fn leaning_back_is_one_exact_undo_step() {
         let (lo, _) = bounds(&f);
         assert!((-1e-9..1e-4).contains(&lo[2]), "{lo:?}");
         assert!(!f.run.lean_back(37.0), "already leaning back");
-        f.document.undo();
+        f.document.undo().unwrap();
         assert_eq!(local(&f), before);
     });
 }

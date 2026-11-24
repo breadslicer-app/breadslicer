@@ -38,10 +38,8 @@ impl Credit {
             if let Some(credit) = Self::stated(metadata, at) {
                 return Some(credit);
             }
-            match at {
-                None => return None,
-                Some(id) => at = graph.and_then(|g| g.parent_of(id)),
-            }
+            let id = at?;
+            at = graph.and_then(|g| g.parent_of(id));
         }
     }
 

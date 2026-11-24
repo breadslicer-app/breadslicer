@@ -198,8 +198,8 @@ fn models_planned_together_keep_clear_of_each_other() {
 fn models_planned_together_each_keep_their_supports() {
     let a = box_model("a", [0.0, 0.0, 10.0], [30.0, 10.0, 12.0]);
     let b = box_model("b", [0.0, 11.0, 10.0], [30.0, 21.0, 12.0]);
-    let alone_a = contacts(&plan(&[a.clone()]).support.collections).len();
-    let alone_b = contacts(&plan(&[b.clone()]).support.collections).len();
+    let alone_a = contacts(&plan(std::slice::from_ref(&a)).support.collections).len();
+    let alone_b = contacts(&plan(std::slice::from_ref(&b)).support.collections).len();
     let together = plan(&[a, b]);
     let c = &together.support.collections;
     let of = |model: &str| {
