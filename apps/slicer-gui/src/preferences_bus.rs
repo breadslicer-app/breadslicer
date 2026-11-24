@@ -163,7 +163,7 @@ pub(crate) struct PreferencesSnapshot {
     pub repair_on_import: bool,
     /// Whether a model reloads when its file is saved again (#721).
     pub reload_on_change: bool,
-    /// Whether to ask GitHub, at start, if a newer Breadslicer is out.
+    /// Whether to ask GitHub, at start, if a newer Breadslicer is out (#762).
     pub check_updates: bool,
     /// The files last opened or saved, newest first (`recent_files`).
     pub recent_files: Vec<RecentFile>,
@@ -240,7 +240,7 @@ impl PreferencesSnapshot {
             show_start_dialog: true,
             repair_on_import: true,
             reload_on_change: true,
-            check_updates: false,
+            check_updates: true,
             recent_files: Vec::new(),
             resin_prices: BTreeMap::new(),
             dead_zones: BTreeMap::new(),
