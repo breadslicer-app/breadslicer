@@ -9,8 +9,11 @@
 //! - a base, 66 × 34 × 2, whose right end is a point: it shows +X. Every
 //!   feature but the column stands on it, so its walls are read clear of the
 //!   elephant's foot;
-//! - a bar of blind holes, 0.6 to 4 mm: the thickest drill bit that goes in
-//!   each one says how much they close;
+//! - a bar of holes, 0.6 to 4 mm, through the piece: held against a light,
+//!   the thinnest one still open shows, and the two biggest are read from
+//!   the inside with the calipers' small jaws (or a drill bit, if there is
+//!   one). Under the bar the base opens each hole wider, so the first
+//!   layers, which spread, never close it;
 //! - square blocks of 4, 8 and 16 mm, read in X and in Y: their sizes
 //!   separate the scale from the offset of the walls;
 //! - pins of 0.5, 1 and 2 mm: the thinnest that stands whole;
@@ -44,7 +47,7 @@ pub const BASE_OUTLINE: [[f32; 2]; 5] = [
 
 /// The blocks' sides, in the order the reading steps ask for them.
 pub const BLOCKS_MM: [f32; 3] = [16.0, 8.0, 4.0];
-/// The blind holes' diameters, left to right.
+/// The holes' diameters, left to right.
 pub const HOLES_MM: [f32; 7] = [0.6, 0.8, 1.0, 1.5, 2.0, 3.0, 4.0];
 /// The pins' diameters, left to right.
 pub const PINS_MM: [f32; 3] = [0.5, 1.0, 2.0];
@@ -52,6 +55,10 @@ pub const PINS_MM: [f32; 3] = [0.5, 1.0, 2.0];
 pub const SLITS_MM: [f32; 4] = [0.2, 0.3, 0.4, 0.6];
 /// The column's side and height.
 pub const COLUMN_MM: [f32; 2] = [8.0, 5.0];
+
+/// How much wider, per side, each hole opens through the base, clear of the
+/// first layers' spread.
+pub const HOLE_RELIEF_MM: f32 = 0.5;
 
 /// Segments of a circle.
 const SEGMENTS: usize = 48;
@@ -197,7 +204,7 @@ impl Mesh {
 pub enum Feature {
     /// A square block: its lower-left corner and side.
     Block { at: [f32; 2], side: f32 },
-    /// A blind hole: its centre and diameter.
+    /// A hole through the piece: its centre and diameter.
     Hole { at: [f32; 2], diameter: f32 },
     /// A pin: its centre and diameter.
     Pin { at: [f32; 2], diameter: f32 },
@@ -268,18 +275,27 @@ impl Coupon {
     pub fn xy() -> Self {
         let mut mesh = Mesh::default();
         let (z0, z1) = (BASE_MM - SINK_MM, TOP_MM);
-        mesh.extrude(&BASE_OUTLINE, &[], 0.0, BASE_MM);
 
-        // The bar of holes, in one piece.
+        // The holes go through the bar and the base; the base opens them
+        // wider, so what reads is the bar's.
         let mut holes = Vec::new();
         let mut cuts = Vec::new();
+        let mut reliefs = Vec::new();
         for (k, &d) in HOLES_MM.iter().enumerate() {
             let at = [4.0 + 6.0 * k as f32, 29.0];
-            let mut ring = circle(at, d / 2.0);
-            ring.reverse();
-            cuts.push(ring);
+            for (radius, rings) in [
+                (d / 2.0, &mut cuts),
+                (d / 2.0 + HOLE_RELIEF_MM, &mut reliefs),
+            ] {
+                let mut ring = circle(at, radius);
+                ring.reverse();
+                rings.push(ring);
+            }
             holes.push(Feature::Hole { at, diameter: d });
         }
+        mesh.extrude(&BASE_OUTLINE, &reliefs, 0.0, BASE_MM);
+
+        // The bar of holes, in one piece.
         let [bx, by] = BAR_AT;
         let [bw, bh] = BAR_SIZE;
         mesh.extrude(
@@ -504,6 +520,44 @@ mod tests {
                 assert!(apart >= 1.0, "{a:?} and {b:?} are {apart} apart");
             }
         }
+    }
+
+    #[test]
+    fn the_holes_go_through_and_the_base_opens_them_wider() {
+        // Seen from above, nothing covers a hole: no face that is not a wall
+        // holds its centre, nor a point inside its rim.
+        let coupon = Coupon::xy();
+        let covers = |p: [f32; 2]| {
+            coupon.mesh.faces.iter().any(|f| {
+                let [a, b, c] = f.map(|i| coupon.mesh.vertices[i as usize]);
+                let side = |u: [f32; 3], v: [f32; 3]| {
+                    (v[0] - u[0]) * (p[1] - u[1]) - (v[1] - u[1]) * (p[0] - u[0])
+                };
+                let (s0, s1, s2) = (side(a, b), side(b, c), side(c, a));
+                let area = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+                area.abs() > 1e-6
+                    && ((s0 > 0.0 && s1 > 0.0 && s2 > 0.0) || (s0 < 0.0 && s1 < 0.0 && s2 < 0.0))
+            })
+        };
+        for hole in &coupon.holes {
+            let Feature::Hole { at, diameter } = *hole else {
+                unreachable!()
+            };
+            let r = diameter / 2.0 * 0.9;
+            for p in [at, [at[0] + r, at[1]], [at[0], at[1] - r]] {
+                assert!(!covers(p), "the hole of {diameter} mm is covered at {p:?}");
+            }
+        }
+        // The base's rim around each hole sits the relief away from it.
+        let Feature::Hole { at, diameter } = coupon.holes[0] else {
+            unreachable!()
+        };
+        let rim = diameter / 2.0 + HOLE_RELIEF_MM;
+        assert!(
+            coupon.mesh.vertices.iter().any(|v| {
+                v[2] == 0.0 && ((v[0] - at[0]).hypot(v[1] - at[1]) - rim).abs() < 1e-4
+            })
+        );
     }
 
     #[test]

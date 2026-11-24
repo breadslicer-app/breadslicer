@@ -5,7 +5,7 @@
 
 //! The pictures of each reading step, as SVG: the coupon seen from above
 //! with the features of the step lit, beside a close-up of how to read them
-//! (calipers on a block, a drill bit in a hole, light through the slits…).
+//! (calipers on a block, light through the holes and the slits…).
 //!
 //! The pictures carry no text, so they need no font: the words go beside
 //! them, in the interface's language.
@@ -23,7 +23,8 @@ pub enum Step {
     BlocksX,
     /// Calipers across the blocks, along Y.
     BlocksY,
-    /// Drill bits into the blind holes.
+    /// Light through the holes, and the calipers' inside jaws in the
+    /// biggest.
     Holes,
     /// The pins that stood.
     Pins,
@@ -259,29 +260,68 @@ fn detail(svg: &mut Svg, step: Step) {
             calipers(svg, 12.0, 28.0, 21.0);
         }
         Step::Holes => {
-            plate(svg);
-            // The bar cut through a hole: the bit goes into the pit.
-            svg.rect(4.0, 22.0, 32.0, 12.0, PART, None);
-            svg.rect(17.5, 22.0, 5.0, 10.0, PIT, None);
-            svg.line([17.5, 22.0], [17.5, 32.0], LIT, 0.5);
-            svg.line([22.5, 22.0], [22.5, 32.0], LIT, 0.5);
-            svg.line([17.5, 32.0], [22.5, 32.0], LIT, 0.5);
-            // The drill bit, held by hand: shank above, flutes going in.
-            svg.rect(18.3, 2.0, 3.4, 12.0, TOOL, None);
+            // Left: the bar cut through a hole, held up to a light; the
+            // base under it opens wider. The light comes through to the eye.
+            svg.circle(10.0, 3.5, 2.5, LIGHT, None);
+            svg.line([10.0, 6.0], [10.0, 18.0], LIGHT, 0.25);
+            svg.line([8.6, 6.0], [9.4, 18.0], LIGHT, 0.25);
+            svg.line([11.4, 6.0], [10.6, 18.0], LIGHT, 0.25);
+            svg.rect(2.0, 18.0, 7.0, 9.0, PART, None);
+            svg.rect(11.0, 18.0, 7.0, 9.0, PART, None);
+            svg.rect(2.0, 27.0, 6.0, 4.0, BASE, Some(EDGE));
+            svg.rect(12.0, 27.0, 6.0, 4.0, BASE, Some(EDGE));
+            svg.rect(9.0, 18.0, 2.0, 13.0, LIGHT, None);
+            svg.line([9.0, 18.0], [9.0, 27.0], LIT, 0.5);
+            svg.line([11.0, 18.0], [11.0, 27.0], LIT, 0.5);
+            svg.line([10.0, 31.0], [10.0, 34.0], LIGHT, 0.25);
+            // The eye under it.
             svg.polygon(
                 &[
-                    [18.3, 14.0],
-                    [21.7, 14.0],
-                    [21.7, 29.0],
-                    [20.0, 31.0],
-                    [18.3, 29.0],
+                    [6.0, 36.5],
+                    [8.0, 35.2],
+                    [10.0, 34.8],
+                    [12.0, 35.2],
+                    [14.0, 36.5],
+                    [12.0, 37.8],
+                    [10.0, 38.2],
+                    [8.0, 37.8],
                 ],
                 TOOL,
             );
-            for k in 0..6 {
-                let y = 15.0 + 2.4 * k as f32;
-                svg.line([18.3, y + 1.6], [21.7, y], PART, 0.35);
-            }
+            svg.circle(10.0, 36.5, 1.1, PIT, None);
+
+            // Right: a big hole cut through, the calipers' small jaws in it,
+            // opened until they touch its walls.
+            svg.rect(20.0, 18.0, 5.0, 13.0, PART, None);
+            svg.rect(35.0, 18.0, 4.0, 13.0, PART, None);
+            svg.rect(25.0, 18.0, 10.0, 13.0, PIT, None);
+            svg.line([25.0, 18.0], [25.0, 31.0], LIT, 0.5);
+            svg.line([35.0, 18.0], [35.0, 31.0], LIT, 0.5);
+            svg.rect(21.0, 6.0, 18.0, 3.0, TOOL, None);
+            svg.rect(30.5, 4.0, 6.0, 7.0, TOOL, None);
+            svg.polygon(
+                &[
+                    [26.6, 9.0],
+                    [28.0, 9.0],
+                    [28.0, 20.0],
+                    [25.0, 25.0],
+                    [25.0, 21.0],
+                    [26.6, 19.0],
+                ],
+                TOOL,
+            );
+            svg.polygon(
+                &[
+                    [32.0, 9.0],
+                    [33.4, 9.0],
+                    [33.4, 19.0],
+                    [35.0, 21.0],
+                    [35.0, 25.0],
+                    [32.0, 20.0],
+                ],
+                TOOL,
+            );
+            svg.dimension([25.4, 28.0], [34.6, 28.0], LIT);
         }
         Step::Pins => {
             plate(svg);

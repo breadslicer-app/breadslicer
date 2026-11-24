@@ -27,8 +27,10 @@ pub const OVER_OFFSET_MM: f32 = 0.04;
 pub const UNDER_OFFSET_MM: f32 = -0.03;
 /// A reading this far from what was drawn is likely a slip of the hand.
 pub const SUSPICIOUS_MM: f32 = 1.0;
+/// The holes of [`HOLES_MM`] wide enough for the calipers' inside jaws.
+pub const JAW_HOLES: [usize; 2] = [5, 6];
 
-/// The thinnest slit still open, read on the printed coupon.
+/// The thinnest slit or hole still open, read on the printed coupon.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum Slit {
     /// Not read.
@@ -48,6 +50,12 @@ pub struct XyReadings {
     pub blocks_x: [Option<f32>; 3],
     /// Each block's width along Y, in the order of [`BLOCKS_MM`].
     pub blocks_y: [Option<f32>; 3],
+    /// The thinnest hole the light comes through.
+    #[serde(default)]
+    pub hole_light: Slit,
+    /// The holes of [`JAW_HOLES`], read from the inside with the calipers.
+    #[serde(default)]
+    pub hole_jaws: [Option<f32>; 2],
     /// For each hole of [`HOLES_MM`], the thickest drill bit that goes in.
     pub hole_bits: [Option<f32>; 7],
     /// The thinnest pin standing whole.
@@ -125,6 +133,11 @@ pub enum Doubt {
     Foot {
         read: f32,
     },
+    /// A hole read from the inside, far from its size.
+    HoleJaws {
+        hole: f32,
+        read: f32,
+    },
     /// A drill bit wider than its hole.
     HoleBit {
         hole: f32,
@@ -142,6 +155,7 @@ pub struct XyResult {
     /// How far the first layers spread past the walls above them, per side.
     pub foot_mm: Option<f32>,
     pub thinnest_pin: Option<f32>,
+    pub hole_light: Slit,
     pub slit_x: Slit,
     pub slit_y: Slit,
     pub exposure: Option<Exposure>,
@@ -204,6 +218,17 @@ impl XyReadings {
             }
         }
         let mut closing = Vec::new();
+        for (&k, read) in JAW_HOLES.iter().zip(self.hole_jaws) {
+            let Some(read) = read else {
+                continue;
+            };
+            let hole = HOLES_MM[k];
+            if (read - hole).abs() > SUSPICIOUS_MM {
+                doubts.push(Doubt::HoleJaws { hole, read });
+            } else {
+                closing.push(hole - read);
+            }
+        }
         for (k, &hole) in HOLES_MM.iter().enumerate() {
             if let Some(bit) = self.hole_bits[k] {
                 if bit > hole + 0.05 {
@@ -248,6 +273,7 @@ impl XyReadings {
             hole_closing_mm,
             foot_mm,
             thinnest_pin: self.thinnest_pin,
+            hole_light: self.hole_light,
             slit_x: self.slit_x,
             slit_y: self.slit_y,
             exposure,
@@ -339,6 +365,35 @@ mod tests {
             vec![Doubt::BlockX {
                 side: 8.0,
                 read: 18.0
+            }]
+        );
+    }
+
+    #[test]
+    fn holes_read_from_the_inside_say_how_much_they_close() {
+        assert_eq!(JAW_HOLES.map(|k| HOLES_MM[k]), [3.0, 4.0]);
+        let readings = XyReadings {
+            blocks_x: printed(1.0, 0.0),
+            hole_jaws: [Some(2.84), Some(3.86)],
+            hole_light: Slit::Open(1.0),
+            ..Default::default()
+        };
+        let result = readings.result();
+        assert!((result.hole_closing_mm.unwrap() - 0.15).abs() < 1e-5);
+        assert_eq!(result.hole_light, Slit::Open(1.0));
+
+        let slip = XyReadings {
+            blocks_x: printed(1.0, 0.0),
+            hole_jaws: [None, Some(38.6)],
+            ..Default::default()
+        };
+        let result = slip.result();
+        assert_eq!(result.verdict, Verdict::Suspicious);
+        assert_eq!(
+            result.doubts,
+            vec![Doubt::HoleJaws {
+                hole: 4.0,
+                read: 38.6
             }]
         );
     }

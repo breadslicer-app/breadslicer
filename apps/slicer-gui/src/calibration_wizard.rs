@@ -13,7 +13,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use bread_calibration::coupon::{PINS_MM, SLITS_MM};
+use bread_calibration::coupon::{HOLES_MM, PINS_MM, SLITS_MM};
 use bread_calibration::fit::{GOOD_OFFSET_MM, GOOD_SCALE};
 use bread_calibration::{Coupon, Doubt, Exposure, Slit, Step, Verdict, XyReadings, XyResult};
 use serde::{Deserialize, Serialize};
@@ -26,19 +26,21 @@ use crate::{Calib, CalibLine, MainWindow};
 
 /// The readings typed in the card: the temperature, the blocks along X
 /// (16, 8, 4) and along Y, the bits in the holes, the foot at the bottom and
-/// near the top.
-const FIELDS: usize = 16;
+/// near the top, the holes of 3 and 4 mm read from the inside.
+const FIELDS: usize = 18;
 const TEMPERATURE: usize = 0;
 const BLOCKS_X: usize = 1;
 const BLOCKS_Y: usize = 4;
 const BITS: usize = 7;
 const FOOT_BOTTOM: usize = 14;
 const FOOT_TOP: usize = 15;
+const HOLE_JAWS: usize = 16;
 /// Readings of each printer and resin pair kept in the log.
 const KEPT_PER_PAIR: usize = 20;
 
 /// One reading of a coupon, as the log keeps it. A reading not made is 0;
-/// the thinnest pin is -1 when none stood, a slit -1 when all closed.
+/// the thinnest pin is -1 when none stood, a slit or the thinnest hole -1
+/// when all closed.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct CalibrationRecord {
     pub printer: String,
@@ -52,6 +54,10 @@ pub(crate) struct CalibrationRecord {
     pub blocks_x: [f32; 3],
     #[serde(default)]
     pub blocks_y: [f32; 3],
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub hole_light: f32,
+    #[serde(default)]
+    pub hole_jaws: [f32; 2],
     #[serde(default)]
     pub hole_bits: [f32; 7],
     #[serde(default, skip_serializing_if = "is_zero")]
@@ -89,6 +95,8 @@ impl CalibrationRecord {
         XyReadings {
             blocks_x: self.blocks_x.map(read_or_none),
             blocks_y: self.blocks_y.map(read_or_none),
+            hole_light: slit_of(self.hole_light),
+            hole_jaws: self.hole_jaws.map(read_or_none),
             hole_bits: self.hole_bits.map(read_or_none),
             thinnest_pin: read_or_none(self.thinnest_pin),
             slit_x: slit_of(self.slit_x),
@@ -210,6 +218,14 @@ pub(crate) fn describe(
                 read,
             ),
             Doubt::Foot { read } => (ctr!("Calibration", "The column"), read),
+            Doubt::HoleJaws { hole, read } => (
+                ctr!(
+                    "Calibration",
+                    "Hole of {} mm, from the inside",
+                    number(hole, 0)
+                ),
+                read,
+            ),
             Doubt::HoleBit { hole, bit } => (
                 ctr!("Calibration", "Bit in the hole of {} mm", number(hole, 1)),
                 bit,
@@ -251,6 +267,18 @@ pub(crate) fn describe(
             ctr!("Calibration", "The holes close by").to_string(),
             format!("{} mm", number(closing, 2)),
             if closing > 0.15 { 2 } else { 0 },
+        ));
+    }
+    let thinnest_hole = match result.hole_light {
+        Slit::NotRead => None,
+        Slit::Open(v) => Some((format!("{} mm", number(v, 1)), 0)),
+        Slit::AllClosed => Some((ctr!("Calibration", "none").to_string(), 2)),
+    };
+    if let Some((value, tone)) = thinnest_hole {
+        lines.push(line(
+            ctr!("Calibration", "Thinnest hole the light comes through").to_string(),
+            value,
+            tone,
         ));
     }
     if let Some(foot) = result.foot_mm {
@@ -467,6 +495,7 @@ impl Wizard {
         calib.set_pictures(self.pictures());
         calib.set_notes(SharedString::new());
         calib.set_pin(-1);
+        calib.set_hole(-1);
         calib.set_slit_x(-1);
         calib.set_slit_y(-1);
         calib.set_saved(false);
@@ -502,11 +531,12 @@ impl Wizard {
             Ok(_) => -1.0,
             Err(_) => 0.0,
         };
-        let slit = |index: i32| match usize::try_from(index) {
-            Ok(i) if i < SLITS_MM.len() => SLITS_MM[i],
+        let opening = |sizes: &[f32], index: i32| match usize::try_from(index) {
+            Ok(i) if i < sizes.len() => sizes[i],
             Ok(_) => -1.0,
             Err(_) => 0.0,
         };
+        let slit = |index: i32| opening(&SLITS_MM, index);
         let (printer, resin) = self.pair.borrow().clone().unwrap_or_default();
         CalibrationRecord {
             printer,
@@ -516,6 +546,8 @@ impl Wizard {
             notes: calib.get_notes().trim().to_owned(),
             blocks_x: std::array::from_fn(|k| take(BLOCKS_X + k)),
             blocks_y: std::array::from_fn(|k| take(BLOCKS_Y + k)),
+            hole_light: opening(&HOLES_MM, calib.get_hole()),
+            hole_jaws: std::array::from_fn(|k| take(HOLE_JAWS + k)),
             hole_bits: std::array::from_fn(|k| take(BITS + k)),
             thinnest_pin,
             slit_x: slit(calib.get_slit_x()),
@@ -646,7 +678,8 @@ pub(crate) fn wire(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bread_calibration::coupon::{BLOCKS_MM, HOLES_MM};
+    use bread_calibration::coupon::BLOCKS_MM;
+    use bread_calibration::fit::JAW_HOLES;
 
     fn printed(scale: f32, offset: f32) -> [f32; 3] {
         BLOCKS_MM.map(|l| scale * l + 2.0 * offset)
@@ -764,6 +797,10 @@ mod tests {
             assert_eq!(calib.get_bad().row_data(5), Some(false));
             calib.set_pin(1);
             calib.set_slit_x(4);
+            // The holes read without drill bits: light, then the inside jaws.
+            calib.set_hole(2);
+            calib.invoke_edited(16, "2,86".into());
+            calib.invoke_edited(17, "3,84".into());
             calib.invoke_show_result();
             assert_eq!(calib.get_result_verdict(), 2, "the walls grow 0.08–0.09 mm");
             let lines = calib.get_result_lines();
@@ -775,6 +812,18 @@ mod tests {
                 lines.iter().collect::<Vec<_>>()
             );
             assert!(calib.get_result_advice().contains("light to spare"));
+            assert!(
+                lines
+                    .iter()
+                    .any(|l| l.label.contains("holes close") && l.value.contains("0.15")),
+                "the inside jaws read how much the holes close"
+            );
+            assert!(
+                lines
+                    .iter()
+                    .any(|l| l.label.contains("light comes through") && l.value.contains("1.0")),
+                "the thinnest hole open is told"
+            );
             calib.invoke_save();
             assert!(calib.get_saved());
 
@@ -831,6 +880,8 @@ mod tests {
                     calib.invoke_edited(field, text.into());
                 }
                 calib.set_pin(1);
+                calib.set_hole(2);
+                calib.invoke_edited(16, "2,86".into());
                 calib.set_slit_x(1);
                 calib.set_slit_y(2);
                 for page in 0..=8 {
@@ -856,6 +907,11 @@ mod tests {
     #[test]
     fn hole_sizes_and_fields_line_up() {
         assert_eq!(HOLES_MM.len(), FOOT_BOTTOM - BITS);
-        assert_eq!(FIELDS, FOOT_TOP + 1);
+        assert_eq!(FIELDS, HOLE_JAWS + JAW_HOLES.len());
+        assert_eq!(
+            JAW_HOLES.map(|k| HOLES_MM[k]),
+            [3.0, 4.0],
+            "the card says 3 and 4"
+        );
     }
 }

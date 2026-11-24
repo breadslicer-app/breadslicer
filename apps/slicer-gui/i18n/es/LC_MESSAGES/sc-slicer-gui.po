@@ -11457,8 +11457,8 @@ msgstr "Una pieza chica, de 77 × 34 mm, que se imprime plana sobre la cama, sin
 
 #: src/calibration_wizard.rs
 msgctxt "Calibration"
-msgid "You need: calipers, and a few drill bits if you want to read the holes. Print it with the printer and resin you calibrate, wash and cure it as always, and read it cold."
-msgstr "Hace falta: un calibre, y algunas mechas si querés medir los agujeros. Imprimila con la impresora y la resina que calibrás, lavala y curala como siempre, y medila fría."
+msgid "You need: calipers, nothing else (drill bits help with the holes, if you have some). Print it with the printer and resin you calibrate, wash and cure it as always, and read it cold."
+msgstr "Hace falta: un calibre, nada más (si tenés mechas, ayudan con los agujeros). Imprimila con la impresora y la resina que calibrás, lavala y curala como siempre, y medila fría."
 
 #: src/calibration_wizard.rs
 msgctxt "Calibration"
@@ -11552,8 +11552,8 @@ msgstr "Los agujeros (opcional)"
 
 #: src/calibration_wizard.rs
 msgctxt "Calibration"
-msgid "Try drill bits in the holes by hand, shank first, without forcing. Write the thickest one that goes in. Two or three holes are enough."
-msgstr "Probá mechas en los agujeros a mano, por el lado liso, sin forzar. Anotá la más gruesa que entra. Con dos o tres agujeros alcanza."
+msgid "The thickest bit that goes into each hole by hand, shank first, without forcing."
+msgstr "La mecha más gruesa que entra en cada agujero a mano, por el lado liso, sin forzar."
 
 #: src/calibration_wizard.rs
 #, rust-format
@@ -11816,3 +11816,29 @@ msgstr "Pieza de calibración XY"
 msgctxt "MenuBar"
 msgid "Calibrate Resin…"
 msgstr "Calibrar resina…"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Hold the piece up to a light and look through the holes from below. Which is the thinnest one you see the light through?"
+msgstr "Levantá la pieza contra una luz y mirá los agujeros desde abajo. ¿Cuál es el más fino por el que ves la luz?"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Then read the two biggest from the inside: put the small upper jaws of the calipers in the hole and open them until they touch its walls, without forcing."
+msgstr "Después medí los dos más grandes por dentro: meté las puntitas de arriba del calibre en el agujero y abrilas hasta que toquen las paredes, sin forzar."
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "With drill bits, if you have them"
+msgstr "Con mechas, si tenés"
+
+#: src/calibration_wizard.rs
+#, rust-format
+msgctxt "Calibration"
+msgid "Hole of {} mm, from the inside"
+msgstr "Agujero de {} mm, por dentro"
+
+#: src/calibration_wizard.rs
+msgctxt "Calibration"
+msgid "Thinnest hole the light comes through"
+msgstr "Agujero más fino por el que pasa la luz"

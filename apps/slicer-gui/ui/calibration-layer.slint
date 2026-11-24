@@ -36,11 +36,14 @@ export global Calib {
     in-out property <string> notes;
     // What is typed in each reading, kept as typed: 0 the temperature, 1–3
     // the blocks along X (16, 8, 4), 4–6 along Y, 7–13 the drill bits in the
-    // holes (0.6 to 4 mm), 14 the foot at the bottom, 15 near the top.
+    // holes (0.6 to 4 mm), 14 the foot at the bottom, 15 near the top, 16–17
+    // the holes of 3 and 4 mm read from the inside.
     in property <[string]> texts;
     // Whether a reading is not a number.
     in property <[bool]> bad;
     in-out property <int> pin: -1;
+    // The thinnest hole the light comes through (0.6 to 4 mm, 7 none).
+    in-out property <int> hole: -1;
     in-out property <int> slit-x: -1;
     in-out property <int> slit-y: -1;
 
@@ -63,6 +66,8 @@ export global Calib {
 component ChoiceRow inherits HorizontalLayout {
     in property <[string]> choices;
     in-out property <int> selected: -1;
+    // A row that goes on from another one counts its choices from there.
+    in property <int> offset: 0;
     spacing: 6px;
     alignment: start;
 
@@ -71,11 +76,11 @@ component ChoiceRow inherits HorizontalLayout {
         height: 30px;
         border-radius: Theme.radius;
         border-width: 1px;
-        border-color: i == root.selected ? Theme.accent : Theme.border;
-        background: i == root.selected ? Theme.accent.with-alpha(0.16) : touch.has-hover ? Theme.raised : Theme.panel;
+        border-color: i + root.offset == root.selected ? Theme.accent : Theme.border;
+        background: i + root.offset == root.selected ? Theme.accent.with-alpha(0.16) : touch.has-hover ? Theme.raised : Theme.panel;
         label := Text {
             text: choice;
-            color: i == root.selected ? Theme.accent : Theme.text-soft;
+            color: i + root.offset == root.selected ? Theme.accent : Theme.text-soft;
             font-size: Theme.font;
             horizontal-alignment: center;
             vertical-alignment: center;
@@ -84,7 +89,7 @@ component ChoiceRow inherits HorizontalLayout {
         touch := TouchArea {
             mouse-cursor: pointer;
             clicked => {
-                root.selected = i;
+                root.selected = i + root.offset;
             }
         }
     }
@@ -275,7 +280,7 @@ export component CalibrationLayer inherits Rectangle {
                                 }
 
                                 Prose {
-                                    text: @tr("Calibration" => "You need: calipers, and a few drill bits if you want to read the holes. Print it with the printer and resin you calibrate, wash and cure it as always, and read it cold.");
+                                    text: @tr("Calibration" => "You need: calipers, nothing else (drill bits help with the holes, if you have some). Print it with the printer and resin you calibrate, wash and cure it as always, and read it cold.");
                                 }
 
                                 Rectangle {
@@ -438,7 +443,43 @@ export component CalibrationLayer inherits Rectangle {
                                 }
 
                                 Prose {
-                                    text: @tr("Calibration" => "Try drill bits in the holes by hand, shank first, without forcing. Write the thickest one that goes in. Two or three holes are enough.");
+                                    text: @tr("Calibration" => "Hold the piece up to a light and look through the holes from below. Which is the thinnest one you see the light through?");
+                                }
+
+                                ChoiceRow {
+                                    choices: ["0.6", "0.8", "1", "1.5"];
+                                    selected <=> Calib.hole;
+                                }
+
+                                ChoiceRow {
+                                    choices: ["2", "3", "4", @tr("Calibration" => "None")];
+                                    offset: 4;
+                                    selected <=> Calib.hole;
+                                }
+
+                                Prose {
+                                    text: @tr("Calibration" => "Then read the two biggest from the inside: put the small upper jaws of the calipers in the hole and open them until they touch its walls, without forcing.");
+                                }
+
+                                FieldRow {
+                                    label: @tr("Calibration" => "Hole of {} mm", "3");
+                                    field: 16;
+                                }
+
+                                FieldRow {
+                                    label: @tr("Calibration" => "Hole of {} mm", "4");
+                                    field: 17;
+                                }
+
+                                Text {
+                                    text: @tr("Calibration" => "With drill bits, if you have them");
+                                    color: Theme.text;
+                                    font-size: Theme.font;
+                                    font-weight: 600;
+                                }
+
+                                Prose {
+                                    text: @tr("Calibration" => "The thickest bit that goes into each hole by hand, shank first, without forcing.");
                                 }
 
                                 for size[i] in ["0.6", "0.8", "1.0", "1.5", "2.0", "3.0", "4.0"]: FieldRow {
