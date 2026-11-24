@@ -180,6 +180,7 @@ pub(crate) fn apply_preferences(prefs: &Prefs, snap: &PreferencesSnapshot) {
     prefs.set_show_start_dialog(snap.show_start_dialog);
     prefs.set_repair_on_import(snap.repair_on_import);
     prefs.set_reload_on_change(snap.reload_on_change);
+    prefs.set_check_updates(snap.check_updates);
     if prefs.get_export_name_template().as_str() != snap.export_name_template {
         prefs.set_export_name_template(snap.export_name_template.as_str().into());
     }
@@ -229,6 +230,18 @@ fn wire_general(prefs: &Prefs, bus: &Rc<PreferencesBus>, _weak: &slint::Weak<Mai
                 snap.reload_on_change = on;
                 PreferencesChange::ReloadOnChange
             });
+        }
+    });
+    prefs.on_check_updates_changed({
+        let bus = bus.clone();
+        move |on| {
+            bus.update(move |snap| {
+                snap.check_updates = on;
+                PreferencesChange::CheckUpdates
+            });
+            if on {
+                crate::update_check::start();
+            }
         }
     });
     prefs.on_export_name_template_edited({

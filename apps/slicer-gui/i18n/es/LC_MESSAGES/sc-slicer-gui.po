@@ -11280,3 +11280,23 @@ msgstr "{} zonas muertas en la pantalla de esta impresora: Acomodar las esquiva 
 msgctxt "Inspector"
 msgid "Where the screen's pixels are dead, nothing is placed: drag on the plate to mark them, click one to take it away."
 msgstr "Donde la pantalla tiene píxeles muertos no se pone nada: arrastrá sobre la cama para marcarlos, un clic sobre una zona la quita."
+
+#: ui/main-window.slint
+msgctxt "MainWindow"
+msgid "Breadslicer {} is out"
+msgstr "Salió Breadslicer {}"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PreferencesLayer"
+msgid "NEW VERSIONS"
+msgstr "VERSIONES NUEVAS"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PrivacyPreferences"
+msgid "Check for a new version at start"
+msgstr "Buscar una versión nueva al abrir"
+
+#: ui/preferences/preferences-layer.slint
+msgctxt "PrivacyPreferences"
+msgid "Asks GitHub for the list of Breadslicer's releases when the app opens, and shows a link at the top when a newer one is out. That request is all that leaves this computer."
+msgstr "Al abrir la app le pide a GitHub la lista de versiones de Breadslicer y, si hay una más nueva, muestra un link arriba. Ese pedido es lo único que sale de esta computadora."

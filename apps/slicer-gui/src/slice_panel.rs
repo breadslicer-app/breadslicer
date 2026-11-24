@@ -537,6 +537,7 @@ impl PanelUpdate {
             | PreferencesChange::StartDialog
             | PreferencesChange::RepairOnImport
             | PreferencesChange::ReloadOnChange
+            | PreferencesChange::CheckUpdates
             | PreferencesChange::DeadZones
             | PreferencesChange::RecentFiles
             | PreferencesChange::ResinPrices

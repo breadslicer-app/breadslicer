@@ -412,6 +412,7 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_show_start_dialog(snap.show_start_dialog);
     settings.set_repair_on_import(snap.repair_on_import);
     settings.set_reload_on_change(snap.reload_on_change);
+    settings.set_check_updates(snap.check_updates);
     settings.set_recent_files(snap.recent_files.clone());
     settings.set_resin_prices(snap.resin_prices.clone());
     settings.set_dead_zones(snap.dead_zones.clone());
@@ -591,6 +592,7 @@ impl AppState {
             show_start_dialog: settings.show_start_dialog(),
             repair_on_import: settings.repair_on_import(),
             reload_on_change: settings.reload_on_change(),
+            check_updates: settings.check_updates(),
             recent_files: settings.recent_files(),
             resin_prices: settings.resin_prices(),
             dead_zones: settings.dead_zones(),
@@ -1873,10 +1875,25 @@ impl AppState {
         }
     }
 
+    /// Asks GitHub whether a newer Breadslicer is out, when the person
+    /// turned that on in Privacy.
+    pub(crate) fn check_updates_if_asked(&self) {
+        if self.prefs.snapshot().check_updates {
+            crate::update_check::start();
+        }
+    }
+
     fn wire_app_level_menus(self: &Rc<Self>, ui: &MainWindow, ctrl: &Rc<ViewportController>) {
         // Closures hold `Weak<AppState>`, so the MainWindow -> closure ->
         // AppState -> main_windows(MainWindow) chain forms no strong cycle.
         ui.on_support_page_requested(|page| open_in_browser(support_page_url(page)));
+        // A newer release (asked for in Privacy): its page on GitHub alone.
+        crate::update_check::show_in(ui);
+        ui.on_update_clicked(|url| {
+            if url.starts_with("https://github.com/") {
+                open_in_browser(&url);
+            }
+        });
         // The creator's source (#745): a web address alone opens.
         ui.on_credit_link_clicked(|url| {
             let credit = crate::credit::Credit {
@@ -2939,6 +2956,7 @@ mod subscribe_window_preferences_tests {
             PreferencesChange::StartDialog,
             PreferencesChange::RepairOnImport,
             PreferencesChange::ReloadOnChange,
+            PreferencesChange::CheckUpdates,
             PreferencesChange::DeadZones,
             PreferencesChange::RecentFiles,
         ] {
