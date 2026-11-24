@@ -52,6 +52,7 @@ chrono = { workspace = true }
 futures-channel = "0.3"
 glam = "0.32.1"
 ico = "0.5"
+krilla = { version = "0.8.2", default-features = false, features = ["simple-text"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 harfrust = "0.8"
 newtypes = "0.6.0"

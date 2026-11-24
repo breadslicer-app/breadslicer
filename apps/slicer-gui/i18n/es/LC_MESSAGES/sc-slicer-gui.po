@@ -11347,3 +11347,84 @@ msgstr "Al abrir la app le pide a GitHub la lista de versiones de Breadslicer y,
 msgctxt "CutRun"
 msgid "Supports are being made for the pieces cut off."
 msgstr "Se están haciendo los soportes de las piezas cortadas."
+
+#: ui/main-window.slint
+msgctxt "MenuBar"
+msgid "Plate Checklist…"
+msgstr "Hoja de camas…"
+
+#: src/plate_sheet/mod.rs
+msgctxt "PlateSheet"
+msgid "Plate checklist"
+msgstr "Hoja de camas"
+
+#: src/plate_sheet/mod.rs
+msgctxt "PlateSheet"
+msgid "PARTS"
+msgstr "PIEZAS"
+
+#: src/plate_sheet/mod.rs
+msgctxt "PlateSheet"
+msgid "FRONT"
+msgstr "FRENTE"
+
+#: src/plate_sheet/mod.rs
+msgctxt "PlateSheet"
+msgid "Nothing on this plate"
+msgstr "Nada en esta cama"
+
+#: src/plate_sheet/mod.rs
+msgctxt "PlateSheet"
+msgid "Tick each part as it comes off the plate"
+msgstr "Tildá cada pieza al sacarla de la cama"
+
+#: src/plate_sheet/mod.rs
+#, rust-format
+msgctxt "PlateSheet"
+msgid "Page {} of {}"
+msgstr "Página {} de {}"
+
+#: src/plate_sheet/mod.rs
+#, rust-format
+msgctxt "PlateSheet"
+msgid "+{} more"
+msgstr "+{} más"
+
+#: src/plate_sheet/mod.rs
+msgctxt "PlateSheet"
+msgid "Untitled"
+msgstr "Sin título"
+
+#: src/plate_sheet/mod.rs
+msgctxt "PlateSheet"
+msgid "plates"
+msgstr "camas"
+
+#: src/plate_sheet/mod.rs
+msgctxt "PlateSheet"
+msgid "Drawing the plate checklist…"
+msgstr "Dibujando la hoja de camas…"
+
+#: src/plate_sheet/mod.rs
+#, rust-format
+msgctxt "PlateSheet"
+msgid "Plate checklist saved: {}"
+msgstr "Hoja de camas guardada: {}"
+
+#: src/plate_sheet/mod.rs
+msgctxt "PlateSheet"
+msgid "The plate checklist was not saved"
+msgstr "La hoja de camas no se guardó"
+
+#: src/plate_sheet/mod.rs
+msgctxt "FileDialog"
+msgid "PDF documents"
+msgstr "Documentos PDF"
+
+#: src/plate_sheet/mod.rs
+#, rust-format
+msgctxt "PlateSheet"
+msgid "{n} layer"
+msgid_plural "{n} layers"
+msgstr[0] "{n} capa"
+msgstr[1] "{n} capas"
