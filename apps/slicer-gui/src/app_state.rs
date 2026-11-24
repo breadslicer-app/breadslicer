@@ -5321,6 +5321,121 @@ mod window_wiring_tests {
         assert_eq!(flips, [false, true, false, true]);
     }
 
+    /// #744: the forecast raft of a model leaned back, over poses a hundredth
+    /// of a degree apart: `BREADSLICER_FORECAST_MODEL` names the model,
+    /// `BREADSLICER_FORECAST_FROM`, `_TO`, `_STEP` the lean (degrees about X,
+    /// 36.9, 37.1, 0.01 by default). Prints, per pose, the raft's area (the
+    /// supports' faces looking down near the plate), the supports' box and
+    /// their tips.
+    #[test]
+    #[ignore = "a measurement on a real model"]
+    fn forecast_raft_over_poses() {
+        use sc_mesh_core::transform::AffineTransform3D;
+        let Some(path) = std::env::var_os("BREADSLICER_FORECAST_MODEL") else {
+            return;
+        };
+        let path = PathBuf::from(path);
+        let num = |key: &str, or: f64| {
+            std::env::var(key)
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(or)
+        };
+        let (from, to, step) = (
+            num("BREADSLICER_FORECAST_FROM", 36.9),
+            num("BREADSLICER_FORECAST_TO", 37.1),
+            num("BREADSLICER_FORECAST_STEP", 0.01),
+        );
+        on_fresh_slint_thread(move || {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window(&app);
+            let controller = controller_of(&app, id);
+            controller.set_build_volume(BuildVolume::new(223.642, 126.976, 230.0));
+            let loaded = sc_project_formats::load_scene(&path, None, |_| {}).expect("it opens");
+            let scene = match loaded.content {
+                sc_project_formats::LoadedContent::Mesh(scene) => scene,
+                sc_project_formats::LoadedContent::Project(p) => p.scene,
+            };
+            let leaf = scene
+                .reachable_leaves(
+                    sc_scene::CsgPolicy::Descend,
+                    sc_scene::ReferencePolicy::Skip,
+                )
+                .unwrap()[0];
+            let mesh = scene.leaf_mesh_arc(leaf).unwrap().clone();
+            let supports = {
+                let windows = app.main_windows.borrow();
+                windows[&id]._drivers._support_run.clone()
+            };
+            // `BREADSLICER_FORECAST_GRID=0` turns the pillars' grid off.
+            if std::env::var("BREADSLICER_FORECAST_GRID").is_ok_and(|v| v == "0") {
+                window_of(&app, id).invoke_support_option_changed(12, 0.0);
+            }
+            let ctx = supports.forecast_ctx();
+            let mut lean = from;
+            while lean <= to + 1e-9 {
+                let turn = AffineTransform3D::from_rotation_x(lean.to_radians());
+                let (mut lo, mut hi) = ([f64::MAX; 3], [f64::MIN; 3]);
+                for v in &mesh.vertices {
+                    let p = turn.apply_to_vertex(*v).coords();
+                    for k in 0..3 {
+                        lo[k] = lo[k].min(f64::from(p[k]));
+                        hi[k] = hi[k].max(f64::from(p[k]));
+                    }
+                }
+                let world = AffineTransform3D::from_translation([
+                    -(lo[0] + hi[0]) / 2.0,
+                    -(lo[1] + hi[1]) / 2.0,
+                    5.0 - lo[2],
+                ])
+                .compose(&turn);
+                let mut bodies = [bread_arrange::Body {
+                    parts: vec![bread_arrange::Part {
+                        mesh: mesh.clone(),
+                        world,
+                    }],
+                    fixed: false,
+                }];
+                crate::support_forecast::with_forecasts(
+                    &mut bodies,
+                    &[true],
+                    &ctx,
+                    &std::sync::atomic::AtomicBool::new(false),
+                )
+                .expect("a forecast");
+                let Some(part) = bodies[0].parts.get(1) else {
+                    println!("{lean:.3}	no supports");
+                    lean += step;
+                    continue;
+                };
+                let (mut area, mut blo, mut bhi) = (0.0f64, [f64::MAX; 2], [f64::MIN; 2]);
+                for f in &part.mesh.faces {
+                    let [a, b, c] = f.vertices.map(|v| {
+                        let p = part
+                            .world
+                            .apply_to_vertex(part.mesh.vertices[usize::from(v)])
+                            .coords();
+                        [f64::from(p[0]), f64::from(p[1]), f64::from(p[2])]
+                    });
+                    for p in [a, b, c] {
+                        blo = [blo[0].min(p[0]), blo[1].min(p[1])];
+                        bhi = [bhi[0].max(p[0]), bhi[1].max(p[1])];
+                    }
+                    let nz = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+                    if nz < 0.0 && a[2] < 0.05 && b[2] < 0.05 && c[2] < 0.05 {
+                        area -= nz / 2.0;
+                    }
+                }
+                println!(
+                    "{lean:.3}	raft {area:.1} mm2	box {:.1} x {:.1}",
+                    bhi[0] - blo[0],
+                    bhi[1] - blo[1]
+                );
+                lean += step;
+            }
+        });
+    }
+
     /// One raft for all (#556) as Damian ran it: a model alone, the box on,
     /// Fill bed, Generate. `BREADSLICER_ONE_RAFT_MODEL` names the model,
     /// `BREADSLICER_ONE_RAFT_DUMP` a file the scene is written to, triangle
