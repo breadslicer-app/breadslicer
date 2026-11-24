@@ -63,6 +63,11 @@ thread_local! {
     static FRAME: RefCell<Option<Frame>> = const { RefCell::new(None) };
 }
 
+/// Whether this thread is collecting.
+pub fn collecting() -> bool {
+    FRAME.with(|f| f.borrow().is_some())
+}
+
 /// Starts collecting on this thread (dropping any frame already open).
 pub fn begin_frame() {
     FRAME.with(|f| {

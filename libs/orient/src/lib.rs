@@ -104,8 +104,8 @@ pub use analysis::{ModelGeometry, OrientAnalysis};
 pub use islands::{ISLAND_CLUSTER_MM, count_clustered};
 pub use peel::{LayerProfile, PeelModel, PeelSummary};
 pub use pose::{
-    drawn_lowest, drawn_no_lower_than, kept_on_plate, rotation_between, rotation_to_up,
-    turned_about_footprint,
+    drawn_lowest, drawn_no_lower_than, kept_on_plate, leaned_back, rotation_between,
+    rotation_to_up, turned_about_footprint,
 };
 
 use std::fmt;

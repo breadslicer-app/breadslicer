@@ -245,6 +245,8 @@ struct WindowDrivers {
     _presupported_import: Rc<crate::presupported_import::PresupportedImport>,
     /// Repairs the models that come in and do not slice (#677).
     _repair_on_import: Rc<crate::repair_on_import::RepairOnImport>,
+    _reload_from_disk: Rc<crate::reload_from_disk::ReloadRun>,
+    _dead_zones: Rc<crate::dead_zones::DeadZones>,
     /// The Slice tab's layer keys (#501).
     _layer_keys: Rc<crate::layer_keys::LayerKeys>,
     _support_run: Rc<SupportRun>,
@@ -405,10 +407,14 @@ fn apply_snapshot_to_settings(settings: &mut AppSettings, snap: &PreferencesSnap
     settings.set_slice_view_height(snap.slice_view_height);
     settings.set_slice_view_minimized(snap.slice_view_minimized);
     settings.set_last_open_dir(snap.last_open_dir.clone());
+    settings.set_last_export_dir(snap.last_export_dir.clone());
+    settings.set_export_name_template(&snap.export_name_template);
     settings.set_show_start_dialog(snap.show_start_dialog);
     settings.set_repair_on_import(snap.repair_on_import);
+    settings.set_reload_on_change(snap.reload_on_change);
     settings.set_recent_files(snap.recent_files.clone());
     settings.set_resin_prices(snap.resin_prices.clone());
+    settings.set_dead_zones(snap.dead_zones.clone());
 }
 
 /// Saves the changes that `snap` makes to `base` into `file`, and returns the
@@ -580,10 +586,14 @@ impl AppState {
             slice_view_height: settings.slice_view_height(),
             slice_view_minimized: settings.slice_view_minimized(),
             last_open_dir: settings.last_open_dir(),
+            last_export_dir: settings.last_export_dir(),
+            export_name_template: settings.export_name_template(),
             show_start_dialog: settings.show_start_dialog(),
             repair_on_import: settings.repair_on_import(),
+            reload_on_change: settings.reload_on_change(),
             recent_files: settings.recent_files(),
             resin_prices: settings.resin_prices(),
+            dead_zones: settings.dead_zones(),
         };
         let prefs = PreferencesBus::new(snapshot);
         // Loads and saves put their files in the recent list (#381).
@@ -865,6 +875,19 @@ impl AppState {
             repair_run.clone(),
             Some(presupported_import.clone()),
         );
+        let reload_from_disk = crate::reload_from_disk::ReloadRun::install(
+            ui,
+            ctrl.document(),
+            hollow_run.clone(),
+            self.prefs.clone(),
+            ctrl.clone(),
+        );
+        let dead_zones = crate::dead_zones::DeadZones::install(
+            ui,
+            self.prefs.clone(),
+            ctrl.document(),
+            ctrl.clone(),
+        );
         let layer_keys = crate::layer_keys::LayerKeys::install(ui);
         let layer_pixels = crate::layer_pixels::LayerPixels::install(
             ui,
@@ -909,6 +932,8 @@ impl AppState {
             _split_bodies: split_bodies,
             _presupported_import: presupported_import,
             _repair_on_import: repair_on_import,
+            _reload_from_disk: reload_from_disk,
+            _dead_zones: dead_zones,
             _layer_keys: layer_keys,
             _slice_panel: slice_panel,
             _slice_run: slice_run,
@@ -1085,12 +1110,46 @@ impl AppState {
         }
     }
 
-    /// Opens the files dropped on window `id` since the last time.
+    /// Opens the files dropped on window `id` since the last time. A
+    /// printer file goes to the window's Send card instead (#727).
     fn open_dropped(self: &Rc<Self>, id: u64) {
         let paths = self.dropped.borrow_mut().remove(&id).unwrap_or_default();
+        let (printer_files, paths): (Vec<PathBuf>, Vec<PathBuf>) = paths
+            .into_iter()
+            .partition(|path| crate::send_to_printer::is_printer_file(path));
+        if let Some(file) = printer_files.into_iter().next() {
+            self.send_dropped(id, file);
+        }
         if !paths.is_empty() {
             self.open_paths_in_window(id, paths);
         }
+    }
+
+    /// A printer file dropped on window `id` (#727): the Slice tab shows,
+    /// with the Send card ready to name it. Without a printer that takes a
+    /// print over the network there is no card, and the user is told so.
+    fn send_dropped(&self, id: u64, file: PathBuf) {
+        let Some((window, controller)) = self
+            .main_windows
+            .borrow()
+            .get(&id)
+            .map(|wired| (wired.window.clone_strong(), wired.controller.clone()))
+        else {
+            return;
+        };
+        if window.get_slice_send_shown() {
+            window.invoke_section_change_requested(crate::WorkspaceSection::Slice);
+            window.invoke_slice_send_file_dropped(file.to_string_lossy().as_ref().into());
+            return;
+        }
+        controller.dialogs().show_info(|| InfoTexts {
+            heading: ctr!("ErrorDialog", "Printer files are sent, not opened"),
+            message: ctr!(
+                "ErrorDialog",
+                "A printer file goes to a printer from the Send to printer card of the Slice tab, which shows while the printer in use takes prints over the network."
+            ),
+            details: Default::default(),
+        });
     }
 
     /// Routes an external (non-menu) open request of 1 file: a path on
@@ -1818,6 +1877,16 @@ impl AppState {
         // Closures hold `Weak<AppState>`, so the MainWindow -> closure ->
         // AppState -> main_windows(MainWindow) chain forms no strong cycle.
         ui.on_support_page_requested(|page| open_in_browser(support_page_url(page)));
+        // The creator's source (#745): a web address alone opens.
+        ui.on_credit_link_clicked(|url| {
+            let credit = crate::credit::Credit {
+                source: Some(url.to_string()),
+                ..Default::default()
+            };
+            if let Some(link) = credit.link() {
+                open_in_browser(link);
+            }
+        });
         {
             let app = Rc::downgrade(self);
             let ui_weak = ui.as_weak();
@@ -2869,6 +2938,8 @@ mod subscribe_window_preferences_tests {
             PreferencesChange::LastOpenDir,
             PreferencesChange::StartDialog,
             PreferencesChange::RepairOnImport,
+            PreferencesChange::ReloadOnChange,
+            PreferencesChange::DeadZones,
             PreferencesChange::RecentFiles,
         ] {
             let build_volume = on_fresh_slint_thread(move || {
@@ -5248,6 +5319,121 @@ mod window_wiring_tests {
             flips
         });
         assert_eq!(flips, [false, true, false, true]);
+    }
+
+    /// #744: the forecast raft of a model leaned back, over poses a hundredth
+    /// of a degree apart: `BREADSLICER_FORECAST_MODEL` names the model,
+    /// `BREADSLICER_FORECAST_FROM`, `_TO`, `_STEP` the lean (degrees about X,
+    /// 36.9, 37.1, 0.01 by default). Prints, per pose, the raft's area (the
+    /// supports' faces looking down near the plate), the supports' box and
+    /// their tips.
+    #[test]
+    #[ignore = "a measurement on a real model"]
+    fn forecast_raft_over_poses() {
+        use sc_mesh_core::transform::AffineTransform3D;
+        let Some(path) = std::env::var_os("BREADSLICER_FORECAST_MODEL") else {
+            return;
+        };
+        let path = PathBuf::from(path);
+        let num = |key: &str, or: f64| {
+            std::env::var(key)
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(or)
+        };
+        let (from, to, step) = (
+            num("BREADSLICER_FORECAST_FROM", 36.9),
+            num("BREADSLICER_FORECAST_TO", 37.1),
+            num("BREADSLICER_FORECAST_STEP", 0.01),
+        );
+        on_fresh_slint_thread(move || {
+            let app = test_app(PreferencesSnapshot::for_tests());
+            let id = add_window(&app);
+            let controller = controller_of(&app, id);
+            controller.set_build_volume(BuildVolume::new(223.642, 126.976, 230.0));
+            let loaded = sc_project_formats::load_scene(&path, None, |_| {}).expect("it opens");
+            let scene = match loaded.content {
+                sc_project_formats::LoadedContent::Mesh(scene) => scene,
+                sc_project_formats::LoadedContent::Project(p) => p.scene,
+            };
+            let leaf = scene
+                .reachable_leaves(
+                    sc_scene::CsgPolicy::Descend,
+                    sc_scene::ReferencePolicy::Skip,
+                )
+                .unwrap()[0];
+            let mesh = scene.leaf_mesh_arc(leaf).unwrap().clone();
+            let supports = {
+                let windows = app.main_windows.borrow();
+                windows[&id]._drivers._support_run.clone()
+            };
+            // `BREADSLICER_FORECAST_GRID=0` turns the pillars' grid off.
+            if std::env::var("BREADSLICER_FORECAST_GRID").is_ok_and(|v| v == "0") {
+                window_of(&app, id).invoke_support_option_changed(12, 0.0);
+            }
+            let ctx = supports.forecast_ctx();
+            let mut lean = from;
+            while lean <= to + 1e-9 {
+                let turn = AffineTransform3D::from_rotation_x(lean.to_radians());
+                let (mut lo, mut hi) = ([f64::MAX; 3], [f64::MIN; 3]);
+                for v in &mesh.vertices {
+                    let p = turn.apply_to_vertex(*v).coords();
+                    for k in 0..3 {
+                        lo[k] = lo[k].min(f64::from(p[k]));
+                        hi[k] = hi[k].max(f64::from(p[k]));
+                    }
+                }
+                let world = AffineTransform3D::from_translation([
+                    -(lo[0] + hi[0]) / 2.0,
+                    -(lo[1] + hi[1]) / 2.0,
+                    5.0 - lo[2],
+                ])
+                .compose(&turn);
+                let mut bodies = [bread_arrange::Body {
+                    parts: vec![bread_arrange::Part {
+                        mesh: mesh.clone(),
+                        world,
+                    }],
+                    fixed: false,
+                }];
+                crate::support_forecast::with_forecasts(
+                    &mut bodies,
+                    &[true],
+                    &ctx,
+                    &std::sync::atomic::AtomicBool::new(false),
+                )
+                .expect("a forecast");
+                let Some(part) = bodies[0].parts.get(1) else {
+                    println!("{lean:.3}	no supports");
+                    lean += step;
+                    continue;
+                };
+                let (mut area, mut blo, mut bhi) = (0.0f64, [f64::MAX; 2], [f64::MIN; 2]);
+                for f in &part.mesh.faces {
+                    let [a, b, c] = f.vertices.map(|v| {
+                        let p = part
+                            .world
+                            .apply_to_vertex(part.mesh.vertices[usize::from(v)])
+                            .coords();
+                        [f64::from(p[0]), f64::from(p[1]), f64::from(p[2])]
+                    });
+                    for p in [a, b, c] {
+                        blo = [blo[0].min(p[0]), blo[1].min(p[1])];
+                        bhi = [bhi[0].max(p[0]), bhi[1].max(p[1])];
+                    }
+                    let nz = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+                    if nz < 0.0 && a[2] < 0.05 && b[2] < 0.05 && c[2] < 0.05 {
+                        area -= nz / 2.0;
+                    }
+                }
+                println!(
+                    "{lean:.3}	raft {area:.1} mm2	box {:.1} x {:.1}",
+                    bhi[0] - blo[0],
+                    bhi[1] - blo[1]
+                );
+                lean += step;
+            }
+        });
     }
 
     /// One raft for all (#556) as Damian ran it: a model alone, the box on,

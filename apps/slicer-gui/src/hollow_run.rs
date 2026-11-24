@@ -796,18 +796,21 @@ struct CavityPreview {
     job: Option<(JobHandle<HollowOutcome>, PreviewKey)>,
     ready: Option<(PreviewKey, Arc<IndexedMesh>, Arc<PreparedHollow>)>,
     cavity_piece: Option<(CavityPieceKey, Arc<OverlayMesh>)>,
-    drains_piece: Option<(DrainsPieceKey, Arc<OverlayMesh>)>,
+    /// The drains drawn: those that open into the cavity, then those that
+    /// do not (red, #753).
+    drains_piece: Option<(DrainsPieceKey, Vec<Arc<OverlayMesh>>)>,
     /// How deep the drawn drains go, as the engine measures them on the
-    /// ready cavity, and what for (#315).
-    depths: Option<(DepthsKey, Vec<f32>)>,
+    /// ready cavity, whether each opens into it, and what for (#315).
+    depths: Option<(DepthsKey, Vec<(f32, bool)>)>,
     /// What the shown overlay was drawn from, and the overlay.
     shown: Option<(ShownKey, Overlay)>,
 }
 
 /// A drawn cavity: which cavity mesh, at which pose.
 type CavityPieceKey = (usize, [[f64; 4]; 4]);
-/// Drawn drains: which, at which pose, how deep (bits of each depth).
-type DrainsPieceKey = (Vec<LocalDrain>, [[f64; 4]; 4], Vec<u32>);
+/// Drawn drains: which, at which pose, how deep (bits of each depth) and
+/// whether each opens into the cavity.
+type DrainsPieceKey = (Vec<LocalDrain>, [[f64; 4]; 4], Vec<(u32, bool)>);
 /// Measured drain depths: which drains, at which pose, on which session,
 /// with which settings.
 type DepthsKey = (Vec<LocalDrain>, [[f64; 4]; 4], usize, PreviewKey);
@@ -1110,7 +1113,7 @@ impl HollowRun {
     }
 
     /// The record of the hollow `mesh` (by identity), made or drilled here.
-    fn record_of(&self, mesh: &Arc<IndexedMesh>) -> Option<Hollowed> {
+    pub(crate) fn record_of(&self, mesh: &Arc<IndexedMesh>) -> Option<Hollowed> {
         self.hollowed
             .borrow()
             .iter()
@@ -1976,6 +1979,40 @@ impl HollowRun {
                     })
             })
             .flatten()
+    }
+
+    /// Hollows `leaf`, which shows `mesh`, again as `record` was made (#721):
+    /// its settings, drains and solid areas; the tab takes those settings.
+    /// A model that came hollow is not hollowed here. Whether it started.
+    pub(crate) fn hollow_again(
+        self: &Rc<Self>,
+        leaf: NodeId,
+        mesh: Arc<IndexedMesh>,
+        record: &Hollowed,
+    ) -> bool {
+        if record.drilled || self.job.borrow().is_some() {
+            return false;
+        }
+        let Some(world) = self
+            .document
+            .with_scene(|spatial| spatial.graph().world_transform_of(leaf).ok())
+            .flatten()
+        else {
+            return false;
+        };
+        *self.options.borrow_mut() = record.options;
+        if let Some(ui) = self.ui.upgrade() {
+            self.push_options(&ui);
+        }
+        self.launch_with(
+            leaf,
+            mesh.clone(),
+            mesh,
+            record.drains.clone(),
+            record.solids.clone(),
+            &world,
+        );
+        self.job.borrow().is_some()
     }
 
     /// Hollows `original` into the leaf showing `before`, with `drains` and
@@ -2870,16 +2907,20 @@ impl HollowRun {
                     .map(|d| {
                         probe
                             .report(&world, &d.to_world(&world))
-                            .map_or(fallback_depth, |r| r.depth_mm)
+                            .map_or((fallback_depth, true), |r| (r.depth_mm, r.reaches_cavity))
                     })
-                    .collect::<Vec<f32>>()
+                    .collect::<Vec<(f32, bool)>>()
             });
+        // Each drain's depth, and whether it opens into the cavity: one
+        // that does not is drawn red, as the drain under the cursor is, so
+        // a drain Hollow leaves out never shows as if it were there (#753).
+        // Not measured yet: as placed, drawn as opening.
         let depths = probed
             .or_else(|| drain_depths(&mut preview, &drains, key, &world, matrix, &options))
             .unwrap_or_else(|| {
                 drains
                     .iter()
-                    .map(|d| d.depth_mm.unwrap_or(fallback_depth))
+                    .map(|d| (d.depth_mm.unwrap_or(fallback_depth), true))
                     .collect()
             });
 
@@ -2909,24 +2950,36 @@ impl HollowRun {
             let id = (
                 drains.clone(),
                 matrix,
-                depths.iter().map(|d| d.to_bits()).collect::<Vec<_>>(),
+                depths
+                    .iter()
+                    .map(|(d, opens)| (d.to_bits(), *opens))
+                    .collect::<Vec<_>>(),
             );
             match &preview.drains_piece {
-                Some((k, piece)) if *k == id => piece.clone(),
+                Some((k, pieces)) if *k == id => pieces.clone(),
                 _ => {
-                    let mut mesh = (Vec::new(), Vec::new());
-                    for (drain, &depth) in drains.iter().zip(&depths) {
-                        let w = drain.to_world(&world);
-                        let radii = [w.radius_mm, drain.end_radius_mm()];
-                        drain_solid(w.center, w.direction, radii, depth, &mut mesh);
+                    let mut pieces = Vec::new();
+                    for (want, tint) in [(true, OverlayTint::Drain), (false, OverlayTint::Invalid)]
+                    {
+                        let mut mesh = (Vec::new(), Vec::new());
+                        for (drain, &(depth, opens)) in drains.iter().zip(&depths) {
+                            if opens != want {
+                                continue;
+                            }
+                            let w = drain.to_world(&world);
+                            let radii = [w.radius_mm, drain.end_radius_mm()];
+                            drain_solid(w.center, w.direction, radii, depth, &mut mesh);
+                        }
+                        if !mesh.1.is_empty() {
+                            pieces.push(Arc::new(OverlayMesh {
+                                positions: mesh.0,
+                                indices: mesh.1,
+                                tint,
+                            }));
+                        }
                     }
-                    let piece = Arc::new(OverlayMesh {
-                        positions: mesh.0,
-                        indices: mesh.1,
-                        tint: OverlayTint::Drain,
-                    });
-                    preview.drains_piece = Some((id, piece.clone()));
-                    piece
+                    preview.drains_piece = Some((id, pieces.clone()));
+                    pieces
                 }
             }
         });
@@ -2939,7 +2992,10 @@ impl HollowRun {
         let shown_key = ShownKey {
             map: map.first().map(|p| Arc::as_ptr(p) as usize),
             cavity: cavity_piece.as_ref().map(|p| Arc::as_ptr(p) as usize),
-            drains: drains_piece.as_ref().map(|p| Arc::as_ptr(p) as usize),
+            drains: drains_piece
+                .as_ref()
+                .and_then(|p| p.first())
+                .map(|p| Arc::as_ptr(p) as usize),
             hover,
             world: matrix,
             tool: options,
@@ -2955,9 +3011,9 @@ impl HollowRun {
         let mut pieces: Vec<Arc<OverlayMesh>> = Vec::new();
         pieces.extend(map);
         pieces.extend(cavity_piece);
-        pieces.extend(drains_piece);
+        pieces.extend(drains_piece.into_iter().flatten());
         // The drain picked to edit shows green over the others (#450).
-        if let Some((drain, &depth)) = self
+        if let Some((drain, &(depth, _))) = self
             .picked_drain
             .get()
             .and_then(|i| drains.get(i).zip(depths.get(i)))
@@ -3284,7 +3340,7 @@ fn drain_depths(
     world: &Transform3D,
     matrix: [[f64; 4]; 4],
     options: &HollowOptions,
-) -> Option<Vec<f32>> {
+) -> Option<Vec<(f32, bool)>> {
     let (_, _, prepared) = preview
         .ready
         .as_ref()
@@ -3301,12 +3357,12 @@ fn drain_depths(
         return Some(depths.clone());
     }
     let settings = options.settings();
-    let depths: Option<Vec<f32>> = drains
+    let depths: Option<Vec<(f32, bool)>> = drains
         .iter()
         .map(|d| {
             prepared
                 .drain_report(world, &settings, &d.to_world(world))
-                .map(|r| r.depth_mm)
+                .map(|r| (r.depth_mm, r.reaches_cavity))
         })
         .collect();
     let depths = depths?;
@@ -3903,7 +3959,7 @@ mod tests {
     fn the_drain_under_the_cursor_shows_whether_it_reaches_the_cavity() {
         use crate::selection::{LeafId, Selection};
         use crate::test_support::slint_thread::on_fresh_slint_thread;
-        let (states, volume, kept, notices) = on_fresh_slint_thread(|| {
+        let (states, volume, kept, notices, placed) = on_fresh_slint_thread(|| {
             let window = MainWindow::new().unwrap();
             let ctrl = Rc::new(ViewportController::new_for_test());
             let document = ctrl.document();
@@ -3970,6 +4026,23 @@ mod tests {
             // Both placed on the solid model, then hollowed.
             run.on_drain_click(fin.0, fin.1);
             run.on_drain_click(body.0, body.1);
+            // Placed, they show as Hollow takes them: the one that misses
+            // red, the one that opens as a drain (#753).
+            run.hover.set(None);
+            run.tick_preview();
+            let placed: Vec<OverlayTint> = run
+                .preview
+                .borrow()
+                .shown
+                .as_ref()
+                .map(|(_, overlay)| {
+                    overlay
+                        .iter()
+                        .map(|p| p.tint)
+                        .filter(|t| matches!(t, OverlayTint::Drain | OverlayTint::Invalid))
+                        .collect()
+                })
+                .unwrap_or_default();
             run.on_apply();
             land_job(&run);
             let kept = document
@@ -3977,8 +4050,15 @@ mod tests {
                 .borrow()
                 .last()
                 .map(|h| h.drains.iter().map(|d| d.center).collect::<Vec<_>>());
-            (states, volume, kept, dialogs.info_headings_for_test())
+            (
+                states,
+                volume,
+                kept,
+                dialogs.info_headings_for_test(),
+                placed,
+            )
         });
+        assert_eq!(placed, vec![OverlayTint::Drain, OverlayTint::Invalid]);
         assert!(volume > 0.0, "the piece faces outward");
         assert_eq!(
             states,

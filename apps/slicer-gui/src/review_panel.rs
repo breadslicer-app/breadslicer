@@ -2907,11 +2907,21 @@ fn fix_all_leaves(finding: &Finding, drains: Option<usize>) -> SharedString {
             "Left by Fix All: lift the model or turn the raft off with this finding's buttons."
         ),
         (CheckKind::CleanUp, _) => ctr!("Review", "Done by the review itself: nothing to fix."),
+        (CheckKind::ThinTip, _) => ctr!(
+            "Review",
+            "Left by Fix All: generate the supports again for this printer, or widen these tips."
+        ),
         (CheckKind::SurfaceGrowth, _) => ctr!(
             "Review",
             "Left by Fix All: more tips here are placed by hand, in the Supports tab."
         ),
-        (CheckKind::PlateEdge | CheckKind::TooTall | CheckKind::EmptyLayer, _) => ctr!(
+        (
+            CheckKind::PlateEdge
+            | CheckKind::TooTall
+            | CheckKind::EmptyLayer
+            | CheckKind::DeadZone,
+            _,
+        ) => ctr!(
             "Review",
             "Left by Fix All: it does not move or resize models. Arrange the plate by hand."
         ),

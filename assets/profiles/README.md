@@ -136,6 +136,13 @@ publishes for their own machines:
 
 - <https://eu.elegoo.com/es-se/blogs/3d-printer-user-guide/hoja-de-configuracion-de-resina-de-impresoras-elegoo>
 - <https://drive.google.com/file/d/1_jnyMfNkm4sPJhKyN46ey5CO-ks4MRyR/view>
+- <https://wiki.elegoo.com/en/resin-settings>, the newer of the two: it
+  covers the Mars 5 Ultra, the Saturn 4 Ultra and the Saturn 4 Ultra 16K.
+  The converter reads a saved copy of the page (`--format elegoo-settings
+  --input resin-settings.html`). Those three tilt their vat on the
+  normal layers and the page states no travel for them; their bottom
+  layers lift, so each block takes the travel ELEGOO states for the same
+  resin on the Mars 5 or the Saturn 4, and says so in a note.
 
 Most exposures there are published as a range. A profile takes the high
 end of the range for the bottom exposure and the low end for the normal

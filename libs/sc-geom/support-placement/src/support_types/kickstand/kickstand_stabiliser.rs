@@ -261,9 +261,9 @@ impl Clearance<'_, '_> {
     /// Whether the straight run from `a` to `b`, `diameter_mm` wide, keeps
     /// clear of every model.
     fn line_clear(&self, a: Vec3, b: Vec3, diameter_mm: f64) -> bool {
-        self.meshes
-            .values()
-            .all(|mesh| line_passes_mesh_clearance(a, b, Some(mesh), diameter_mm))
+        self.meshes.values().all(|mesh| {
+            line_passes_mesh_clearance(a, b, Some(mesh), diameter_mm + 2.0 * mesh.grown_mm)
+        })
     }
 
     /// Whether any point along the drop from `top` to `bottom` comes within
@@ -278,7 +278,7 @@ impl Clearance<'_, '_> {
                 entry
                     .bvh
                     .closest_point_to_point(start.lerp(end, t), 0.0, f64::INFINITY)
-                    .is_some_and(|hit| hit.distance < radius)
+                    .is_some_and(|hit| hit.distance < radius + entry.grown_mm)
             })
         })
     }
@@ -751,6 +751,7 @@ mod tests {
             BraceMesh {
                 bvh: &neighbour,
                 matrix: Matrix4::IDENTITY,
+                grown_mm: 0.0,
             },
         )]
         .into();

@@ -85,6 +85,13 @@ export component MainWindow inherits Window {
     // the edges are where it is resized. Rust turns it on where it is
     // supported (Windows).
     in property <bool> custom-chrome: false;
+    // The top bar folds as the window narrows (a tester lost Close under
+    // 1600 px): the support links to their hearts, then the file's name
+    // and the printer chip.
+    property <bool> bar-compact: root.width < 1640px;
+    property <bool> bar-narrow: root.width < 1240px;
+    // Under this, the support links go: Undo and Redo keep their room.
+    property <bool> bar-tiny: root.width < 1100px;
     in property <bool> window-maximized: false;
     callback window-drag();
     callback window-minimize();
@@ -126,6 +133,8 @@ export component MainWindow inherits Window {
     callback start-open-recent(int);
     callback start-reopen-last();
     callback start-remove-recent(int);
+    // A recent file in its folder (#732).
+    callback start-show-recent-in-folder(int);
     // Open project or Import model: File > Open's dialog, led by that kind.
     callback start-open-file(StartOpen);
     callback start-dont-show-changed(bool);
@@ -140,6 +149,11 @@ export component MainWindow inherits Window {
     // the document's source path. Empty when no file is open, which
     // makes the title fall back to the application name.
     in property <string> document-name: "";
+    // The creator's credit a .bread file carries (#745): the line, and the
+    // source a click opens (empty: none to open).
+    in property <string> credit-line;
+    in property <string> credit-link;
+    callback credit-link-clicked(string);
     // The open project has earlier versions kept (#18): enables File >
     // Previous Versions.
     in property <bool> has-versions: false;
@@ -175,6 +189,9 @@ export component MainWindow inherits Window {
     // The scene panel's eye and padlock (#16), by the object's index.
     callback object-hide-toggled(int);
     callback object-lock-toggled(int);
+    // A model's file in its folder (#732), by its index.
+    callback object-show-in-folder(int);
+    callback object-reload(int);
     in property <[int]> object-row-of: [];
     in-out property <int> selected-object-index: -1;
     // Every selected row (#13), indexed like `object-list`, and how many
@@ -207,7 +224,7 @@ export component MainWindow inherits Window {
     // Menu presentation, pushed from the persisted preference. macOS
     // always resolves to Bar in Rust because it renders a global menu
     // bar.
-    in property <MenuLayout> menu-layout: MenuLayout.Bar;
+    in property <MenuLayout> menu-layout: MenuLayout.Compact;
     // Active workspace section, driven by Rust: the pill switcher
     // reflects it and clicking a segment requests a change through
     // `section-change-requested` rather than writing it directly, so
@@ -234,6 +251,9 @@ export component MainWindow inherits Window {
     // The selected object numbers for the Transform inspector, pushed by
     // Rust at most once per frame (`ViewportController::refresh_readout`).
     in property <bool> selection-valid: false;
+    // The selected model is larger than its plate (#733), and Scale to fit.
+    in property <bool> selection-too-large: false;
+    callback scale-to-fit-requested();
     in property <float> selection-size-x;
     // Size along the selected object's own axes, and whether a tilt makes
     // it differ from the world box (BS-393).
@@ -329,7 +349,10 @@ export component MainWindow inherits Window {
     // The Area tool (#177): its brush, and filling or clearing the paint.
     in property <float> support-area-brush: 3;
     callback support-area-brush-edited(float);
-    callback support-area-fill();
+    callback support-area-fill(int);
+    in property <int> support-line-mode;
+    callback support-line-mode-picked(int);
+    callback support-picked-mirror(int);
     callback support-area-clear();
     // The supports picked routed again (#377): on their own, or hung from
     // the nearest.
@@ -376,6 +399,11 @@ export component MainWindow inherits Window {
     in property <bool> support-hide-rafts-under-plate: true;
     callback support-hide-rafts-under-plate-toggled(bool);
     in property <bool> support-lines-under-plate;
+    // The screen's dead zones (#726): the drawing tool, and how many the
+    // printer has.
+    in-out property <bool> dead-zone-tool;
+    in property <int> dead-zone-count;
+    callback dead-zone-tool-toggled(bool);
     callback support-lines-under-plate-toggled(bool);
     // The Supports tab's IMPORTED SUPPORTS card (#259): the bodies of the
     // selected model's imported supports, 0 for none.
@@ -485,6 +513,11 @@ export component MainWindow inherits Window {
     // of them.
     in property <int> support-picked-count;
     callback support-picked-clear();
+    // The picked supports hidden from the view (#728): H hides them, Alt+H
+    // shows every one again. View only.
+    in property <int> support-hidden-count;
+    callback support-picked-hide();
+    callback support-hidden-show();
     in property <bool> support-add-note-warns;
     // Remove's drag (#3): 0 a box, 1 a brush of this radius (logical px).
     in-out property <int> support-remove-mode: 0;
@@ -622,6 +655,7 @@ export component MainWindow inherits Window {
     // What the supports' colours tell: over the print, or as the layer on
     // show peels (#245).
     in property <string> slice-timeline-supports-caption;
+    in property <string> slice-timeline-imported-note;
     // What the frame check of the supports found (#244).
     in property <string> slice-timeline-frame-note;
     in-out property <bool> stress-paint: true;
@@ -645,6 +679,8 @@ export component MainWindow inherits Window {
     in-out property <bool> slice-cost-open: true;
     in-out property <string> slice-price-text;
     in-out property <string> slice-price-currency;
+    in property <[string]> slice-price-currencies;
+    in-out property <int> slice-price-currency-index;
     in-out property <string> slice-price-amount;
     in-out property <string> slice-price-losses;
     in-out property <string> slice-price-weighed;
@@ -709,6 +745,8 @@ export component MainWindow inherits Window {
     property <bool> tab-key-on: root.has-scene && !root.message-open && !start-layer.visible
         && !root.loading && !root.modal-transform-active;
     callback support-preset-picked(int);
+    in property <bool> support-by-height;
+    callback support-by-height-toggled(bool);
     callback support-preset-save(string);
     callback support-preset-delete();
     in property <string> axis-guide-commands: "";
@@ -752,6 +790,11 @@ export component MainWindow inherits Window {
     in property <bool> slice-send-naming-start: false;
     in-out property <string> slice-send-name;
     in property <string> slice-send-name-preview;
+    // A file already sliced, sent from the disk (#727): picked with Send
+    // from disk, or dropped on the window.
+    in property <string> slice-send-disk-file;
+    callback slice-send-from-disk();
+    callback slice-send-file-dropped(string);
     callback slice-send-search(bool);
     callback slice-send-address(string);
     callback slice-send-name-asked(bool);
@@ -1139,6 +1182,7 @@ export component MainWindow inherits Window {
     in property <float> orient-progress: 0;
     in property <int> orient-preset: 0;
     in property <float> orient-max-tilt: 180;
+    in-out property <float> orient-lean-angle: 37;
     in property <bool> orient-align: false;
     in property <float> orient-weight-supports: 100;
     in property <float> orient-weight-force: 100;
@@ -1175,6 +1219,7 @@ export component MainWindow inherits Window {
     callback orient-finished();
     // 0 preset, 1 max tilt, 2 align (0/1), 3-5 term weights (%).
     callback orient-option-changed(int, float);
+    callback orient-lean-back(float);
     callback orient-option-hovered(int, bool);
     callback orient-option-picked(int);
     callback orient-apply();
@@ -1621,14 +1666,25 @@ export component MainWindow inherits Window {
                     }
                 }
 
+                // The bar's content, short of the window's own buttons, which
+                // stand at the right edge whatever the width: a narrow
+                // window folds the content first (a tester lost Close under
+                // 1600 px).
+                bar-content := Rectangle {
+                    x: 0;
+                    y: 0;
+                    width: parent.width - (root.custom-chrome ? caption-buttons.width : 0px);
+                    height: parent.height;
+                    clip: true;
+
                 HorizontalLayout {
                     // Room for the compact menu button in its corner.
                     padding-left: root.menu-layout == MenuLayout.Compact ? 48px : 12px;
                     padding-right: root.custom-chrome ? 0px : 8px;
-                    spacing: 16px;
+                    spacing: root.bar-narrow ? 10px : 16px;
 
                     HorizontalLayout {
-                        min-width: 240px;
+                        min-width: root.bar-narrow ? 0px : 240px;
                         spacing: 10px;
                         alignment: start;
 
@@ -1644,17 +1700,17 @@ export component MainWindow inherits Window {
                             color: Theme.text;
                             vertical-alignment: center;
                         }
-                        if root.document-name != "": Text {
+                        if root.document-name != "" && !root.bar-narrow: Text {
                             text: "/";
                             color: Theme.border-strong;
                             vertical-alignment: center;
                         }
-                        if root.document-name != "": Text {
+                        if root.document-name != "" && !root.bar-narrow: Text {
                             text: root.document-name;
                             color: Theme.text-soft;
                             vertical-alignment: center;
                             overflow: elide;
-                            max-width: 260px;
+                            max-width: root.bar-compact ? 140px : 260px;
                         }
                         if root.scene-dirty: Rectangle {
                             width: 6px;
@@ -1732,31 +1788,33 @@ export component MainWindow inherits Window {
                     }
 
                     HorizontalLayout {
-                        min-width: 240px;
+                        min-width: root.bar-narrow ? 0px : 240px;
                         spacing: 4px;
                         alignment: end;
 
-                        SupportLink {
+                        if !root.bar-tiny: SupportLink {
                             label: @tr("Support us on Patreon");
+                            compact: root.bar-compact;
                             y: (parent.height - self.height) / 2;
                             clicked => {
                                 root.support-page-requested(SupportPage.Patreon);
                             }
                         }
-                        SupportLink {
+                        if !root.bar-tiny: SupportLink {
                             label: @tr("Support us on Ko-fi");
+                            compact: root.bar-compact;
                             y: (parent.height - self.height) / 2;
                             clicked => {
                                 root.support-page-requested(SupportPage.KoFi);
                             }
                         }
-                        Rectangle { width: 8px; }
+                        Rectangle { width: root.bar-narrow ? 2px : 8px; }
                         // What you print on, one click from Printer & resin
                         // (#151).
                         printer-chip := Rectangle {
                             y: (parent.height - self.height) / 2;
                             height: 26px;
-                            width: min(240px, chip-text.preferred-width + 39px);
+                            width: min(root.bar-narrow ? 150px : 240px, chip-text.preferred-width + 39px);
                             border-radius: Theme.radius;
                             border-width: 1px;
                             border-color: root.slice-printer-current-index >= 0
@@ -1817,9 +1875,19 @@ export component MainWindow inherits Window {
                                 root.redo-requested();
                             }
                         }
-                        if root.custom-chrome: Rectangle {
-                            width: 9px;
-                        }
+                    }
+                }
+                }
+
+                // The window's own buttons, always at the right edge.
+                caption-buttons := HorizontalLayout {
+                    x: parent.width - self.width;
+                    height: parent.height;
+                    width: root.custom-chrome ? self.preferred-width : 0px;
+                    visible: root.custom-chrome;
+                    spacing: 4px;
+                    padding-left: 9px;
+
                         if root.custom-chrome: CaptionButton {
                             kind: CaptionKind.minimize;
                             label: @tr("Workspace" => "Minimize");
@@ -1841,7 +1909,6 @@ export component MainWindow inherits Window {
                                 root.window-close();
                             }
                         }
-                    }
                 }
 
                 Rectangle {
@@ -2048,6 +2115,12 @@ export component MainWindow inherits Window {
                     object-lock-toggled(i) => {
                         root.object-lock-toggled(i);
                     }
+                    object-show-in-folder(i) => {
+                        root.object-show-in-folder(i);
+                    }
+                    object-reload(i) => {
+                        root.object-reload(i);
+                    }
                     plate-picked(i) => {
                         root.plate-picked(i);
                     }
@@ -2168,6 +2241,16 @@ export component MainWindow inherits Window {
                                 }
                                 if key == "p" || key == "P" {
                                     root.arm-support-tool(7);
+                                    return true;
+                                }
+                                // Pick: H hides the picked supports, Alt+H
+                                // shows them all again (#728).
+                                if root.support-tool == 5 && root.support-picked-count > 0 && (key == "h" || key == "H") {
+                                    root.support-picked-hide();
+                                    return true;
+                                }
+                                if key == "alt+h" && root.support-hidden-count > 0 {
+                                    root.support-hidden-show();
                                     return true;
                                 }
                                 // Remove: B a box or a brush; [ and ] the brush.
@@ -2513,6 +2596,7 @@ export component MainWindow inherits Window {
                         holds-at: root.slice-timeline-holds-at;
                         support-note: root.slice-timeline-support-note;
                         supports-caption: root.slice-timeline-supports-caption;
+                        imported-note: root.slice-timeline-imported-note;
                         frame-note: root.slice-timeline-frame-note;
                         frame <=> root.stress-frame;
                         frame-toggled(on) => {
@@ -2531,6 +2615,42 @@ export component MainWindow inherits Window {
                         }
                         paint-toggled(on) => {
                             root.stress-paint-toggled(on);
+                        }
+                    }
+
+                    // The creator's credit (#745), high on the view's left.
+                    if root.has-scene && root.credit-line != "": Rectangle {
+                        x: 12px;
+                        y: 12px;
+                        width: min(parent.width - 24px, credit-row.preferred-width);
+                        height: 26px;
+                        border-radius: 2px;
+                        background: #171a1dcc;
+                        border-color: #272d32;
+                        border-width: 1px;
+                        credit-row := HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 10px;
+                            spacing: 10px;
+                            Text {
+                                text: root.credit-line;
+                                color: #b9c2c9;
+                                font-size: Theme.font-sm;
+                                vertical-alignment: center;
+                                overflow: elide;
+                            }
+                            if root.credit-link != "": Text {
+                                text: @tr("Workspace" => "View source");
+                                color: credit-touch.has-hover ? Theme.text : Theme.brand;
+                                font-size: Theme.font-sm;
+                                vertical-alignment: center;
+                                credit-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        root.credit-link-clicked(root.credit-link);
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -2798,6 +2918,22 @@ export component MainWindow inherits Window {
                                             }
                                         }
                                     }
+                                    Card {
+                                        title: @tr("Inspector" => "SCREEN");
+
+                                        ScCheckBox {
+                                            text: @tr("Inspector" => "Mark dead zones");
+                                            checked: root.dead-zone-tool;
+                                            toggled => {
+                                                root.dead-zone-tool-toggled(self.checked);
+                                            }
+                                        }
+                                        Note {
+                                            text: root.dead-zone-count > 0
+                                                ? @tr("Inspector" => "{} dead zones on this printer's screen: Arrange keeps away from them, and Slice warns about what lands on one.", root.dead-zone-count)
+                                                : @tr("Inspector" => "Where the screen's pixels are dead, nothing is placed: drag on the plate to mark them, click one to take it away.");
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -2866,6 +3002,10 @@ export component MainWindow inherits Window {
                                 send-naming-start: root.slice-send-naming-start;
                                 send-name <=> root.slice-send-name;
                                 send-name-preview: root.slice-send-name-preview;
+                                send-disk-file: root.slice-send-disk-file;
+                                send-from-disk => {
+                                    root.slice-send-from-disk();
+                                }
                                 send-name-asked(start) => {
                                     root.slice-send-name-asked(start);
                                 }
@@ -2953,6 +3093,8 @@ export component MainWindow inherits Window {
                                 cost-open <=> root.slice-cost-open;
                                 price-text <=> root.slice-price-text;
                                 price-currency <=> root.slice-price-currency;
+                                price-currencies: root.slice-price-currencies;
+                                price-currency-index <=> root.slice-price-currency-index;
                                 price-amount <=> root.slice-price-amount;
                                 price-losses <=> root.slice-price-losses;
                                 price-weighed <=> root.slice-price-weighed;
@@ -3033,6 +3175,10 @@ export component MainWindow inherits Window {
                                     progress: root.orient-progress;
                                     preset: root.orient-preset;
                                     max-tilt: root.orient-max-tilt;
+                                    lean-angle <=> root.orient-lean-angle;
+                                    lean-back(angle) => {
+                                        root.orient-lean-back(angle);
+                                    }
                                     align: root.orient-align;
                                     weight-supports: root.orient-weight-supports;
                                     weight-force: root.orient-weight-force;
@@ -3129,6 +3275,10 @@ export component MainWindow inherits Window {
                                     }
                                     selection-valid: root.selection-valid;
                                     size-x: root.selection-size-x;
+                                    too-large: root.selection-too-large;
+                                    scale-to-fit => {
+                                        root.scale-to-fit-requested();
+                                    }
                                     size-y: root.selection-size-y;
                                     size-z: root.selection-size-z;
                                     model-x: root.selection-model-x;
@@ -3350,8 +3500,15 @@ export component MainWindow inherits Window {
                                     area-brush-edited(v) => {
                                         root.support-area-brush-edited(v);
                                     }
-                                    area-fill => {
-                                        root.support-area-fill();
+                                    line-mode: root.support-line-mode;
+                                    line-mode-picked(i) => {
+                                        root.support-line-mode-picked(i);
+                                    }
+                                    picked-mirror(axis) => {
+                                        root.support-picked-mirror(axis);
+                                    }
+                                    area-fill(mode) => {
+                                        root.support-area-fill(mode);
                                     }
                                     picked-reroute(own) => {
                                         root.support-picked-reroute(own);
@@ -3360,6 +3517,13 @@ export component MainWindow inherits Window {
                                         root.support-picked-join();
                                     }
                                     picked-count: root.support-picked-count;
+                                    hidden-count: root.support-hidden-count;
+                                    picked-hide => {
+                                        root.support-picked-hide();
+                                    }
+                                    hidden-show => {
+                                        root.support-hidden-show();
+                                    }
                                     area-clear => {
                                         root.support-area-clear();
                                     }
@@ -3488,6 +3652,10 @@ export component MainWindow inherits Window {
                                     }
                                     preset-picked(i) => {
                                         root.support-preset-picked(i);
+                                    }
+                                    by-height: root.support-by-height;
+                                    by-height-toggled(on) => {
+                                        root.support-by-height-toggled(on);
                                     }
                                     preset-save(name) => {
                                         root.support-preset-save(name);
@@ -4140,6 +4308,9 @@ export component MainWindow inherits Window {
         }
         remove-recent(row) => {
             root.start-remove-recent(row);
+        }
+        show-recent-in-folder(row) => {
+            root.start-show-recent-in-folder(row);
         }
         open-file(kind) => {
             root.start-open-file(kind);

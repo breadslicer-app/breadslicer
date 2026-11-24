@@ -179,6 +179,13 @@ pub(crate) fn apply_preferences(prefs: &Prefs, snap: &PreferencesSnapshot) {
     prefs.set_controls_summary(snap.controls_layout.summary().into());
     prefs.set_show_start_dialog(snap.show_start_dialog);
     prefs.set_repair_on_import(snap.repair_on_import);
+    prefs.set_reload_on_change(snap.reload_on_change);
+    if prefs.get_export_name_template().as_str() != snap.export_name_template {
+        prefs.set_export_name_template(snap.export_name_template.as_str().into());
+    }
+    prefs.set_export_name_preview(
+        crate::file_name_template::preview(&snap.export_name_template).into(),
+    );
     prefs.set_current_frame_rate_index(snap.frame_rate.combo_index());
     prefs.set_current_gizmo_style_index(snap.gizmo_style.combo_index());
     prefs.set_current_gizmo_size_index(crate::gizmo::look::size_combo_index(snap.gizmo_size));
@@ -212,6 +219,25 @@ fn wire_general(prefs: &Prefs, bus: &Rc<PreferencesBus>, _weak: &slint::Weak<Mai
             bus.update(move |snap| {
                 snap.repair_on_import = on;
                 PreferencesChange::RepairOnImport
+            });
+        }
+    });
+    prefs.on_reload_on_change_changed({
+        let bus = bus.clone();
+        move |on| {
+            bus.update(move |snap| {
+                snap.reload_on_change = on;
+                PreferencesChange::ReloadOnChange
+            });
+        }
+    });
+    prefs.on_export_name_template_edited({
+        let bus = bus.clone();
+        move |text| {
+            let template = text.to_string();
+            bus.update(move |snap| {
+                snap.export_name_template = template;
+                PreferencesChange::ExportNameTemplate
             });
         }
     });
@@ -480,10 +506,22 @@ fn restore_defaults(bus: &PreferencesBus, page: i32) {
                     PreferencesChange::RepairOnImport
                 });
             }
+            if now.reload_on_change != shipped().reload_on_change() {
+                bus.update(move |snap| {
+                    snap.reload_on_change = shipped().reload_on_change();
+                    PreferencesChange::ReloadOnChange
+                });
+            }
             if now.show_start_dialog != shipped().show_start_dialog() {
                 bus.update(move |snap| {
                     snap.show_start_dialog = shipped().show_start_dialog();
                     PreferencesChange::StartDialog
+                });
+            }
+            if now.export_name_template != shipped().export_name_template() {
+                bus.update(move |snap| {
+                    snap.export_name_template = shipped().export_name_template();
+                    PreferencesChange::ExportNameTemplate
                 });
             }
         }
@@ -550,6 +588,7 @@ fn searchable() -> Vec<(SharedString, i32)> {
         (ctr!("AppearancePreferences", "Language"), GENERAL),
         (ctr!("PreferencesLayer", "Start card"), GENERAL),
         (ctr!("PreferencesLayer", "Repair on import"), GENERAL),
+        (ctr!("PreferencesLayer", "Exported file name"), GENERAL),
         (ctr!("PreferencesLayer", "Messages you silenced"), GENERAL),
         (ctr!("AppearancePreferences", "Theme"), LOOK),
         (

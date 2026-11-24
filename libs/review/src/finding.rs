@@ -37,6 +37,8 @@ pub enum CheckKind {
     SurfaceGrowth,
     /// A part whose support tips are pulled harder than they hold (#129).
     TipLoad,
+    /// Support tips thinner than the printer's screen draws (#724).
+    ThinTip,
     /// Solid that reaches the edge of the screen and is cut there (#93).
     PlateEdge,
     /// The plate is taller than the printer's maximum height (#93).
@@ -48,21 +50,25 @@ pub enum CheckKind {
     /// What the review took off the layers by itself: debris and pixels
     /// thinner than the printer can make (#432). A note, nothing to do.
     CleanUp,
+    /// Something that lands on a dead zone of the printer's screen (#726).
+    DeadZone,
 }
 
 impl CheckKind {
     /// Every kind, in listing order.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 12] = [
         Self::Island,
         Self::ResinTrap,
         Self::SuctionCup,
         Self::SurfaceGrowth,
         Self::TipLoad,
+        Self::ThinTip,
         Self::PlateEdge,
         Self::TooTall,
         Self::EmptyLayer,
         Self::ModelInRaft,
         Self::CleanUp,
+        Self::DeadZone,
     ];
 
     /// A stable machine name, as the JSON output spells it
@@ -74,11 +80,13 @@ impl CheckKind {
             Self::SuctionCup => "suction-cup",
             Self::SurfaceGrowth => "surface-growth",
             Self::TipLoad => "tip-load",
+            Self::ThinTip => "thin-tip",
             Self::PlateEdge => "plate-edge",
             Self::TooTall => "too-tall",
             Self::EmptyLayer => "empty-layer",
             Self::ModelInRaft => "model-in-raft",
             Self::CleanUp => "clean-up",
+            Self::DeadZone => "dead-zone",
         }
     }
 
@@ -90,11 +98,13 @@ impl CheckKind {
             Self::SuctionCup => "Suction cup",
             Self::SurfaceGrowth => "Surface growth",
             Self::TipLoad => "Tip load",
+            Self::ThinTip => "Thin tip",
             Self::PlateEdge => "Plate edge",
             Self::TooTall => "Too tall",
             Self::EmptyLayer => "Empty layer",
             Self::ModelInRaft => "Model in raft",
             Self::CleanUp => "Clean-up",
+            Self::DeadZone => "Dead zone",
         }
     }
 }

@@ -360,7 +360,7 @@ pub fn place_one_candidate(
                 return hung_here(state, hung);
             }
             // An island's contact never joins a lattice trunk.
-            let host = find_merge_host(tip_pos, model_id, draft)
+            let host = find_merge_host(tip_pos, model_id, draft, ctx.live().auto_support.share_hosts)
                 .filter(|h| !args.grid_host_ids.is_some_and(|g| g.contains(&h.host_id)));
             if let Some(host) = host
                 && let Some(joined) = join_trunk(candidate, tip_pos, tip_normal, &host, draft, ctx)

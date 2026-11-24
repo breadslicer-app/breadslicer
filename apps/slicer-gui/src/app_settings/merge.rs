@@ -44,10 +44,14 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
         slice_panel,
         slice_view,
         last_open_dir,
+        last_export_dir,
+        export_name_template,
         show_start_dialog,
         repair_on_import,
+        reload_on_change,
         recent_files,
         resin_prices,
+        dead_zones,
     } = theirs;
     AppSettings {
         version,
@@ -120,6 +124,16 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
         slice_panel: merge_slice_panel(&base.slice_panel, &ours.slice_panel, slice_panel),
         slice_view: merge_slice_view(&base.slice_view, &ours.slice_view, slice_view),
         last_open_dir: pick(&base.last_open_dir, &ours.last_open_dir, last_open_dir),
+        export_name_template: pick(
+            &base.export_name_template,
+            &ours.export_name_template,
+            export_name_template,
+        ),
+        last_export_dir: pick(
+            &base.last_export_dir,
+            &ours.last_export_dir,
+            last_export_dir,
+        ),
         show_start_dialog: pick(
             &base.show_start_dialog,
             &ours.show_start_dialog,
@@ -130,12 +144,18 @@ pub(super) fn merge(base: &AppSettings, ours: &AppSettings, theirs: AppSettings)
             &ours.repair_on_import,
             repair_on_import,
         ),
+        reload_on_change: pick(
+            &base.reload_on_change,
+            &ours.reload_on_change,
+            reload_on_change,
+        ),
         recent_files: crate::recent_files::merge(
             &base.recent_files,
             &ours.recent_files,
             recent_files,
         ),
         resin_prices: merge_map(&base.resin_prices, &ours.resin_prices, resin_prices),
+        dead_zones: merge_map(&base.dead_zones, &ours.dead_zones, dead_zones),
     }
 }
 

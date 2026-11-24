@@ -36,13 +36,30 @@ pub struct ReviewLeaf<'a> {
     pub name: Option<&'a str>,
     /// The leaf's contours, one layer per scheduled layer.
     pub stack: &'a ContourStack,
+    /// Supports read as geometry, the review knowing nothing of their tips
+    /// (supports that came with an imported model, #754): they hold what
+    /// they touch as the model does, but they are no model standing in the
+    /// raft.
+    pub supports: bool,
 }
 
 impl<'a> ReviewLeaf<'a> {
     /// A leaf with these contours.
     #[inline]
     pub const fn new(name: Option<&'a str>, stack: &'a ContourStack) -> Self {
-        Self { name, stack }
+        Self {
+            name,
+            stack,
+            supports: false,
+        }
+    }
+
+    /// The leaf, as supports read as geometry ([`Self::supports`]).
+    #[inline]
+    #[must_use]
+    pub const fn as_supports(mut self) -> Self {
+        self.supports = true;
+        self
     }
 
     /// The leaf the engine sliced into `slices`, with its name.

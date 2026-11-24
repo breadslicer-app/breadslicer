@@ -43,6 +43,7 @@ fn plate(w: f64, h: f64) -> Plate {
         min: [0.0, 0.0],
         max: [w, h],
         floor: 0.0,
+        keep_out: crate::KeepOut::default(),
     }
 }
 
@@ -214,6 +215,36 @@ fn a_body_that_stays_is_kept_clear_of() {
     assert_eq!(out.placements[0], None, "it stays");
     assert!(out.left_off().is_empty());
     assert_kept_apart(&bodies, &out.placements, &plate, &settings);
+}
+
+/// What the plate keeps out (#726) holds nothing: a body goes elsewhere,
+/// and Fill bed leaves it free too.
+#[test]
+fn what_the_plate_keeps_out_holds_nothing() {
+    let mesh = cube();
+    let bodies: Vec<Body> = (0..4)
+        .map(|_| body(vec![boxed(&mesh, [8.0, 8.0, 5.0], [0.0, 0.0, 0.0])]))
+        .collect();
+    let mut plate = plate(60.0, 40.0);
+    // The left half.
+    plate.keep_out = crate::KeepOut::new(&[[0.0, 0.0, 30.0, 40.0]]);
+    let settings = quarter_turns();
+    let out = arrange(&bodies, &plate, &settings, &AtomicBool::new(false)).unwrap();
+    assert!(out.left_off().is_empty());
+    for (body, placement) in bodies.iter().zip(&out.placements) {
+        for (lo, _) in boxes(body, *placement) {
+            assert!(lo[0] >= 30.0 - 1e-6, "{lo:?} in the zone");
+        }
+    }
+    let filled = fill_now(&bodies[..1], &[0], &plate, &settings, None);
+    let (all, placements) = filled_plate(&bodies[..1], &filled);
+    assert!(all.len() > 1, "copies fit beside the zone");
+    // The original stays where it stood; the copies keep out.
+    for (body, placement) in all.iter().zip(&placements).filter(|(_, p)| p.is_some()) {
+        for (lo, _) in boxes(body, *placement) {
+            assert!(lo[0] >= 30.0 - 1e-6, "{lo:?} in the zone");
+        }
+    }
 }
 
 #[test]
@@ -446,6 +477,7 @@ fn plates_in_a_row(count: usize, w: f64, h: f64) -> Vec<Plate> {
                 min: [x, 0.0],
                 max: [x + w, h],
                 floor: 0.0,
+                keep_out: crate::KeepOut::default(),
             }
         })
         .collect()
@@ -1090,4 +1122,455 @@ fn the_bodies_left_off_are_squeezed_in_and_keep_the_gap() {
     // And again: the same scene, the same plate.
     let again = arrange(&bodies, &plate, &squeezing, &cancel).unwrap();
     assert_eq!(again.placements, after.placements);
+}
+
+/// Copies of a body share its footprint (#554), whether they share its
+/// meshes or have meshes of their own, and however they stand turned by a
+/// whole number of the angles' steps; turned otherwise, they do not.
+#[test]
+fn copies_share_a_footprint_however_they_stand_turned() {
+    let mesh = cube();
+    let own = || Arc::new((*mesh).clone());
+    let eighth = std::f64::consts::FRAC_PI_4;
+    let bodies = vec![
+        body(vec![turned_box(&mesh, [10.0, 6.0, 4.0], 0.0, [20.0, 20.0])]),
+        body(vec![turned_box(
+            &own(),
+            [10.0, 6.0, 4.0],
+            0.0,
+            [50.0, 20.0],
+        )]),
+        body(vec![turned_box(
+            &own(),
+            [10.0, 6.0, 4.0],
+            eighth,
+            [20.0, 50.0],
+        )]),
+        body(vec![turned_box(
+            &mesh,
+            [10.0, 6.0, 4.0],
+            3.0 * eighth,
+            [50.0, 50.0],
+        )]),
+        body(vec![turned_box(&mesh, [10.0, 6.0, 4.0], 0.3, [80.0, 50.0])]),
+        body(vec![turned_box(&mesh, [10.0, 7.0, 4.0], 0.0, [80.0, 20.0])]),
+    ];
+    let frame = crate::Frame::new(&plate(100.0, 80.0), &Settings::default());
+    let fps = crate::across::movable_footprints(&frame, &bodies);
+    let shapes = |k: usize| Arc::as_ptr(&fps[k].as_ref().expect("drawn").shapes);
+    for k in 1..4 {
+        assert_eq!(shapes(k), shapes(0), "body {k} is a copy");
+    }
+    assert_ne!(shapes(4), shapes(0), "turned off the angles");
+    assert_ne!(shapes(5), shapes(0), "another size");
+}
+
+/// Plates of copies take the same layout (#554): the search would find it
+/// again, or one copy short, which leaves a plate at the end nearly empty.
+/// Every plate keeps the gap and the margin.
+#[test]
+fn plates_of_copies_take_the_same_layout() {
+    let mesh = cube();
+    let bodies: Vec<Body> = (0..30)
+        .map(|k| l_body(&mesh, 0.0, [-200.0 - 20.0 * f64::from(k), 0.0]))
+        .collect();
+    let plates = plates_in_a_row(8, 50.0, 40.0);
+    let s = Settings {
+        margin: 1.0,
+        ..quarter_turns()
+    };
+    let cancel = AtomicBool::new(false);
+    let across = crate::arrange_across(&bodies, &vec![None; bodies.len()], &plates, &s, &cancel)
+        .expect("not cancelled");
+    assert!(across.left_off().is_empty());
+    // Each plate's bodies, where they stand on it.
+    let on = |p: usize| -> Vec<(i64, i64, i64)> {
+        let mut at: Vec<(i64, i64, i64)> = across
+            .placements
+            .iter()
+            .map(|pl| pl.expect("placed"))
+            .zip(&bodies)
+            .filter(|((q, _), _)| *q == p)
+            .map(|((_, pl), b)| {
+                // Where the body's parts end up, from the plate's corner.
+                let c = corners(b, Some(pl));
+                let lo = c
+                    .iter()
+                    .fold([f64::INFINITY; 2], |m, q| [m[0].min(q[0]), m[1].min(q[1])]);
+                (
+                    ((lo[0] - plates[p].min[0]) * 1e3).round() as i64,
+                    (lo[1] * 1e3).round() as i64,
+                    (pl.angle.rem_euclid(std::f64::consts::TAU) * 1e6).round() as i64,
+                )
+            })
+            .collect();
+        at.sort_unstable();
+        at
+    };
+    let first = on(0);
+    assert!(first.len() > 4, "{}", first.len());
+    let full = bodies.len() / first.len();
+    for p in 1..full {
+        assert_eq!(on(p), first, "plate {p} as the first");
+    }
+    for (p, plate) in plates.iter().enumerate().take(across.plates_used) {
+        let (kept, at): (Vec<Body>, Vec<Option<Placement>>) = bodies
+            .iter()
+            .zip(&across.placements)
+            .filter(|(_, pl)| pl.is_some_and(|(q, _)| q == p))
+            .map(|(b, pl)| (b.clone(), pl.map(|(_, pl)| pl)))
+            .unzip();
+        assert_kept_apart(&kept, &at, plate, &s);
+    }
+    // And again: the same scene, the same plates.
+    let again = crate::arrange_across(&bodies, &vec![None; bodies.len()], &plates, &s, &cancel)
+        .expect("not cancelled");
+    assert_eq!(again.placements, across.placements);
+}
+
+/// A plate a body stays on is filled first (#554): it is used anyway, and
+/// the bodies it takes leave a plate fewer to fill.
+#[test]
+fn the_plate_a_body_stays_on_is_filled_first() {
+    let mesh = cube();
+    let plates = plates_in_a_row(4, 60.0, 60.0);
+    // A 20 mm box staying on the third plate, and 6 of 20 mm to place: a
+    // plate holds 4.
+    let x = plates[2].min[0];
+    let mut bodies = vec![Body {
+        parts: vec![boxed(&mesh, [20.0, 20.0, 5.0], [x + 6.0, 6.0, 0.0])],
+        fixed: true,
+    }];
+    bodies.extend((0..6).map(|k| {
+        body(vec![boxed(
+            &mesh,
+            [20.0, 20.0, 5.0],
+            [k as f64 * 25.0, 0.0, 0.0],
+        )])
+    }));
+    let mut stands_on = vec![None; bodies.len()];
+    stands_on[0] = Some(2);
+    let s = Settings {
+        turns: 1,
+        ..Settings::default()
+    };
+    let across = crate::arrange_across(&bodies, &stands_on, &plates, &s, &AtomicBool::new(false))
+        .expect("not cancelled");
+    assert!(across.placements[0].is_none(), "it stays");
+    let mut on = [0; 4];
+    for placed in across.placements.iter().skip(1) {
+        on[placed.expect("placed").0] += 1;
+    }
+    assert_eq!(on, [3, 0, 3, 0]);
+    assert_eq!(across.plates_used, 3);
+    let (kept, at): (Vec<Body>, Vec<Option<Placement>>) = bodies
+        .iter()
+        .zip(&across.placements)
+        .filter(|(b, pl)| b.fixed || pl.is_some_and(|(q, _)| q == 2))
+        .map(|(b, pl)| (b.clone(), pl.map(|(_, pl)| pl)))
+        .unzip();
+    let kept: Vec<Body> = kept
+        .into_iter()
+        .map(|b| Body { fixed: false, ..b })
+        .collect();
+    assert_kept_apart(&kept, &at, &plates[2], &s);
+}
+
+/// Copies that one plate holds are arranged as Arrange does (#554): rows
+/// and lattices, which pack copies for fewer plates, would turn squares an
+/// eighth into a lattice of diamonds only a little smaller, whose boxes
+/// overlap in plan.
+#[test]
+fn copies_one_plate_holds_are_arranged_as_arrange_does() {
+    let mesh = cube();
+    let bodies: Vec<Body> = (0..6)
+        .map(|_| body(vec![boxed(&mesh, [14.0, 14.0, 6.0], [-7.0, -7.0, 0.0])]))
+        .collect();
+    let plates = plates_in_a_row(4, 100.0, 60.0);
+    let s = Settings {
+        margin: 2.0,
+        ..Settings::default()
+    };
+    let across = crate::arrange_across(&bodies, &[None; 6], &plates, &s, &AtomicBool::new(false))
+        .expect("not cancelled");
+    assert_eq!(across.plates_used, 1);
+    let placements: Vec<Option<Placement>> = across
+        .placements
+        .iter()
+        .map(|p| p.map(|(_, p)| p))
+        .collect();
+    // Each part's box, turned with it, keeps the gap.
+    assert_kept_apart(&bodies, &placements, &plates[0], &s);
+}
+
+/// A table (a leg under a wide top) and a short box, at every quarter turn,
+/// as a fill draws them on `plate`.
+fn table_and_box(plate: &Plate) -> (crate::Frame, Vec<crate::footprint::Footprint>) {
+    let mesh = cube();
+    let table = body(vec![
+        boxed(&mesh, [4.0, 4.0, 18.0], [20.0, 12.0, 0.0]),
+        boxed(&mesh, [20.0, 16.0, 2.0], [12.0, 6.0, 18.0]),
+    ]);
+    let short = body(vec![boxed(&mesh, [5.0, 5.0, 5.0], [6.0, 6.0, 0.0])]);
+    let frame = crate::Frame::new(plate, &quarter_turns());
+    let fps = [table, short]
+        .iter()
+        .map(|b| frame.footprint(b, true, &frame.angles).expect("drawn"))
+        .collect();
+    (frame, fps)
+}
+
+/// A no-fit map says exactly where one shape collides with another, band
+/// by band: a short box stands under a table's top, not in its leg.
+#[test]
+fn no_fit_maps_say_where_two_shapes_collide() {
+    use crate::pattern::{Nofit, Runs};
+    let (_, fps) = table_and_box(&plate(200.0, 200.0));
+    let shapes: Vec<&crate::footprint::Shape> =
+        fps.iter().flat_map(|fp| fp.shapes.iter()).collect();
+    let mut under = false;
+    for (i, a) in shapes.iter().enumerate() {
+        for b in shapes.iter().skip(i) {
+            let map = Nofit::of(&Runs::of(a), &Runs::of(b));
+            let at = [300, 300];
+            let mut scratch = crate::plate::Occupancy::new(600, 600, 40);
+            scratch.stamp(a, at);
+            let (lo, size) = (map.lo(), map.size());
+            for dy in lo[1] - 3..lo[1] + size[1] as i32 + 3 {
+                for dx in lo[0] - 3..lo[0] + size[0] as i32 + 3 {
+                    let d = [dx, dy];
+                    let collides = scratch.collides(b, [at[0] + d[0], at[1] + d[1]]);
+                    assert_eq!(map.hit(d), collides, "{d:?}");
+                    // The box's whole shadow inside the table's: under it.
+                    under |= !collides
+                        && b.hi[0] - b.lo[0] < 30
+                        && a.hi[0] - a.lo[0] > 60
+                        && at[0] + dx + b.lo[0] > at[0] + a.lo[0]
+                        && at[0] + dx + b.hi[0] < at[0] + a.hi[0]
+                        && at[1] + dy + b.lo[1] > at[1] + a.lo[1]
+                        && at[1] + dy + b.hi[1] < at[1] + a.hi[1];
+                }
+            }
+        }
+    }
+    assert!(under, "a box fits under the table");
+}
+
+/// The maps of where copies still fit say what the plate says, as copies
+/// go in around a body that stays: every kind, every spot.
+#[test]
+fn the_free_maps_say_what_the_plate_says() {
+    use crate::nest::{Corner, Free, Kinds};
+    let plate = plate(60.0, 45.0);
+    let (frame, fps) = table_and_box(&plate);
+    // The table stays where it stands; copies of both go around it.
+    let mut held = frame.plate_with(crate::bands_of(fps.iter()), [&fps[0]]);
+    let shapes: Vec<&[crate::footprint::Shape]> = fps.iter().map(|f| &f.shapes[..]).collect();
+    let kinds = Kinds::new(&shapes, &held);
+    let mut free = Free::new(&kinds);
+    let corners = [
+        Corner {
+            top: false,
+            right: false,
+        },
+        Corner {
+            top: true,
+            right: true,
+        },
+    ];
+    for round in 0..8 {
+        for k in 0..kinds.len() {
+            let room = kinds.room(k);
+            let (b, a) = kinds.of[k];
+            let shape = &fps[b].shapes[a];
+            for y in 0..room[1] {
+                for x in 0..room[0] {
+                    let p = [x, y];
+                    assert_eq!(
+                        free.fits(&kinds, k, p),
+                        held.fits(shape, kinds.at(k, p)),
+                        "kind {k} at {p:?}, round {round}"
+                    );
+                }
+            }
+        }
+        let k = (round * 3) % kinds.len();
+        let Some(p) = free.first(&kinds, k, corners[round % 2]) else {
+            continue;
+        };
+        let (b, a) = kinds.of[k];
+        held.stamp(&fps[b].shapes[a], kinds.at(k, p));
+        free.place(&kinds, k, p);
+    }
+}
+
+/// Squares repeat on a lattice as on a tray: 8.5 mm boxes and a 1 mm gap,
+/// 4 × 4 in the 40 mm inside the margin.
+#[test]
+fn squares_lie_on_a_lattice() {
+    use crate::nest::{Free, Kinds};
+    let mesh = cube();
+    let plate = plate(50.0, 50.0);
+    let frame = crate::Frame::new(&plate, &quarter_turns());
+    let fp = frame
+        .footprint(
+            &body(vec![boxed(&mesh, [8.5, 8.5, 6.0], [5.0, 5.0, 0.0])]),
+            true,
+            &frame.angles,
+        )
+        .expect("drawn");
+    let empty = crate::plate::Occupancy::new(frame.width, frame.height, 8);
+    let kinds = Kinds::new(&[&fp.shapes[..]], &empty);
+    let laid = crate::pattern::patterns(
+        &kinds,
+        &Free::new(&kinds),
+        &[0, 1, 2, 3],
+        &AtomicBool::new(false),
+    )
+    .expect("not cancelled");
+    assert_eq!(laid[0].len(), 16);
+}
+
+/// A copy pressed in (Fill bed): three boxes spread over a row leave no
+/// room for a fourth, which goes in once they move closer. Every box then
+/// fits.
+#[test]
+fn a_copy_is_pressed_in_where_the_copies_make_room() {
+    use crate::nest::{Free, Kinds};
+    use crate::press::{Depths, press_in};
+    let mesh = cube();
+    let plate = plate(50.0, 20.0);
+    let frame = crate::Frame::new(&plate, &quarter_turns());
+    let fp = frame
+        .footprint(
+            &body(vec![boxed(&mesh, [8.5, 8.5, 6.0], [5.0, 5.0, 0.0])]),
+            true,
+            &frame.angles,
+        )
+        .expect("drawn");
+    let empty = crate::plate::Occupancy::new(frame.width, frame.height, 8);
+    let kinds = Kinds::new(&[&fp.shapes[..]], &empty);
+    let free = Free::new(&kinds);
+    // Corners at the left, middle and right of the row.
+    let room = kinds.room(0);
+    let spread: Vec<(usize, usize, [i32; 2])> = [0, room[0] / 2, room[0] - 1]
+        .into_iter()
+        .map(|x| (0, 0, kinds.at(0, [x, room[1] / 2])))
+        .collect();
+    let mut check = free.clone();
+    for &(_, _, at) in &spread {
+        let p = [at[0] + kinds.lo(0)[0], at[1] + kinds.lo(0)[1]];
+        assert!(check.fits(&kinds, 0, p));
+        check.place(&kinds, 0, p);
+    }
+    assert!(
+        (0..kinds.len()).all(|k| check
+            .first(
+                &kinds,
+                k,
+                crate::nest::Corner {
+                    top: false,
+                    right: false
+                }
+            )
+            .is_none()),
+        "no room for a fourth"
+    );
+    let depths = Depths::of(&kinds);
+    let pressed = press_in(
+        &kinds,
+        &depths,
+        &free,
+        spread,
+        [0, 0],
+        |_| true,
+        None,
+        &AtomicBool::new(false),
+    )
+    .expect("not cancelled");
+    assert_eq!(pressed.len(), 4);
+    let mut check = free.clone();
+    for &(b, a, at) in &pressed {
+        let k = kinds.of.iter().position(|&o| o == (b, a)).expect("a kind");
+        let p = [at[0] + kinds.lo(k)[0], at[1] + kinds.lo(k)[1]];
+        assert!(check.fits(&kinds, k, p), "{at:?}");
+        check.place(&kinds, k, p);
+    }
+}
+
+/// The same scene fills the same, copy for copy.
+#[test]
+fn the_same_scene_fills_the_same() {
+    let mesh = cube();
+    let table = body(vec![
+        boxed(&mesh, [4.0, 4.0, 18.0], [20.0, 12.0, 0.0]),
+        boxed(&mesh, [20.0, 16.0, 2.0], [12.0, 6.0, 18.0]),
+    ]);
+    let short = body(vec![boxed(&mesh, [5.0, 5.0, 5.0], [6.0, 6.0, 0.0])]);
+    let l = l_body(&mesh, 0.0, [40.0, 20.0]);
+    let bodies = [table, short, l];
+    let plate = plate(70.0, 50.0);
+    // Pressing for a while depends on how fast the machine is.
+    let s = Settings {
+        squeeze_for: std::time::Duration::ZERO,
+        ..quarter_turns()
+    };
+    let a = fill_now(&bodies, &[1, 2], &plate, &s, None);
+    let b = fill_now(&bodies, &[1, 2], &plate, &s, None);
+    assert_eq!(a.copies, b.copies);
+    assert_eq!(a.moved, b.moved);
+    let (all, placements) = filled_plate(&bodies, &a);
+    assert_kept_apart(&all, &placements, &plate, &s);
+}
+
+/// Without turns, or by whole shadows, a fill still puts as many copies
+/// as fit: 8.5 mm boxes, 4 × 4 in the 40 mm inside the margin.
+#[test]
+fn a_fill_without_turns_or_by_shadows_puts_as_many_as_fit() {
+    let mesh = cube();
+    let bodies = [body(vec![boxed(&mesh, [8.5, 8.5, 6.0], [5.0, 5.0, 0.0])])];
+    let plate = plate(50.0, 50.0);
+    for s in [
+        Settings {
+            turns: 1,
+            ..Settings::default()
+        },
+        Settings {
+            shadow_only: true,
+            ..quarter_turns()
+        },
+    ] {
+        let filled = fill_now(&bodies, &[0], &plate, &s, None);
+        assert_eq!(filled.copies.len(), 15, "{s:?}");
+        let (all, placements) = filled_plate(&bodies, &filled);
+        assert_kept_apart(&all, &placements, &plate, &s);
+    }
+}
+
+/// Under one raft for all (#556), a fill packs copies by what stands on
+/// their rafts: pillars on wide thin rafts go far closer than the rafts
+/// would let them, and the pillars keep the gap.
+#[test]
+fn under_one_raft_for_all_a_fill_packs_by_what_stands_on_the_rafts() {
+    let mesh = cube();
+    let raft = boxed(&mesh, [10.0, 10.0, 1.0], [5.0, 5.0, 0.0]);
+    let pillar = boxed(&mesh, [3.0, 3.0, 6.0], [8.5, 8.5, 1.0]);
+    let bodies = [body(vec![raft, pillar])];
+    let plate = plate(50.0, 50.0);
+    let own_rafts = quarter_turns();
+    let one_raft = Settings {
+        free_below: 1.05,
+        ..own_rafts
+    };
+    let apart = fill_now(&bodies, &[0], &plate, &own_rafts, None);
+    let together = fill_now(&bodies, &[0], &plate, &one_raft, None);
+    assert!(
+        together.copies.len() > 2 * apart.copies.len(),
+        "{} and {}",
+        together.copies.len(),
+        apart.copies.len()
+    );
+    let (all, placements) = filled_plate(&bodies, &together);
+    let pillars: Vec<Body> = all.iter().map(|b| body(vec![b.parts[1].clone()])).collect();
+    assert_kept_apart(&pillars, &placements, &plate, &one_raft);
 }

@@ -30,6 +30,27 @@
 //!   zone preset "Miniatures 20~65 mm", "Figures 65~150 mm", or "Statues 150 mm+"
 //!   (#360, #479) instead of the default options.
 //! - `SUPPORT_SCORECARD_GRID`: `off` or a spacing in mm, over the preset's.
+//! - `SUPPORT_SCORECARD_COPIES`: `cols,rows,gap[,lean]`: a scene of one mesh
+//!   file becomes a plate of copies sharing its mesh, in a grid with `gap` mm
+//!   between their boxes, each leaned back `lean` degrees about X first
+//!   (#722), to measure a filled plate (#725).
+//! - `SUPPORT_SCORECARD_GAP`: a plate of several mesh files (joined by `|`)
+//!   lays them this many mm apart instead of 6, in rows up to
+//!   `SUPPORT_SCORECARD_ROW_MM` wide (default 200), to measure a packed
+//!   plate of different models (#725).
+//! - `SUPPORT_SCORECARD_TOGETHER`: the plate's models are made as one group,
+//!   braced to each other (#475).
+//! - `SUPPORT_SCORECARD_SHARE`: supports hang from other models' trunks: a
+//!   group's from each other's, and those placed again clear of a
+//!   neighbour from the neighbour's (#725).
+//! - `SUPPORT_SCORECARD_ALONE`: each set is left as made for its model
+//!   alone, not kept clear of the models near it (as runs were before #725).
+//! - `SUPPORT_SCORECARD_REPACK`: a project's models are laid again in rows
+//!   this many mm apart by their boxes seen from above, each turned as it
+//!   stood, from the plate's corner: a person's plate packed tighter (#725).
+//! - `SUPPORT_SCORECARD_NO_PLAN`: the plan run again directly (the engine's
+//!   columns) covers only the first model: a plate of many copies takes
+//!   minutes there, and its columns do not count a plate kept clear.
 //! - `SUPPORT_SCORECARD_STOP_AFTER_GEN`: ends the process right after the
 //!   support job of the first scene, for whoever measures its memory.
 //! - `SUPPORT_SCORECARD_DUMP`: a folder for each scene's tips, islands left and
@@ -79,11 +100,11 @@ use std::time::{Duration, Instant};
 
 use rayon::prelude::*;
 use sc_geom::supports::{
-    SUPPORT_MESH_NAME, SupportOutcome, SupportRequest, is_support_mesh_name, recommended_lift_mm,
+    SUPPORT_MESH_NAME, SupportOutcome, SupportPieceKind, SupportRequest, is_support_mesh_name, recommended_lift_mm,
     scene_model_leaves, settings_for, start_supports, zone_presets,
 };
 use sc_mesh_core::indexed_mesh::RepairPasses;
-use sc_mesh_core::transform::Transform3D;
+use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
 use sc_mesh_core::{IndexedMesh, IndexedTriangle, Vertex};
 use sc_mesh_formats::DEFAULT_MAX_MESH_FILE_SIZE_BYTES;
 use bread_orient::PeelModel;
@@ -288,31 +309,66 @@ fn load_entry(entry: &Entry, printer: &PrinterProfile) -> Scene {
         if entry.repair {
             scene.repair_meshes(RepairPasses::default_repair());
         }
+        if let Ok(gap) = std::env::var("SUPPORT_SCORECARD_REPACK") {
+            repack(
+                &mut scene,
+                gap.parse().expect("SUPPORT_SCORECARD_REPACK: mm"),
+                printer,
+            );
+        }
         return scene;
     }
     let mut scene = Scene::new();
-    let mut x0 = 0.0f32;
+    if let (Ok(copies), [path]) = (
+        std::env::var("SUPPORT_SCORECARD_COPIES"),
+        entry.paths.as_slice(),
+    ) {
+        lay_copies(&mut scene, path, entry.height_mm, &copies);
+        if entry.repair {
+            scene.repair_meshes(RepairPasses::default_repair());
+        }
+        scene
+            .drop_at([x as f32, y as f32], (floor_z + lift) as f32)
+            .expect("place on the plate");
+        return scene;
+    }
+    // Side by side along X, 6 mm apart, or `SUPPORT_SCORECARD_GAP` apart
+    // in rows (#725).
+    let gap: Option<f32> = std::env::var("SUPPORT_SCORECARD_GAP")
+        .ok()
+        .map(|g| g.parse().expect("SUPPORT_SCORECARD_GAP: mm"));
+    let row_mm: f32 = std::env::var("SUPPORT_SCORECARD_ROW_MM")
+        .ok()
+        .map_or(200.0, |r| r.parse().expect("SUPPORT_SCORECARD_ROW_MM: mm"));
+    let (mut x0, mut y0, mut row_depth) = (0.0f32, 0.0f32, 0.0f32);
     for path in &entry.paths {
         for mut mesh in load_meshes(path, entry.height_mm) {
-            // Side by side along X, 6 mm apart.
-            let (lo, hi) = mesh
-                .vertices()
-                .iter()
-                .map(|v| v.as_array()[0])
-                .fold((f32::INFINITY, f32::NEG_INFINITY), |(a, b), v| {
-                    (a.min(v), b.max(v))
-                });
-            let shift = x0 - lo;
+            let (mut lo, mut hi) = ([f32::INFINITY; 2], [f32::NEG_INFINITY; 2]);
+            for v in mesh.vertices() {
+                let p = v.as_array();
+                for k in 0..2 {
+                    lo[k] = lo[k].min(p[k]);
+                    hi[k] = hi[k].max(p[k]);
+                }
+            }
+            let (w, d) = (hi[0] - lo[0], hi[1] - lo[1]);
+            if gap.is_some() && x0 > 0.0 && x0 + w > row_mm {
+                x0 = 0.0;
+                y0 += row_depth + gap.unwrap_or(6.0);
+                row_depth = 0.0;
+            }
+            let (sx, sy) = (x0 - lo[0], if gap.is_some() { y0 - lo[1] } else { 0.0 });
             let vertices = mesh
                 .vertices()
                 .iter()
                 .map(|v| {
                     let p = v.as_array();
-                    Vertex::new([p[0] + shift, p[1], p[2]])
+                    Vertex::new([p[0] + sx, p[1] + sy, p[2]])
                 })
                 .collect();
             mesh = IndexedMesh::new(None, vertices, mesh.faces().to_vec());
-            x0 += hi - lo + 6.0;
+            x0 += w + gap.unwrap_or(6.0);
+            row_depth = row_depth.max(d);
             add_mesh(&mut scene, "model", mesh);
         }
     }
@@ -323,6 +379,161 @@ fn load_entry(entry: &Entry, printer: &PrinterProfile) -> Scene {
         .drop_at([x as f32, y as f32], (floor_z + lift) as f32)
         .expect("place on the plate");
     scene
+}
+
+/// The models of a project's first plate laid again in rows `gap` mm apart
+/// by their boxes seen from above (#725), each turned as it stood, in the
+/// order they stood (front row first), from the plate's corner: a plate of
+/// the person's packed tighter. Models on other plates (#545) are left out.
+fn repack(scene: &mut Scene, gap: f64, printer: &PrinterProfile) {
+    let volume = printer.hardware.build_volume();
+    let (vmin, vmax) = (volume.envelope_min_mm(), volume.envelope_max_mm());
+    let all = scene_model_leaves(scene, None).expect("bake");
+    let total = all.len();
+    for (leaf, m) in &all {
+        let c = m.transform.position;
+        if c.x < vmin[0] || c.x > vmax[0] || c.y < vmin[1] || c.y > vmax[1] {
+            scene.remove_leaf(*leaf).expect("drop a model of another plate");
+        }
+    }
+    let leaves = scene_model_leaves(scene, None).expect("bake");
+    let boxes: Vec<([f64; 2], [f64; 2])> = leaves
+        .par_iter()
+        .map(|(_, m)| {
+            let (mut lo, mut hi) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
+            for p in world_soup(m).as_chunks::<3>().0 {
+                for k in 0..2 {
+                    lo[k] = lo[k].min(f64::from(p[k]));
+                    hi[k] = hi[k].max(f64::from(p[k]));
+                }
+            }
+            (lo, hi)
+        })
+        .collect();
+    // Each root and the box of the models under it.
+    let mut roots: Vec<(sc_scene::NodeId, [f64; 2], [f64; 2])> = Vec::new();
+    for ((leaf, _), (lo, hi)) in leaves.iter().zip(&boxes) {
+        let mut root = *leaf;
+        while let Some(parent) = scene.parent_of(root) {
+            root = parent;
+        }
+        match roots.iter_mut().find(|(r, _, _)| *r == root) {
+            Some(e) => {
+                for k in 0..2 {
+                    e.1[k] = e.1[k].min(lo[k]);
+                    e.2[k] = e.2[k].max(hi[k]);
+                }
+            }
+            None => roots.push((root, *lo, *hi)),
+        }
+    }
+    let apart = |a: &([f64; 2], [f64; 2]), b: &([f64; 2], [f64; 2])| {
+        let dx = (b.0[0] - a.1[0]).max(a.0[0] - b.1[0]);
+        let dy = (b.0[1] - a.1[1]).max(a.0[1] - b.1[1]);
+        dx.max(dy)
+    };
+    let least = |rs: &[(sc_scene::NodeId, [f64; 2], [f64; 2])]| {
+        let mut least = f64::INFINITY;
+        for i in 0..rs.len() {
+            for j in i + 1..rs.len() {
+                least = least.min(apart(&(rs[i].1, rs[i].2), &(rs[j].1, rs[j].2)));
+            }
+        }
+        least
+    };
+    let before = least(&roots);
+    roots.sort_by(|a, b| {
+        ((a.1[1] / 5.0).round())
+            .total_cmp(&(b.1[1] / 5.0).round())
+            .then(a.1[0].total_cmp(&b.1[0]))
+    });
+    let margin = 2.0;
+    let (x0, mut y) = (vmin[0] + margin, vmin[1] + margin);
+    let (mut x, mut row, mut rows) = (x0, 0.0f64, 1);
+    let mut laid = Vec::with_capacity(roots.len());
+    for (root, lo, hi) in &roots {
+        let (w, d) = (hi[0] - lo[0], hi[1] - lo[1]);
+        if x > x0 && x + w > vmax[0] - margin {
+            x = x0;
+            y += row + gap;
+            row = 0.0;
+            rows += 1;
+        }
+        let delta = [x - lo[0], y - lo[1], 0.0];
+        let local = scene.node(*root).expect("a root").local_transform;
+        scene
+            .set_local_transform(
+                *root,
+                Transform3D::Affine(AffineTransform3D::from_translation(delta)).compose(&local),
+            )
+            .expect("move a root");
+        laid.push((*root, [x, y], [x + w, y + d]));
+        x += w + gap;
+        row = row.max(d);
+    }
+    eprintln!(
+        "repacked: {} models of {total} on the first plate (least gap {before:.2} mm before) in {rows} rows {gap} mm apart, {:.1} mm deep of {:.1}; least gap now {:.2} mm",
+        roots.len(),
+        y + row - vmin[1] - margin,
+        vmax[1] - vmin[1] - 2.0 * margin,
+        least(&laid)
+    );
+}
+
+/// A grid of copies of the mesh of `path` into `scene` (#725), as
+/// `cols,rows,gap[,lean]` says: they share the mesh, as copies in the app do.
+fn lay_copies(scene: &mut Scene, path: &Path, height_mm: Option<f32>, spec: &str) {
+    let parts: Vec<f32> = spec
+        .split(',')
+        .map(|v| v.trim().parse().expect("SUPPORT_SCORECARD_COPIES: numbers"))
+        .collect();
+    let (cols, rows, gap) = (parts[0] as usize, parts[1] as usize, parts[2]);
+    let lean = parts.get(3).copied().unwrap_or(0.0).to_radians();
+    let mesh = load_meshes(path, height_mm).remove(0);
+    let (s, c) = (-lean).sin_cos();
+    let vertices: Vec<Vertex> = mesh
+        .vertices()
+        .iter()
+        .map(|v| {
+            let [x, y, z] = *v.as_array();
+            Vertex::new([x, c * y - s * z, s * y + c * z])
+        })
+        .collect();
+    let (mut lo, mut hi) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
+    for v in &vertices {
+        let p = v.as_array();
+        for k in 0..3 {
+            lo[k] = lo[k].min(p[k]);
+            hi[k] = hi[k].max(p[k]);
+        }
+    }
+    let mesh = Arc::new(IndexedMesh::new(None, vertices, mesh.faces().to_vec()));
+    let (w, d) = (hi[0] - lo[0], hi[1] - lo[1]);
+    for j in 0..rows {
+        for i in 0..cols {
+            let at = [
+                f64::from(i as f32 * (w + gap) - lo[0]),
+                f64::from(j as f32 * (d + gap) - lo[1]),
+                f64::from(-lo[2]),
+            ];
+            let leaf = scene
+                .add_leaf(
+                    Some(SceneMetadata {
+                        name: Some(format!("copy {i},{j}")),
+                        ..Default::default()
+                    }),
+                    Transform3D::Affine(AffineTransform3D::from_translation(at)),
+                    LeafPayload::Mesh(mesh.clone()),
+                )
+                .expect("add a copy");
+            scene.add_root(leaf).expect("add a root");
+        }
+    }
+    eprintln!(
+        "copies: {cols} x {rows}, {w:.1} x {d:.1} mm each, {gap} mm apart, plate {:.1} x {:.1} mm",
+        cols as f32 * (w + gap) - gap,
+        rows as f32 * (d + gap) - gap
+    );
 }
 
 // --------------------------------------------------------------- digests
@@ -664,6 +875,186 @@ impl ModelGeom {
             && q.z <= self.max[2]
             && parity_inside(&self.bvh, q)
     }
+}
+
+/// How far a support keeps from a model not its own before it counts as
+/// near it (#725), mm: the engine's clearance.
+const NEIGHBOUR_GAP_MM: f64 = 0.2;
+
+/// How near the supports of each set come to models not their own (#725),
+/// measured here apart from the engine: every piece's line (its contacts
+/// from tip to socket, its joints in turn, the braces) every 0.1 mm, with
+/// its radius there, against the other models' surfaces.
+struct NeighbourGaps {
+    /// Pieces by kind whose surface touches or enters another model.
+    touching: HashMap<String, usize>,
+    /// Pieces by kind whose surface comes within [`NEIGHBOUR_GAP_MM`].
+    near: HashMap<String, usize>,
+    /// The least gap found, mm (negative: into a model).
+    least: f64,
+}
+
+fn neighbour_gaps(
+    outcome: &SupportOutcome,
+    leaves: &[(sc_scene::NodeId, ModelInput)],
+    geoms: &[ModelGeom],
+) -> NeighbourGaps {
+    let reach = NEIGHBOUR_GAP_MM + 0.05;
+    let gap_of = |own: Option<usize>, stretches: &[([f64; 3], [f64; 3], f64)]| -> (f64, String) {
+        let mut least = f64::INFINITY;
+        let mut worst = String::new();
+        for &(a, b, r) in stretches {
+            let bound = r + reach;
+            let lo = [a[0].min(b[0]), a[1].min(b[1]), a[2].min(b[2])];
+            let hi = [a[0].max(b[0]), a[1].max(b[1]), a[2].max(b[2])];
+            let near: Vec<&ModelGeom> = geoms
+                .iter()
+                .enumerate()
+                .filter(|(i, g)| {
+                    Some(*i) != own
+                        && (0..3).all(|k| hi[k] >= g.min[k] - bound && lo[k] <= g.max[k] + bound)
+                })
+                .map(|(_, g)| g)
+                .collect();
+            if near.is_empty() {
+                continue;
+            }
+            let d = (0..3).map(|k| (b[k] - a[k]).powi(2)).sum::<f64>().sqrt();
+            let n = ((d / 0.1).ceil() as usize).max(1);
+            for i in 0..=n {
+                let t = i as f64 / n as f64;
+                let q = Vec3::new(
+                    a[0] + (b[0] - a[0]) * t,
+                    a[1] + (b[1] - a[1]) * t,
+                    a[2] + (b[2] - a[2]) * t,
+                );
+                for g in &near {
+                    let gap = match g.bvh.closest_point_to_point(q, 0.0, bound) {
+                        Some(hit) if g.holds(q) => -hit.distance - r,
+                        Some(hit) => hit.distance - r,
+                        None if g.holds(q) => -bound,
+                        None => continue,
+                    };
+                    if gap < least {
+                        least = gap;
+                        worst = format!(
+                            "at ({:.2}, {:.2}, {:.2}) r {r:.2} on ({:.2}, {:.2}, {:.2})-({:.2}, {:.2}, {:.2})",
+                            q.x, q.y, q.z, a[0], a[1], a[2], b[0], b[1], b[2]
+                        );
+                    }
+                }
+            }
+        }
+        (least, worst)
+    };
+    let per_set: Vec<Vec<(String, (f64, String))>> = outcome
+        .sets
+        .par_iter()
+        .map(|set| {
+            let own = leaves.iter().position(|(leaf, _)| *leaf == set.model);
+            let mut out: Vec<(String, (f64, String))> = set
+                .session
+                .pieces()
+                .par_iter()
+                .map(|piece| {
+                    let mut stretches: Vec<([f64; 3], [f64; 3], f64)> = Vec::new();
+                    for c in &piece.contacts {
+                        stretches.push((
+                            c.tip,
+                            c.socket,
+                            c.tip_radius_mm.max(c.socket_radius_mm),
+                        ));
+                    }
+                    // A trunk's or stump's line ends on its foot, wide only
+                    // for the foot's own height: the shaft runs down to it
+                    // as thick as it is, and the foot stands apart.
+                    let c = &set.session.state().collections;
+                    let foot: Option<([f64; 3], f64, f64)> = match piece.kind {
+                        SupportPieceKind::Trunk => c
+                            .trunks
+                            .get(&piece.id)
+                            .and_then(|t| c.roots.get(&t.root_id))
+                            .map(|r| {
+                                let p = r.transform.pos;
+                                ([p.x, p.y, p.z], r.diameter / 2.0, r.disk_height + r.cone_height)
+                            }),
+                        SupportPieceKind::Stump => c.stumps.get(&piece.id).map(|s| {
+                            let p = s.root_pos;
+                            ([p.x, p.y, p.z], s.root_base_diameter / 2.0, s.root_height)
+                        }),
+                        _ => None,
+                    };
+                    let last = piece.line.len().saturating_sub(2);
+                    for (k, w) in piece.line.windows(2).enumerate() {
+                        let r = if foot.is_some() && k == last {
+                            w[0].diameter_mm / 2.0
+                        } else {
+                            w[0].diameter_mm.max(w[1].diameter_mm) / 2.0
+                        };
+                        stretches.push((w[0].at, w[1].at, r));
+                    }
+                    if let Some((at, r, h)) = foot {
+                        stretches.push((at, [at[0], at[1], at[2] + h.max(0.0)], r));
+                    }
+                    (format!("{:?}", piece.kind), gap_of(own, &stretches))
+                })
+                .collect();
+            // Kickstands, joint to joint, their foot on the plate apart.
+            let c = &set.session.state().collections;
+            for k in c.kickstands.values() {
+                let mut stretches: Vec<([f64; 3], [f64; 3], f64)> = Vec::new();
+                for seg in &k.segments {
+                    if let (Some(a), Some(b)) = (&seg.bottom_joint, &seg.top_joint) {
+                        stretches.push((
+                            [a.pos.x, a.pos.y, a.pos.z],
+                            [b.pos.x, b.pos.y, b.pos.z],
+                            seg.diameter.max(a.diameter).max(b.diameter) / 2.0,
+                        ));
+                    }
+                }
+                if let Some(r) = c.roots.get(&k.root_id) {
+                    let p = r.transform.pos;
+                    stretches.push((
+                        [p.x, p.y, p.z],
+                        [p.x, p.y, p.z + r.disk_height + r.cone_height],
+                        r.diameter / 2.0,
+                    ));
+                }
+                out.push(("Kickstand".to_owned(), gap_of(own, &stretches)));
+            }
+            let braces = &set.session.state().collections.braces;
+            for (id, path) in set.session.brace_paths() {
+                let r = braces.get(&id).map_or(0.0, |b| b.profile.diameter / 2.0);
+                let stretches: Vec<([f64; 3], [f64; 3], f64)> =
+                    path.windows(2).map(|w| (w[0], w[1], r)).collect();
+                out.push(("Brace".to_owned(), gap_of(own, &stretches)));
+            }
+            out
+        })
+        .collect();
+    let mut gaps = NeighbourGaps {
+        touching: HashMap::new(),
+        near: HashMap::new(),
+        least: f64::INFINITY,
+    };
+    let mut worst: Vec<(f64, String)> = Vec::new();
+    for (kind, (gap, at)) in per_set.into_iter().flatten() {
+        gaps.least = gaps.least.min(gap);
+        if gap < 0.0 {
+            worst.push((gap, format!("{kind} {gap:.3} {at}")));
+        }
+        if gap < 0.0 {
+            *gaps.touching.entry(kind.clone()).or_default() += 1;
+        }
+        if gap < NEIGHBOUR_GAP_MM {
+            *gaps.near.entry(kind).or_default() += 1;
+        }
+    }
+    worst.sort_by(|a, b| a.0.total_cmp(&b.0));
+    for (_, line) in worst.iter().take(6) {
+        eprintln!("    touching: {line}");
+    }
+    gaps
 }
 
 /// Length of a polyline, mm.
@@ -1788,6 +2179,18 @@ fn run_scene(
         Ok(other) => panic!("SUPPORT_SCORECARD_PRESET: unknown preset {other:?}"),
         Err(_) => {}
     }
+    // A plate made as one group (#475), supports hanging from other models'
+    // trunks, sets left as made alone (#725).
+    if std::env::var("SUPPORT_SCORECARD_TOGETHER").is_ok() {
+        let leaves = scene_model_leaves(&scene, None)
+            .expect("bake")
+            .into_iter()
+            .map(|(leaf, _)| leaf)
+            .collect();
+        request.together = vec![leaves];
+    }
+    request.share_hosts = std::env::var("SUPPORT_SCORECARD_SHARE").is_ok();
+    request.clear_of_neighbours = std::env::var("SUPPORT_SCORECARD_ALONE").is_err();
     // `off` or a spacing in mm, over what the preset says.
     if let (Ok(grid), Some(zones)) = (
         std::env::var("SUPPORT_SCORECARD_GRID"),
@@ -1823,6 +2226,152 @@ fn run_scene(
         .iter()
         .min_by(|a, b| a.0.total_cmp(&b.0))
         .expect("at least one run");
+    if runs > 1 {
+        eprintln!(
+            "  job runs agree: {}",
+            digests.iter().all(|d| *d == digests[0])
+        );
+    }
+    // What each model's supports put inside another model, as made (#725):
+    // a set made standing alone does not see its neighbours.
+    {
+        let leaves: Vec<(sc_scene::NodeId, ModelInput)> =
+            scene_model_leaves(&scene, None).expect("bake");
+        let geoms: Vec<ModelGeom> = leaves.par_iter().map(|(_, m)| ModelGeom::of(m)).collect();
+        let (mut inside, mut sets_hit) = (0usize, 0usize);
+        for set in &outcome.sets {
+            let Some(mesh) = &set.mesh else { continue };
+            let own = leaves.iter().position(|(leaf, _)| *leaf == set.model);
+            let hits = mesh
+                .vertices()
+                .par_iter()
+                .filter(|v| {
+                    let p = v.as_array();
+                    let q = Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]));
+                    geoms
+                        .iter()
+                        .enumerate()
+                        .any(|(i, g)| Some(i) != own && g.holds(q))
+                })
+                .count();
+            inside += hits;
+            sets_hit += usize::from(hits > 0);
+        }
+        eprintln!(
+            "  neighbours: {inside} support vertices inside another model, in {sets_hit} of {} sets",
+            outcome.sets.len()
+        );
+        // Which pieces go through a neighbour: their line, sampled every
+        // 0.25 mm, inside a model not their own.
+        let mut by_kind: HashMap<String, usize> = HashMap::new();
+        for set in &outcome.sets {
+            let own = leaves.iter().position(|(leaf, _)| *leaf == set.model);
+            for piece in set.session.pieces() {
+                let mut points: Vec<[f64; 3]> = piece.line.iter().map(|j| j.at).collect();
+                for c in &piece.contacts {
+                    points.insert(0, c.surface);
+                }
+                let hit = points.windows(2).any(|w| {
+                    let d = (0..3).map(|k| (w[1][k] - w[0][k]).powi(2)).sum::<f64>().sqrt();
+                    let n = ((d / 0.25).ceil() as usize).max(1);
+                    (0..=n).any(|i| {
+                        let t = i as f64 / n as f64;
+                        let q = Vec3::new(
+                            w[0][0] + (w[1][0] - w[0][0]) * t,
+                            w[0][1] + (w[1][1] - w[0][1]) * t,
+                            w[0][2] + (w[1][2] - w[0][2]) * t,
+                        );
+                        geoms
+                            .iter()
+                            .enumerate()
+                            .any(|(i, g)| Some(i) != own && g.holds(q))
+                    })
+                });
+                if hit {
+                    *by_kind.entry(format!("{:?}", piece.kind)).or_default() += 1;
+                }
+            }
+        }
+        eprintln!("  neighbours by piece: {by_kind:?}");
+        let gaps = neighbour_gaps(outcome, &leaves, &geoms);
+        eprintln!(
+            "  neighbour gaps: {} pieces touching another model {:?}, {} within {NEIGHBOUR_GAP_MM} mm {:?}; least gap {:.3} mm",
+            gaps.touching.values().sum::<usize>(),
+            sorted_counts(gaps.touching.clone()),
+            gaps.near.values().sum::<usize>(),
+            sorted_counts(gaps.near.clone()),
+            gaps.least
+        );
+        let p = &outcome.plate;
+        eprintln!(
+            "  plate: {} sets crowded ({} supports: {}), {} taken, {} placed again ({} on a neighbour), {} lost; unplaced {}; prepare {:.0} ms, crowding {:.0} ms, settle {:.0} ms (cpu: field {:.0}, place {:.0}, brace {:.0}), draw {:.0} ms",
+            p.sets,
+            p.crowded,
+            joined(&p.crowded_kinds),
+            p.taken,
+            p.placed,
+            p.on_neighbours,
+            p.lost,
+            outcome.unplaced,
+            p.prepare_ms,
+            p.crowding_ms,
+            p.settle_ms,
+            p.field_ms,
+            p.place_ms,
+            p.brace_ms,
+            p.draw_ms
+        );
+        let mut costs = p.timings.clone();
+        costs.sort_by(|a, b| b.1.total_cmp(&a.1));
+        eprintln!(
+            "  plate costs: {}",
+            costs
+                .iter()
+                .take(12)
+                .map(|(l, ms)| format!("{l}={ms:.0}"))
+                .collect::<Vec<_>>()
+                .join(";")
+        );
+        // What the plate's sets hold, every set counted.
+        let mut kinds: HashMap<&str, usize> = HashMap::new();
+        for set in &outcome.sets {
+            let c = &set.session.state().collections;
+            *kinds.entry("trunks").or_default() += c.trunks.len();
+            *kinds.entry("branches").or_default() += c.branches.len();
+            *kinds.entry("leaves").or_default() += c.leaves.len();
+            *kinds.entry("twigs").or_default() += c.twigs.len();
+            *kinds.entry("sticks").or_default() += c.sticks.len();
+            *kinds.entry("stumps").or_default() += c.stumps.len();
+            *kinds.entry("braces").or_default() += c.braces.len();
+            *kinds.entry("kickstands").or_default() += c.kickstands.len();
+        }
+        let tips: usize = outcome.sets.iter().map(|s| s.session.tips().len()).sum();
+        eprintln!(
+            "  plate sets: {tips} tips; {}",
+            joined(&sorted_counts(kinds))
+        );
+        let mut b = [0usize; 6];
+        for set in &outcome.sets {
+            let one = bracing(&set.session.state().collections);
+            for (k, v) in [
+                one.shafts,
+                one.unbraced_tops,
+                one.diagonal,
+                one.diagonal_unbraced,
+                one.vertical,
+                one.vertical_unbraced,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                b[k] += v;
+            }
+        }
+        eprintln!(
+            "  plate bracing: {} of {} shafts stand > {UNBRACED_TOP_MM} mm above their highest brace; segments >= {LONG_SEGMENT_MM} mm: diagonal {} ({} unbraced), vertical {} ({} unbraced)",
+            b[1], b[0], b[2], b[3], b[4], b[5]
+        );
+    }
     let mut stages: Vec<(String, f64)> = outcome
         .timings
         .entries
@@ -1846,8 +2395,13 @@ fn run_scene(
         next += 1;
         format!("df0-0-{next}")
     };
+    let planned = if std::env::var("SUPPORT_SCORECARD_NO_PLAN").is_ok() {
+        &models[..1]
+    } else {
+        &models[..]
+    };
     let plan = plan_supports_with(
-        &models,
+        planned,
         &SupportState::default(),
         &settings,
         None,

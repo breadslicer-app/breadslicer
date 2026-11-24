@@ -50,6 +50,8 @@ export component StressCard inherits Rectangle {
     in property <float> holds-at: -1;
     in property <string> support-note;
     in property <string> supports-caption;
+    // Supports that came with a model carry no tips the paint knows (#755).
+    in property <string> imported-note;
     // What the frame check found (#244).
     in property <string> frame-note;
     // The supports checked as a beam frame on the critical layers.
@@ -161,6 +163,12 @@ export component StressCard inherits Rectangle {
             // layer on show peels.
             if root.has-force-image && root.paint && root.supports-caption != "": Text {
                 text: root.supports-caption;
+                font-size: Theme.font-xs;
+                color: Theme.text-faint;
+                overflow: elide;
+            }
+            if root.has-force-image && root.paint && root.imported-note != "": Text {
+                text: root.imported-note;
                 font-size: Theme.font-xs;
                 color: Theme.text-faint;
                 overflow: elide;

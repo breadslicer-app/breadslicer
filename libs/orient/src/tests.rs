@@ -646,3 +646,33 @@ fn a_turn_near_the_edge_is_shifted_back_onto_the_plate() {
     let turned_off = turned_about_footprint(&bar, &off, &quarter);
     assert_eq!(kept_on_plate(&bar, &off, &turned_off, lo, hi), turned_off);
 }
+
+/// #722: leaning back gives every pose the same exact lean, keeps the scale
+/// and the footprint's centre, and rests on the plate.
+#[test]
+fn leaning_back_gives_one_exact_pose() {
+    let mesh = mini();
+    let a = AffineTransform3D::from_translation([30.0, -12.0, 7.0])
+        .compose(&AffineTransform3D::from_rotation_z(1.1))
+        .compose(&AffineTransform3D::from_rotation_y(0.4))
+        .compose(&AffineTransform3D::from_uniform_scale(2.0));
+    let b = AffineTransform3D::from_translation([-5.0, 40.0, 0.0])
+        .compose(&AffineTransform3D::from_rotation_x(0.3))
+        .compose(&AffineTransform3D::from_uniform_scale(2.0));
+    let (la, lb) = (leaned_back(&mesh, &a, 37.0), leaned_back(&mesh, &b, 37.0));
+    for (x, y) in la
+        .linear()
+        .iter()
+        .flatten()
+        .zip(lb.linear().iter().flatten())
+    {
+        assert!((x - y).abs() < 1e-12, "{la:?} {lb:?}");
+    }
+    // Its top leans toward +Y by 37°, scaled by 2.
+    let up = [la.linear()[0][2], la.linear()[1][2], la.linear()[2][2]];
+    assert!(up[0].abs() < 1e-12);
+    assert!((up[1] - 2.0 * 37f64.to_radians().sin()).abs() < 1e-12);
+    assert!((up[2] - 2.0 * 37f64.to_radians().cos()).abs() < 1e-12);
+    let low = f64::from(drawn_lowest(&mesh, &la));
+    assert!((0.0..1e-4).contains(&low), "{low}");
+}

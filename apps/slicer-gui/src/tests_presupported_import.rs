@@ -596,6 +596,7 @@ fn fill_bed_copies_take_the_imported_supports_along() {
             min: [-25.0, -25.0],
             max: [200.0, 25.0],
             floor: 0.0,
+            keep_out: bread_arrange::KeepOut::default(),
         };
         let options = crate::arrange_run::ArrangeOptions {
             max_copies: 2,

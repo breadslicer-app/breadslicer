@@ -96,6 +96,11 @@ pub(crate) struct SupportSet {
     pub(crate) tip_diameter_mm: f64,
     /// Where its supports stand on the model (#244), world mm.
     pub(crate) feet: Vec<[f64; 3]>,
+    /// Supports no session drew (those that came with an imported model):
+    /// their tips are not known, so they are reviewed by their geometry,
+    /// holding what they touch as the model does, and are no model in the
+    /// raft (#754).
+    pub(crate) geometry: bool,
 }
 
 /// The leaves the review reads: every sliced leaf but those `sets` know as
@@ -106,8 +111,13 @@ pub(crate) fn review_leaves<'l>(
 ) -> Vec<ReviewLeaf<'l>> {
     leaves
         .iter()
-        .filter(|slices| !sets.iter().any(|set| set.leaf == slices.leaf()))
-        .map(ReviewLeaf::from_slices)
+        .filter_map(
+            |slices| match sets.iter().find(|set| set.leaf == slices.leaf()) {
+                None => Some(ReviewLeaf::from_slices(slices)),
+                Some(set) if set.geometry => Some(ReviewLeaf::from_slices(slices).as_supports()),
+                Some(_) => None,
+            },
+        )
         .collect()
 }
 
@@ -171,7 +181,10 @@ impl TipHold {
 fn support_layers(leaves: &[LeafSlices], sets: &[SupportSet]) -> Range<usize> {
     leaves
         .iter()
-        .filter(|slices| sets.iter().any(|set| set.leaf == slices.leaf()))
+        .filter(|slices| {
+            sets.iter()
+                .any(|set| !set.geometry && set.leaf == slices.leaf())
+        })
         .filter_map(|slices| {
             let lit = |layer: &ContourLayer| !layer.polygons().is_empty();
             let layers = slices.stack().layers();
@@ -310,21 +323,31 @@ fn review_stacks(
                 .map(|report| without_deleted(report, deleted))
             {
                 None => ReviewOutcome::Cancelled,
-                Some(mut report) => ReviewOutcome::Reviewed {
-                    tips: tip_plan(&report.islands, &report.growths, supports).map(|plan| {
-                        plan.note_too_small(&mut report.findings, &report.islands);
-                        plan.note_no_room(&mut report.findings, &report.growths);
-                        Box::new(plan)
-                    }),
-                    growths: report.growths,
-                    frame: supports.frame.clone(),
-                    findings: report.findings,
-                    fills: report.fills,
-                    erased: report.erased,
-                    islands: report.islands,
-                    took: report.timings.total,
-                    loads: Arc::new(report.loads),
-                },
+                Some(mut report) => {
+                    // What lands on the screen's dead zones (#726).
+                    let zones = crate::dead_zones::current();
+                    if !zones.is_empty() {
+                        report
+                            .findings
+                            .extend(crate::dead_zones::findings(leaves, &zones));
+                        sort_findings(&mut report.findings);
+                    }
+                    ReviewOutcome::Reviewed {
+                        tips: tip_plan(&report.islands, &report.growths, supports).map(|plan| {
+                            plan.note_too_small(&mut report.findings, &report.islands);
+                            plan.note_no_room(&mut report.findings, &report.growths);
+                            Box::new(plan)
+                        }),
+                        growths: report.growths,
+                        frame: supports.frame.clone(),
+                        findings: report.findings,
+                        fills: report.fills,
+                        erased: report.erased,
+                        islands: report.islands,
+                        took: report.timings.total,
+                        loads: Arc::new(report.loads),
+                    }
+                }
             },
         )
     })
@@ -468,7 +491,10 @@ pub(crate) fn support_resin_for_test(plate: &SlicedPlate, sets: &[SupportSet]) -
     plate
         .leaves()
         .iter()
-        .filter(|slices| sets.iter().any(|set| set.leaf == slices.leaf()))
+        .filter(|slices| {
+            sets.iter()
+                .any(|set| !set.geometry && set.leaf == slices.leaf())
+        })
         .flat_map(|slices| slices.stack().layers().iter().enumerate())
         .map(|(index, layer)| {
             let height = tops[index] - index.checked_sub(1).map_or(0.0, |below| tops[below]);
@@ -592,6 +618,26 @@ mod review_tests {
         review_for_test(leaves, filled, profile, &[])
     }
 
+    /// #726: a model or a support standing on a dead zone of the screen
+    /// is found, over the layers it stands there; a zone nothing stands on
+    /// says nothing.
+    #[test]
+    fn what_stands_on_a_dead_zone_is_found() {
+        use crate::dead_zones::{DeadZone, findings};
+        let leaves = slice_scene(&model_and_support(), &profile(4)).expect("the scene slices");
+        // Under the support, the cube at x 3.
+        let under = DeadZone::between([2.8, -0.2], [3.2, 0.2]);
+        let found = findings(&leaves, &[under]);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].check, CheckKind::DeadZone);
+        assert_eq!((found[0].first_layer, found[0].last_layer), (0, 3));
+        // Inside the cube, past its edges: its ring has no corner there.
+        let inside = DeadZone::between([-0.1, -0.1], [0.1, 0.1]);
+        assert_eq!(findings(&leaves, &[inside]).len(), 1);
+        let far = DeadZone::between([7.0, 7.0], [8.0, 8.0]);
+        assert!(findings(&leaves, &[far]).is_empty());
+    }
+
     #[test]
     fn supports_known_as_data_are_left_out_and_the_rest_are_models() {
         let leaves = slice_scene(&model_and_support(), &profile(4)).expect("the scene slices");
@@ -600,16 +646,23 @@ mod review_tests {
         for (leaf, slices) in all.iter().zip(&leaves) {
             assert!(std::ptr::eq(leaf.stack, slices.stack()));
         }
-        let sets = [SupportSet {
+        let mut sets = [SupportSet {
             leaf: leaves[1].leaf(),
             contacts: Vec::new(),
             tip_diameter_mm: 0.3,
             feet: Vec::new(),
+            geometry: false,
         }];
         let models = review_leaves(&leaves, &sets);
         assert_eq!(models.len(), 1);
         assert!(std::ptr::eq(models[0].stack, leaves[0].stack()));
         assert_eq!(support_layers(&leaves, &sets), 0..4);
+        // Supports read as geometry (#754): reviewed, as supports.
+        sets[0].geometry = true;
+        let read = review_leaves(&leaves, &sets);
+        assert_eq!(read.len(), 2);
+        assert!(!read[0].supports && read[1].supports);
+        assert_eq!(support_layers(&leaves, &sets), 0..0);
     }
 
     #[test]

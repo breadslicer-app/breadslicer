@@ -235,6 +235,26 @@ pub(crate) fn wire_viewport_input(
     }
     {
         let ctrl = ctrl.clone();
+        ui.on_scale_to_fit_requested(move || ctrl.scale_to_fit());
+    }
+    {
+        let ctrl = ctrl.clone();
+        ui.on_object_show_in_folder(move |i| {
+            if let Some(path) = ctrl.file_of_row(i) {
+                crate::show_in_folder::show_in_folder(&ctrl.dialogs(), &path);
+            }
+        });
+    }
+    {
+        let ctrl = ctrl.clone();
+        ui.on_object_reload(move |i| ctrl.reload_row(i));
+    }
+    {
+        let ctrl = ctrl.clone();
+        ui.on_dead_zone_tool_toggled(move |on| ctrl.set_dead_zone_tool(on));
+    }
+    {
+        let ctrl = ctrl.clone();
         ui.on_toggle_projection_requested(move || {
             remember_projection(&prefs, ctrl.on_toggle_projection())
         });

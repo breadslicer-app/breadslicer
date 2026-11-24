@@ -51,7 +51,7 @@ use sc_geom::supports::{
     AddNote, AddOptions, BraceEnd, SupportPrescan, SupportOptions, SupportOutcome, SupportRequest,
     SupportSession, EditError, EditPreview, HandBraceRefusal, HandEditKind, ImportedPlan,
     KeptEdits, LostEdit, LostWhy, PartSizes, RaftMode, ScanCache, scene_model_leaves,
-    start_prescan, start_supports,
+    start_prescan, start_settle, start_supports,
 };
 use sc_mesh_core::presupported::ImportedRoute;
 use sc_mesh_core::transform::Transform3D;
@@ -81,10 +81,10 @@ use crate::support_persist::{
     DrawnSet, StaleWhy, SupportSessions, in_force, latest_drawing, model_of, record, sets_in_force,
     sets_of_model, support_leaf, support_leaves,
 };
-use crate::viewport::ViewportController;
 use crate::viewport::support_drag::{
     DragPoint, DragView, Project, ScreenHit, SupportDragHandler, SupportDragKind,
 };
+use crate::viewport::{HiddenSet, HiddenSupports, ViewportController};
 use crate::{MainWindow, WorkspaceSection};
 
 /// How much around an island a jump to it frames (#538), in mm.
@@ -216,6 +216,9 @@ pub(crate) struct SupportRun {
     prescan: RefCell<Prescan>,
     /// One raft for all (#556), kept in step with its sets.
     plate_rafts: crate::plate_raft::PlateRafts,
+    /// Sets kept clear of the models standing near them, and given those
+    /// models for hand edits (#725).
+    plate_keep: RefCell<PlateKeep>,
     /// Supports computed while the person works on something else.
     ahead: RefCell<Ahead>,
     /// Where supports are recommended while placed by hand (#524).
@@ -257,6 +260,10 @@ pub(crate) struct SupportRun {
     /// The preset last picked from the list: of presets with the same
     /// numbers, the one the person clicked is the one marked (#564).
     picked: Cell<Option<usize>>,
+    /// Each model takes the zone preset of its height (#723), and what the
+    /// last Generate press gave each, for the line after the run.
+    by_height: Cell<bool>,
+    height_picks: RefCell<Option<String>>,
     /// The supports the Select tool picked (#567): each by its set's leaf and
     /// where its tip touches the model, which a redraw keeps.
     chosen: RefCell<Vec<(NodeId, [f64; 3])>>,
@@ -313,6 +320,8 @@ pub(crate) struct SupportRun {
     brace_from: RefCell<Option<(DrawnSet, BraceEnd)>>,
     /// The line tool's first point (#178): the next click places the row.
     line_from: Cell<Option<[f32; 3]>>,
+    /// The line tool's shape (#734): 0 a row, 1 a circle.
+    line_mode: Cell<i32>,
     /// The line tool's spacing between supports, mm; the Area tool's grid
     /// too (#177).
     line_spacing: Cell<f64>,
@@ -848,6 +857,105 @@ struct EditJob {
     leaf: NodeId,
     /// What is known of the points of `op`.
     plans: PointPlans,
+}
+
+/// What [`SupportRun::keep_plate_clear`] does at a scene revision.
+#[derive(Default)]
+struct PlateKeep {
+    /// The last revision looked at.
+    checked: Option<SceneRevision>,
+    /// The look in flight: its revision, its stop, and its answer.
+    running: Option<(
+        SceneRevision,
+        Arc<AtomicBool>,
+        std::sync::mpsc::Receiver<Option<PlateStep>>,
+    )>,
+}
+
+/// What the plate step (#725) found for the scene at `revision`.
+struct PlateStep {
+    revision: SceneRevision,
+    /// The sets placed again clear of their neighbours: leaf, model, mesh
+    /// and session.
+    settled: Vec<(NodeId, NodeId, Arc<sc_mesh_core::IndexedMesh>, SupportSession)>,
+    /// Tips that found no room any more.
+    lost: usize,
+    /// Each session in force given the models now near it.
+    neighboured: Vec<(Arc<SupportSession>, Arc<SupportSession>)>,
+}
+
+/// The plate step of `sets` (leaf, model, session) on `scene` (#725), off
+/// the UI thread: their sessions with the models now standing near them,
+/// and the sets that came too near one placed again round it. `None` when
+/// stopped or the scene could not be read.
+fn plate_step(
+    revision: SceneRevision,
+    scene: &sc_scene::Scene,
+    sets: &[(NodeId, NodeId, Arc<SupportSession>)],
+    groups: Vec<Vec<NodeId>>,
+    stop: &AtomicBool,
+) -> Option<PlateStep> {
+    let everyone = scene_model_leaves(scene, None).ok()?;
+    if everyone.len() < 2 {
+        return Some(PlateStep {
+            revision,
+            settled: Vec::new(),
+            lost: 0,
+            neighboured: Vec::new(),
+        });
+    }
+    let together =
+        |a: NodeId, b: NodeId| a == b || groups.iter().any(|g| g.contains(&a) && g.contains(&b));
+    let mut neighboured = Vec::new();
+    for (_, model, session) in sets {
+        if stop.load(Ordering::Relaxed) {
+            return None;
+        }
+        // Its own model and its group's are never its neighbours.
+        let others: Vec<_> = everyone
+            .iter()
+            .filter(|(leaf, _)| !together(*leaf, *model))
+            .map(|(_, m)| m.clone())
+            .collect();
+        if let Some(next) = session.with_neighbours(&others) {
+            neighboured.push((session.clone(), Arc::new(next)));
+        }
+    }
+    let request = SupportRequest {
+        together: groups.clone(),
+        ..SupportRequest::default()
+    };
+    let job = start_settle(
+        scene,
+        sets.iter()
+            .map(|(_, model, session)| (*model, SupportSession::clone(session)))
+            .collect(),
+        request,
+    );
+    let outcome = loop {
+        if stop.load(Ordering::Relaxed) {
+            job.cancel();
+            return None;
+        }
+        if let Some(done) = job.try_poll() {
+            break done.ok()?;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let settled = outcome
+        .sets
+        .into_iter()
+        .filter_map(|set| {
+            let leaf = sets.iter().find(|(_, m, _)| *m == set.model)?.0;
+            Some((leaf, set.model, Arc::new(set.mesh?), set.session))
+        })
+        .collect();
+    Some(PlateStep {
+        revision,
+        settled,
+        lost: outcome.plate.lost,
+        neighboured,
+    })
 }
 
 /// A hand edit ready for the engine: the sets it edits and, in the same
@@ -1745,6 +1853,29 @@ const LINE_SPACING_MM: f64 = 2.0;
 /// The supports of a row along `path` (points on the surface, in order),
 /// `spacing` mm apart along it (#178): evenly over each stretch, ends
 /// included. Where the path jumps (it left the model), a new stretch starts.
+/// How near a tip already there a mirrored one counts as taken (#735), mm.
+const MIRROR_TAKEN_MM: f64 = 0.3;
+
+/// The points of the closed `path` (a circle on the model, #734) `spacing`
+/// mm apart along it: [`line_points`] round the loop, its end dropped where
+/// it comes back to its start.
+fn circle_points(path: &[[f32; 3]], spacing: f64) -> Vec<[f32; 3]> {
+    let Some(&first) = path.first() else {
+        return Vec::new();
+    };
+    let mut closed = path.to_vec();
+    closed.push(first);
+    let mut points = line_points(&closed, spacing);
+    if points.len() > 1 {
+        let (a, b) = (points[0], points[points.len() - 1]);
+        let gap = (0..3).map(|k| f64::from(b[k] - a[k]).powi(2)).sum::<f64>().sqrt();
+        if gap < spacing.max(0.1) / 2.0 {
+            points.pop();
+        }
+    }
+    points
+}
+
 fn line_points(path: &[[f32; 3]], spacing: f64) -> Vec<[f32; 3]> {
     let spacing = spacing.max(0.1);
     let gap = |a: [f32; 3], b: [f32; 3]| {
@@ -2067,6 +2198,36 @@ fn save_shape_flat(flat: bool) {
     }
 }
 
+/// The built-in zone preset for a model `height_mm` tall (#723): up to
+/// 65 mm Miniatures, up to 150 mm Figures, taller Statues.
+fn preset_for_height(height_mm: f64) -> usize {
+    if height_mm <= 65.0 {
+        0
+    } else if height_mm <= 150.0 {
+        1
+    } else {
+        2
+    }
+}
+
+fn load_by_height() -> bool {
+    // Tests pick their preset; the one by height is tested on its own.
+    if cfg!(test) {
+        return false;
+    }
+    support_data_dir()
+        .and_then(|d| std::fs::read_to_string(d.join("by-height")).ok())
+        .is_none_or(|text| text.trim() != "off")
+}
+
+fn save_by_height(on: bool) {
+    if let Some(dir) = support_data_dir()
+        && std::fs::create_dir_all(&dir).is_ok()
+    {
+        let _ = std::fs::write(dir.join("by-height"), if on { "on" } else { "off" });
+    }
+}
+
 /// Miniatures 20~65 mm (#490): what the Supports tab starts with.
 fn starting_options() -> SupportOptions {
     SupportOptions {
@@ -2196,6 +2357,7 @@ impl SupportRun {
             poll_timer: Rc::new(slint::Timer::default()),
             prescan: RefCell::new(Prescan::default()),
             plate_rafts: crate::plate_raft::PlateRafts::default(),
+            plate_keep: RefCell::new(PlateKeep::default()),
             ahead: RefCell::new(Ahead::default()),
             hints: RefCell::new(crate::support_hints::Hints::default()),
             last_change,
@@ -2213,6 +2375,8 @@ impl SupportRun {
             based_on: Cell::new(None),
             editing: Cell::new(None),
             picked: Cell::new(None),
+            by_height: Cell::new(load_by_height()),
+            height_picks: RefCell::new(None),
             chosen: RefCell::new(Vec::new()),
             chosen_events: RefCell::new(None),
             chosen_listeners: RefCell::new(Vec::new()),
@@ -2235,6 +2399,7 @@ impl SupportRun {
             drag: RefCell::new(None),
             brace_from: RefCell::new(None),
             line_from: Cell::new(None),
+            line_mode: Cell::new(0),
             line_spacing: Cell::new(LINE_SPACING_MM),
             area_brush,
             box_poll: slint::Timer::default(),
@@ -2308,10 +2473,32 @@ impl SupportRun {
             });
         }
         {
+            let weak = Rc::downgrade(&run);
+            ui.on_support_picked_hide(move || {
+                if let Some(run) = weak.upgrade() {
+                    run.hide_chosen();
+                }
+            });
+        }
+        {
+            let weak = Rc::downgrade(&run);
+            ui.on_support_hidden_show(move || {
+                if let Some(run) = weak.upgrade() {
+                    run.hide_tips(Vec::new());
+                }
+            });
+        }
+        {
             // An edit, an Undo or a new scene: the picked supports are shown
             // as they stand (#567).
             let weak = Rc::downgrade(&run);
             let sub = run.document.subscribe(move |event| {
+                // Another scene shows every support again (#728).
+                if matches!(event, SceneEvent::Installed | SceneEvent::Cleared)
+                    && let Some(run) = weak.upgrade()
+                {
+                    run.hide_tips(Vec::new());
+                }
                 if matches!(
                     event,
                     SceneEvent::Installed
@@ -2327,6 +2514,12 @@ impl SupportRun {
                             && let Some(ui) = run.ui.upgrade()
                         {
                             run.show_chosen(&ui);
+                            // The supports hidden stay hidden in the sets
+                            // as they stand now.
+                            let hidden = run.ctrl.hidden_supports().tips;
+                            if !hidden.is_empty() {
+                                run.hide_tips(hidden);
+                            }
                         }
                     });
                 }
@@ -2361,6 +2554,11 @@ impl SupportRun {
         {
             let run = run.clone();
             ui.on_support_preset_picked(move |i| run.on_preset_picked(i));
+        }
+        ui.set_support_by_height(run.by_height.get());
+        {
+            let run = run.clone();
+            ui.on_support_by_height_toggled(move |on| run.set_by_height(on));
         }
         {
             let run = run.clone();
@@ -2472,7 +2670,15 @@ impl SupportRun {
         }
         {
             let run = run.clone();
-            ui.on_support_area_fill(move || run.fill_painted());
+            ui.on_support_area_fill(move |mode| run.fill_painted(mode == 1));
+        }
+        {
+            let run = run.clone();
+            ui.on_support_line_mode_picked(move |mode| run.on_line_mode(mode));
+        }
+        {
+            let run = run.clone();
+            ui.on_support_picked_mirror(move |axis| run.mirror_chosen(axis as usize));
         }
         {
             let run = run.clone();
@@ -2965,6 +3171,7 @@ impl SupportRun {
             self.plate_rafts
                 .tick(&self.document, &self.ctrl.build_volume());
             self.go_on_after_rafts();
+            self.keep_plate_clear();
         }
         self.support_hints(&ui);
         let mut prescan = self.prescan.borrow_mut();
@@ -3353,18 +3560,32 @@ impl SupportRun {
                 }
             }
         });
+        use std::sync::atomic::{AtomicBool, Ordering};
+        // Primed and done, a model that is no longer waiting is let go of.
+        hints
+            .priming
+            .retain(|(leaf, done)| waiting.contains(leaf) || !done.load(Ordering::Acquire));
         for leaf in &waiting {
-            if hints.priming.contains(leaf) {
-                continue;
+            if let Some(k) = hints.priming.iter().position(|(id, _)| id == leaf) {
+                if !hints.priming[k].1.load(Ordering::Acquire) {
+                    continue;
+                }
+                // Done, and still waiting: its caches were made anew.
+                hints.priming.swap_remove(k);
             }
-            hints.priming.push(*leaf);
-            if let Some(job) = self
+            let Some(job) = self
                 .document
                 .with_scene(|spatial| spatial.adjacency_job(*leaf))
                 .flatten()
-            {
-                std::thread::spawn(move || job.run());
-            }
+            else {
+                continue;
+            };
+            let done = Arc::new(AtomicBool::new(false));
+            hints.priming.push((*leaf, done.clone()));
+            std::thread::spawn(move || {
+                job.run();
+                done.store(true, Ordering::Release);
+            });
         }
         let painted = |corners: Vec<[f32; 3]>, tint: OverlayTint| {
             let indices = (0..corners.len() as u32).collect();
@@ -3395,7 +3616,13 @@ impl SupportRun {
                 OverlayTint::IslandDot,
             )));
         }
-        (hints.left.len(), !waiting.is_empty())
+        // Drawn again once a job in flight is done; a model no job can be
+        // made for is not waited on.
+        let in_flight = hints
+            .priming
+            .iter()
+            .any(|(leaf, _)| waiting.contains(leaf));
+        (hints.left.len(), in_flight)
     }
 
     /// The recommended places for the models as they stand, once worked out;
@@ -3552,6 +3779,14 @@ impl SupportRun {
         let mut request = self.request_for_printer();
         request.options = self.options.borrow().clone();
         request.models = self.target_models();
+        // Each model the preset of its height (#723).
+        if self.by_height.get() {
+            let (options, picks) = self.options_by_height(request.models.as_deref());
+            request.model_options = options;
+            *self.height_picks.borrow_mut() = picks;
+        } else {
+            *self.height_picks.borrow_mut() = None;
+        }
         // No tip in a hollow's drain channel (#465).
         request.keep_out = crate::raft_drains::drain_channels(&self.document);
         // A model on a raft of its own keeps it (#198), a group's members
@@ -3567,6 +3802,63 @@ impl SupportRun {
         // A group is made as one structure, braced to itself (#475).
         request.together = self.document.groups();
         request
+    }
+
+    /// The box turned on or off (#723), remembered.
+    fn set_by_height(&self, on: bool) {
+        if self.by_height.replace(on) != on {
+            save_by_height(on);
+        }
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_support_by_height(on);
+        }
+    }
+
+    /// The options each model of `only` (every model when `None`) is made
+    /// with when it takes the zone preset of its height (#723), and the line
+    /// that says which preset each took. A model as tall as the preset it
+    /// takes keeps the tab's one raft for all.
+    fn options_by_height(
+        &self,
+        only: Option<&[NodeId]>,
+    ) -> (Vec<(NodeId, SupportOptions)>, Option<String>) {
+        let heights: Vec<(NodeId, f64)> = self
+            .document
+            .with_scene(|spatial| {
+                crate::raft_clash::model_bottoms(spatial)
+                    .into_iter()
+                    .filter(|(id, _)| only.is_none_or(|only| only.contains(id)))
+                    .filter_map(|(id, _)| {
+                        let query = spatial.leaf(id)?;
+                        let aabb = query.transformed_aabb(query.world_transform())?;
+                        let height = f64::from(aabb.max().coords()[2] - aabb.min().coords()[2]);
+                        Some((id, height))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let presets = self.presets.borrow();
+        let one_raft = self.options.borrow().one_raft;
+        let mut counts = [0_usize; 3];
+        let options = heights
+            .into_iter()
+            .filter_map(|(id, height)| {
+                let i = preset_for_height(height);
+                let preset = presets.get(i).filter(|p| p.built_in)?;
+                counts[i] += 1;
+                let mut options = preset.options.clone();
+                options.one_raft = one_raft;
+                Some((id, options))
+            })
+            .collect();
+        let line = counts
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| **n > 0)
+            .filter_map(|(i, n)| presets.get(i).map(|p| format!("{} × {n}", p.name)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        (options, (!line.is_empty()).then_some(line))
     }
 
     /// The raft `model` stands on: its group's one raft of lines (#475), its
@@ -5104,6 +5396,154 @@ impl SupportRun {
     /// Generate would work on, are drawn again on it, in one undo step. The
     /// supports stay where they are: only the raft and the roots' feet on it
     /// change, so there is nothing to generate again.
+    /// Once the scene stands still with sets on it (#725): places again,
+    /// clear of the models standing near them, the supports of the sets a
+    /// move brought too near one (Arrange, Fill bed, a model moved by hand),
+    /// in the step that moved them; and gives every set the models near it,
+    /// so hand edits keep clear of them too. Off the UI thread; a scene that
+    /// moves on drops it.
+    fn keep_plate_clear(&self) {
+        let revision = self.document.scene_revision();
+        let mut keep = self.plate_keep.borrow_mut();
+        if let Some((at, stop, done)) = &keep.running {
+            if *at != revision {
+                stop.store(true, Ordering::Relaxed);
+                keep.running = None;
+            } else {
+                match done.try_recv() {
+                    Ok(step) => {
+                        keep.running = None;
+                        keep.checked = Some(revision);
+                        drop(keep);
+                        if let Some(step) = step {
+                            self.land_plate_step(step);
+                        }
+                        return;
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => return,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        keep.running = None;
+                        keep.checked = Some(revision);
+                        return;
+                    }
+                }
+            }
+        }
+        if keep.checked == Some(revision)
+            || self.pending_click.borrow().is_some()
+            || !self.queued_clicks.borrow().is_empty()
+        {
+            return;
+        }
+        keep.checked = Some(revision);
+        let sets: Vec<(NodeId, NodeId, Arc<SupportSession>)> = self
+            .document
+            .with_scene(|spatial| {
+                sets_in_force(spatial, &self.sessions)
+                    .into_iter()
+                    // A session stands where its leaf stood when recorded:
+                    // one whose leaf moved since (a live move) waits.
+                    .filter(|d| {
+                        !d.unborn
+                            && spatial
+                                .leaf(d.leaf)
+                                .is_some_and(|q| q.world_transform() == d.leaf_world)
+                    })
+                    .map(|d| (d.leaf, d.model, d.session))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if sets.is_empty() {
+            return;
+        }
+        let Some(scene) = self.run_scene(None) else {
+            return;
+        };
+        let groups = self.document.groups();
+        let stop = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let halt = stop.clone();
+        std::thread::spawn(move || {
+            let step = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                plate_step(revision, &scene, &sets, groups, &halt)
+            }))
+            .ok()
+            .flatten();
+            let _ = tx.send(step);
+        });
+        keep.running = Some((revision, stop, rx));
+    }
+
+    /// Lands what [`plate_step`] found: the sessions given their neighbours
+    /// in place (the same supports, no step of their own), and the sets
+    /// placed again in the newest step.
+    fn land_plate_step(&self, step: PlateStep) {
+        {
+            let mut sessions = self.sessions.borrow_mut();
+            for (old, new) in &step.neighboured {
+                for drawn in sessions.iter_mut() {
+                    if Arc::ptr_eq(&drawn.session, old) {
+                        drawn.session = new.clone();
+                    }
+                }
+            }
+        }
+        if step.settled.is_empty() {
+            return;
+        }
+        let swaps: Option<Vec<SceneEdit>> = step
+            .settled
+            .iter()
+            .map(|(leaf, _, mesh, _)| {
+                self.document
+                    .with_scene(|spatial| leaf_mesh_swap(spatial.graph(), *leaf, mesh.clone()))
+                    .flatten()
+            })
+            .collect();
+        let Some(swaps) = swaps else {
+            return;
+        };
+        if !matches!(
+            self.document
+                .complete_last_edit(step.revision, SceneEdit::Compound(swaps), &[]),
+            Ok(true)
+        ) {
+            return;
+        }
+        let count = step.settled.len();
+        for (leaf, model, _, session) in step.settled {
+            record(&self.document, &self.sessions, leaf, model, Arc::new(session));
+        }
+        crate::breadcrumbs::note(&format!(
+            "supports: {count} set(s) placed again clear of their neighbours, {} tip(s) lost",
+            step.lost
+        ));
+        self.show_status(ctr!(
+            "Workspace",
+            "The supports of 1 model were moved clear of the models next to it.",
+            "The supports of {n} models were moved clear of the models next to them.",
+            count
+        ));
+    }
+
+    /// Runs the plate step (#725) until the scene stands still with it, as
+    /// the watcher does: for tests.
+    #[cfg(test)]
+    pub(crate) fn keep_plate_clear_now(&self) {
+        for _ in 0..4000 {
+            let revision = self.document.scene_revision();
+            self.keep_plate_clear();
+            std::thread::sleep(Duration::from_millis(5));
+            if self.document.scene_revision() == revision
+                && self.plate_keep.borrow().running.is_none()
+                && self.plate_keep.borrow().checked == Some(revision)
+            {
+                return;
+            }
+        }
+        panic!("the plate step never settled");
+    }
+
     fn rafts_follow(&self) {
         self.rafts_follow_for(self.target_models());
     }
@@ -5262,6 +5702,8 @@ impl SupportRun {
             self.based_on.set(card);
             self.editing.set(card);
             self.picked.set(Some(index.max(0) as usize));
+            // A preset picked by hand is for every model (#723).
+            self.set_by_height(false);
             self.set_options(options);
         }
     }
@@ -5888,6 +6330,13 @@ impl SupportRun {
                     Some((drawn.leaf, drawn.session.tip_point(&id)?))
                 })
         });
+        // A support hidden from the view is not picked (#728).
+        let hidden = self.ctrl.hidden_supports().tips;
+        let found = found.filter(|(leaf, tip)| {
+            !hidden
+                .iter()
+                .any(|(l, t)| l == leaf && (0..3).all(|k| (t[k] - tip[k]).abs() < CHOSEN_TIP_MM))
+        });
         {
             let mut chosen = self.chosen.borrow_mut();
             let same = |a: [f64; 3], b: [f64; 3]| (0..3).all(|k| (a[k] - b[k]).abs() < 1e-6);
@@ -5906,6 +6355,75 @@ impl SupportRun {
             }
         }
         self.show_chosen(ui);
+    }
+
+    /// H with the Pick tool (#728): the picked supports leave the view, as
+    /// the ones hidden before, and are let go. View only: the scene keeps
+    /// them.
+    fn hide_chosen(&self) {
+        let mut tips = self.ctrl.hidden_supports().tips;
+        let same = |a: [f64; 3], b: [f64; 3]| (0..3).all(|k| (a[k] - b[k]).abs() < 1e-6);
+        for (leaf, tip) in self.chosen.borrow_mut().drain(..) {
+            if !tips.iter().any(|(l, t)| *l == leaf && same(*t, tip)) {
+                tips.push((leaf, tip));
+            }
+        }
+        self.hide_tips(tips);
+        if let Some(ui) = self.ui.upgrade() {
+            self.show_chosen(&ui);
+        }
+    }
+
+    /// Hides from the view the supports at `tips`, each by its set's leaf
+    /// and its tip, in place of the ones hidden (#728): each set they are
+    /// in is drawn without them. A tip no set holds any more is let go;
+    /// none shows every support again (Alt+H).
+    fn hide_tips(&self, tips: Vec<(NodeId, [f64; 3])>) {
+        if tips.is_empty() {
+            self.ctrl.set_hidden_supports(HiddenSupports::default());
+            return;
+        }
+        let sets = self.sets_in_force();
+        let mut kept = Vec::new();
+        let mut by_set: Vec<(&DrawnSet, Vec<String>)> = Vec::new();
+        for (leaf, tip) in tips {
+            let Some(drawn) = sets.iter().find(|d| d.leaf == leaf) else {
+                continue;
+            };
+            let Some(id) = drawn.session.tip_near(tip, CHOSEN_TIP_MM) else {
+                continue;
+            };
+            kept.push((leaf, tip));
+            match by_set.iter_mut().find(|(d, _)| d.leaf == leaf) {
+                Some((_, ids)) => {
+                    if !ids.contains(&id) {
+                        ids.push(id);
+                    }
+                }
+                None => by_set.push((drawn, vec![id])),
+            }
+        }
+        let shown = self
+            .document
+            .with_scene(|spatial| {
+                by_set
+                    .iter()
+                    .filter_map(|(drawn, ids)| {
+                        let from = spatial.graph().leaf_mesh_arc(drawn.leaf)?.clone();
+                        let without = drawn.session.mesh_without(ids).ok()?;
+                        Some(HiddenSet {
+                            leaf: drawn.leaf,
+                            from,
+                            drawn: without.map(Arc::new),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.ctrl.set_hidden_supports(HiddenSupports {
+            tips: kept,
+            sets: shown,
+        });
     }
 
     /// Lets go of every picked support (Esc with the Select tool).
@@ -6552,7 +7070,66 @@ impl SupportRun {
     /// Where the supports of a row from the line's first point to `to` go
     /// (#178): along the model's surface between them, as seen.
     fn line_row(&self, from: [f32; 3], to: [f32; 3]) -> Vec<[f32; 3]> {
+        if self.line_mode.get() == 1 {
+            return circle_points(&self.ctrl.surface_circle(from, to), self.line_spacing.get());
+        }
         line_points(&self.ctrl.surface_path(from, to), self.line_spacing.get())
+    }
+
+    /// The line tool's shape picked (#734): a row or a circle. A first point
+    /// in is dropped.
+    fn on_line_mode(&self, mode: i32) {
+        self.line_mode.set(mode.clamp(0, 1));
+        self.drop_line();
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_support_line_mode(self.line_mode.get());
+        }
+    }
+
+    /// The picked supports mirrored across the middle of their model (#735),
+    /// in X (`axis` 0) or Y (1): a support placed, as Add places one, at the
+    /// mirror image of each picked tip; one already standing there is left.
+    fn mirror_chosen(self: &Rc<Self>, axis: usize) {
+        let Some(ui) = self.ui.upgrade() else {
+            return;
+        };
+        let axis = axis.min(1);
+        let mut points: Vec<[f32; 3]> = Vec::new();
+        for (drawn, ids) in self.chosen_now() {
+            let middle = self
+                .document
+                .with_scene(|spatial| {
+                    let query = spatial.leaf(drawn.model)?;
+                    let aabb = query.transformed_aabb(query.world_transform())?;
+                    Some(f64::from(aabb.min().coords()[axis] + aabb.max().coords()[axis]) / 2.0)
+                })
+                .flatten();
+            let Some(middle) = middle else {
+                continue;
+            };
+            let tips: Vec<[f64; 3]> = drawn.session.tips().into_iter().map(|(_, p)| p).collect();
+            for id in &ids {
+                let Some(mut p) = drawn.session.tip_point(id) else {
+                    continue;
+                };
+                p[axis] = 2.0 * middle - p[axis];
+                let taken = tips.iter().any(|t| {
+                    (0..3).map(|k| (t[k] - p[k]).powi(2)).sum::<f64>() < MIRROR_TAKEN_MM.powi(2)
+                });
+                if !taken {
+                    points.push(p.map(|c| c as f32));
+                }
+            }
+        }
+        crate::breadcrumbs::note(&format!("supports: mirror {} in axis {axis}", points.len()));
+        if points.is_empty() {
+            ui.set_supports_last_run(ctr!(
+                "SupportDialog",
+                "Their mirror image already has supports: nothing to add."
+            ));
+            return;
+        }
+        self.place_row(&ui, points);
     }
 
     /// The line tool's hover: once the first point is in, a dot where each
@@ -6567,15 +7144,22 @@ impl SupportRun {
         };
         let row = self.line_row(from, to);
         self.ctrl.set_preview_overlay(line_dots(&row));
-        self.show_add_note((
+        let note = if self.line_mode.get() == 1 {
+            ctr!(
+                "SupportDialog",
+                "Click a point on the circle: {n} support.",
+                "Click a point on the circle: {n} supports.",
+                row.len()
+            )
+        } else {
             ctr!(
                 "SupportDialog",
                 "Click where the row ends: {n} support.",
                 "Click where the row ends: {n} supports.",
                 row.len()
-            ),
-            false,
-        ));
+            )
+        };
+        self.show_add_note((note, false));
     }
 
     /// A click of the line tool (#178): the first sets where the row
@@ -6585,7 +7169,12 @@ impl SupportRun {
             crate::breadcrumbs::note("supports: line started");
             self.line_from.set(Some(point));
             self.ctrl.set_preview_overlay(line_dots(&[point]));
-            self.show_add_note((ctr!("SupportDialog", "Click where the row ends."), false));
+            let note = if self.line_mode.get() == 1 {
+                ctr!("SupportDialog", "Click a point on the circle.")
+            } else {
+                ctr!("SupportDialog", "Click where the row ends.")
+            };
+            self.show_add_note((note, false));
             return;
         };
         let row = self.line_row(from, point);
@@ -6617,14 +7206,21 @@ impl SupportRun {
 
     /// Places a support on every node of a grid over each patch painted
     /// with the Area tool (#177), as one edit, the spacing the field's.
-    fn fill_painted(self: &Rc<Self>) {
+    /// With `edge`, around each patch's border alone (#734).
+    fn fill_painted(self: &Rc<Self>, edge: bool) {
         let Some(ui) = self.ui.upgrade() else {
             return;
         };
         let spacing = self.line_spacing.get();
         let mut row: Vec<[f32; 3]> = crate::support_area::painted_patches(&self.document)
             .iter()
-            .flat_map(|(_, patch)| crate::support_area::grid_on(patch, spacing))
+            .flat_map(|(_, patch)| {
+                if edge {
+                    crate::support_area::edge_on(patch, spacing)
+                } else {
+                    crate::support_area::grid_on(patch, spacing)
+                }
+            })
             .collect();
         if row.is_empty() {
             ui.set_supports_last_run(ctr!(
@@ -7987,6 +8583,11 @@ impl SupportRun {
         if let Some(ui) = self.ui.upgrade() {
             let seconds = outcome.timings.total.as_secs_f64();
             let mut line = format!("{summary} {seconds:.1} s.");
+            // Which preset each model took by its height (#723).
+            if let Some(picks) = self.height_picks.borrow_mut().take() {
+                line.push(' ');
+                line.push_str(&ctr!("SupportDialog", "By height: {}.", picks));
+            }
             // Painted detail is avoided where it can be (#186); the tips it
             // could not be are told, with the finest tip.
             let on_detail: usize = outcome
@@ -10885,6 +11486,44 @@ mod hand_edit_tests {
         (ctrl, run, leaves)
     }
 
+    /// [`supported`] with boxes: each of size `size` (mm), its middle at
+    /// `at`.
+    fn supported_boxes(
+        window: &MainWindow,
+        boxes: &[([f64; 3], [f64; 3])],
+    ) -> (Rc<SceneDocument>, Rc<SupportRun>, Vec<NodeId>) {
+        let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+        let ctrl = Rc::new(ViewportController::new_for_test());
+        let document = ctrl.document();
+        let mut graph = Scene::new();
+        let mut leaves = Vec::new();
+        for &(size, at) in boxes {
+            let mut mesh = sc_mesh_fixtures::unit_cube_mesh();
+            for v in &mut mesh.vertices {
+                let p = v.as_array();
+                *v = sc_mesh_core::Vertex::new(std::array::from_fn(|i| p[i] * size[i] as f32));
+            }
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation(at)),
+                    LeafPayload::Mesh(Arc::new(mesh)),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            leaves.push(leaf);
+        }
+        document.install_graph(graph.clone(), PathBuf::from("boxes.stl"));
+        let run =
+            SupportRun::install(window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+        let outcome = start_supports(&graph, SupportRequest::default())
+            .unwrap()
+            .join();
+        *run.started_on.borrow_mut() = Some(document.scene_revision());
+        run.finish(outcome);
+        (document, run, leaves)
+    }
+
     fn translation(t: [f64; 3]) -> Transform3D {
         Transform3D::Affine(AffineTransform3D::from_translation(t))
     }
@@ -10977,6 +11616,91 @@ mod hand_edit_tests {
     /// still editable; Undo and Redo take both together. A move in Z leaves
     /// them where they stood while live, and takes them away on commit
     /// (#153 regenerates them).
+    /// A model moved under another one's supports (#725): once the scene
+    /// stands still the supports it came too near are placed again round
+    /// it, in the step of the move, and every set knows the models near it
+    /// for hand edits. One Undo puts the move and the supports back.
+    #[test]
+    fn supports_a_move_brought_too_near_a_model_are_placed_again_round_it() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            // A slab held up at 25 mm, a block standing on the plate aside.
+            let (block, apart) = ([10.0, 10.0, 12.0], [115.0, 5.0, 6.0]);
+            let (document, run, leaves) = supported_boxes(
+                &window,
+                &[([30.0, 10.0, 2.0], [15.0, 5.0, 26.0]), (block, apart)],
+            );
+            let (high, low) = (leaves[0], leaves[1]);
+            let set_of = |model: NodeId| {
+                run.sets_in_force()
+                    .into_iter()
+                    .find(|d| d.model == model)
+                    .expect("each model's set")
+            };
+            let mesh_of = |leaf: NodeId| {
+                document
+                    .with_scene(|spatial| spatial.graph().leaf_mesh_arc(leaf).cloned())
+                    .flatten()
+                    .expect("a mesh")
+            };
+            let before = set_of(high);
+            let shown = mesh_of(before.leaf);
+            // Apart, nothing to do: each set only learns of the other model
+            // if it stands near enough to matter.
+            run.keep_plate_clear_now();
+            assert!(Arc::ptr_eq(&mesh_of(before.leaf), &shown), "apart, the supports stay");
+
+            let steps = document.undo_len();
+            // The block under the slab: the trunks there come down through it.
+            let there = [15.0, 5.0, 6.0];
+            move_live(&document, low, apart, there);
+            commit_move(&document, low, apart, there);
+            assert_eq!(document.undo_len(), steps + 1);
+            run.keep_plate_clear_now();
+            let after = set_of(high);
+            assert!(
+                !Arc::ptr_eq(&mesh_of(after.leaf), &shown),
+                "the supports that went through the moved cube are drawn again"
+            );
+            assert_eq!(document.undo_len(), steps + 1, "in the move's step");
+            // Its supports keep clear of the low cube's faces.
+            let clearance = |session: &SupportSession| {
+                let mut least = f64::INFINITY;
+                for piece in session.pieces() {
+                    for pair in piece.line.windows(2) {
+                        let (a, b) = (pair[0].at, pair[1].at);
+                        let radius = pair[0].diameter_mm.max(pair[1].diameter_mm) / 2.0;
+                        for k in 0..=200 {
+                            let t = f64::from(k) / 200.0;
+                            let p: [f64; 3] = std::array::from_fn(|i| a[i] + (b[i] - a[i]) * t);
+                            let out: f64 = (0..3)
+                                .map(|i| {
+                                    let d = (p[i] - there[i]).abs() - block[i] / 2.0;
+                                    d.max(0.0).powi(2)
+                                })
+                                .sum::<f64>()
+                                .sqrt();
+                            least = least.min(out - radius);
+                        }
+                    }
+                }
+                least
+            };
+            assert!(clearance(&before.session) < 0.2, "the trunk came too near before");
+            assert!(
+                clearance(&after.session) > 0.1,
+                "the trunk keeps clear now: {}",
+                clearance(&after.session)
+            );
+            // Each set now knows the model near it.
+            assert!(after.session.neighbour_count() > 0, "the slab's set knows the block");
+
+            document.undo().expect("undo");
+            assert!(Arc::ptr_eq(&mesh_of(before.leaf), &shown), "one Undo puts them back");
+            assert_eq!(leaf_transform(&document, low), translation(apart));
+        });
+    }
+
     #[test]
     fn supports_move_with_their_model_in_x_and_y() {
         use crate::support_persist::support_documents;
@@ -11980,6 +12704,7 @@ mod hand_edit_tests {
                 min: [0.0, 0.0],
                 max: [60.0, 40.0],
                 floor: 0.0,
+                keep_out: bread_arrange::KeepOut::default(),
             };
             let outcome =
                 arrange_now(&document, &plate, ArrangeOptions::default(), false).expect("arranged");
@@ -12050,6 +12775,7 @@ mod hand_edit_tests {
                 min: [0.0, 0.0],
                 max: [60.0, 40.0],
                 floor: 0.0,
+                keep_out: bread_arrange::KeepOut::default(),
             };
             let options = ArrangeOptions {
                 max_copies: 3,
@@ -12193,6 +12919,7 @@ mod hand_edit_tests {
                 min: [0.0, 0.0],
                 max: [223.642, 126.976],
                 floor: 0.0,
+                keep_out: bread_arrange::KeepOut::default(),
             };
             let t = Instant::now();
             let (filled, sets) =
@@ -12245,8 +12972,10 @@ mod hand_edit_tests {
             let model = leaves[0];
             let (set_leaf, set_mesh) = set_of(&document, &run, model);
             let start = leaf_transform(&document, model);
-            // The plate around it: room for two rows and four columns of it
-            // with its raft, so in its middle it splits the plate.
+            // The plate around it: room for one row of four of it with its
+            // raft, a little over, and no more. In the row's middle it
+            // splits it, a copy fitting on either side; moved, it lets
+            // three in, however well the copies pack.
             let size = set_mesh
                 .vertices()
                 .iter()
@@ -12259,9 +12988,10 @@ mod hand_edit_tests {
                 })
                 .map(|half| half * 2.0 + 1.6);
             let plate = bread_arrange::Plate {
-                min: [20.0 - 2.0 * size[0] - 5.0, 20.0 - size[1] - 5.0],
-                max: [20.0 + 2.0 * size[0] + 5.0, 20.0 + size[1] + 5.0],
+                min: [20.0 - 2.0 * size[0] - 5.0, 20.0 - size[1] / 2.0 - 5.0],
+                max: [20.0 + 2.0 * size[0] + 5.0, 20.0 + size[1] / 2.0 + 5.0],
                 floor: 0.0,
+                keep_out: bread_arrange::KeepOut::default(),
             };
             document.set_selection(Selection::One(LeafId(model)));
             let options = ArrangeOptions {
@@ -12270,7 +13000,7 @@ mod hand_edit_tests {
             };
             let filled = fill_now(&document, &plate, options).expect("filled").0;
             assert_eq!(filled.moved.len(), 1, "it moves; {size:?}");
-            assert!(filled.copies.len() >= 7, "{}", filled.copies.len());
+            assert_eq!(filled.copies.len(), 3);
             assert_ne!(leaf_transform(&document, model), start);
             let (leaf, mesh) = set_of(&document, &run, model);
             assert_eq!(leaf, set_leaf, "the same set");
@@ -13869,6 +14599,92 @@ mod hand_edit_tests {
         });
     }
 
+    /// #728: H hides the picked supports from the view while the scene
+    /// keeps them; Alt+H shows them again, and so does another tab.
+    #[test]
+    fn hidden_supports_leave_the_view_but_not_the_scene() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test_with_ui(&window));
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Affine(AffineTransform3D::from_translation([20.0, 20.0, 8.0])),
+                    LeafPayload::Mesh(Arc::new(sc_mesh_fixtures::unit_cube_mesh())),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            document.install_graph(graph.clone(), PathBuf::from("cube.stl"));
+            ctrl.set_section(WorkspaceSection::Supports);
+            let run =
+                SupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            let outcome = start_supports(&graph, SupportRequest::default())
+                .unwrap()
+                .join();
+            *run.started_on.borrow_mut() = Some(document.scene_revision());
+            run.finish(outcome);
+            let session = run.sets_in_force()[0].session.clone();
+            let tip = session
+                .tips()
+                .into_iter()
+                .find(|(id, _)| !session.carries_others(id))
+                .expect("a support at an end")
+                .1
+                .map(|c| c as f32);
+            window.set_support_page(1);
+            window.set_support_tool(5);
+            run.on_tool_changed();
+            run.on_tool_click_with(tip, false);
+            assert_eq!(window.get_support_picked_count(), 1);
+
+            let before = document.scene_revision();
+            window.invoke_support_picked_hide();
+            assert_eq!(document.scene_revision(), before, "the view only");
+            assert_eq!(window.get_support_picked_count(), 0, "let go");
+            assert_eq!(window.get_support_hidden_count(), 1);
+            let hidden = ctrl.hidden_supports();
+            let set = &hidden.sets[0];
+            let without = set.drawn.clone().expect("the other supports");
+            assert!(without.faces().len() < set.from.faces().len());
+            let shown = document
+                .with_scene(|spatial| ctrl.scene_for_view(spatial.graph()))
+                .flatten()
+                .expect("the view draws its own scene");
+            assert!(Arc::ptr_eq(
+                shown.leaf_mesh_arc(set.leaf).expect("the set's leaf"),
+                &without
+            ));
+            assert_eq!(
+                run.sets_in_force()[0].session.tips().len(),
+                session.tips().len()
+            );
+
+            // Where it was, a click picks nothing.
+            run.on_tool_click_with(tip, false);
+            assert_eq!(window.get_support_picked_count(), 0);
+
+            window.invoke_support_hidden_show();
+            assert_eq!(window.get_support_hidden_count(), 0);
+            assert!(
+                document
+                    .with_scene(|spatial| ctrl.scene_for_view(spatial.graph()))
+                    .flatten()
+                    .is_none()
+            );
+
+            // Hidden again, another tab shows it.
+            run.on_tool_click_with(tip, false);
+            window.invoke_support_picked_hide();
+            assert_eq!(window.get_support_hidden_count(), 1);
+            ctrl.set_section(WorkspaceSection::Transform);
+            assert_eq!(window.get_support_hidden_count(), 0);
+            assert!(ctrl.hidden_supports().tips.is_empty());
+        });
+    }
+
     #[test]
     fn a_picked_support_is_drawn_again_with_the_number_typed() {
         on_fresh_slint_thread(|| {
@@ -15399,6 +16215,66 @@ mod hand_edit_tests {
 
     /// The line tool (#178): dots evenly along each stretch of the path,
     /// a new stretch where the path left the model.
+    /// #734: a circle's loop is spread evenly round it, with no support
+    /// twice where it closes.
+    #[test]
+    fn a_circle_spreads_evenly_round_its_loop() {
+        let path: Vec<[f32; 3]> = (0..400)
+            .map(|i| {
+                let a = std::f32::consts::TAU * i as f32 / 400.0;
+                [10.0 * a.cos(), 10.0 * a.sin(), 5.0]
+            })
+            .collect();
+        let points = circle_points(&path, 2.0);
+        // About 62.8 mm round: 31 supports, none twice.
+        assert_eq!(points.len(), 31, "{points:?}");
+        for w in points.windows(2) {
+            let gap = (0..2).map(|k| (w[1][k] - w[0][k]).powi(2)).sum::<f32>().sqrt();
+            assert!((gap - 2.03).abs() < 0.05, "{gap}");
+        }
+        assert!(circle_points(&[], 2.0).is_empty());
+    }
+
+    /// #735: a picked support mirrored across the middle of its model gets
+    /// a support where its mirror image is, in one edit.
+    #[test]
+    fn a_picked_support_is_mirrored_across_its_model() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let (_document, run) = supported_slab(&window);
+            let generated = in_force_session(&run).expect("editable");
+            let tips: Vec<(String, [f64; 3])> = generated.tips();
+            // The slab spans X 10..30: its middle is 20.
+            let mirrored = |p: [f64; 3]| [40.0 - p[0], p[1], p[2]];
+            let free = |p: [f64; 3]| {
+                tips.iter().all(|(_, t)| {
+                    (0..3).map(|k| (t[k] - p[k]).powi(2)).sum::<f64>() >= MIRROR_TAKEN_MM.powi(2)
+                })
+            };
+            let (id, tip) = tips
+                .iter()
+                .find(|(_, p)| free(mirrored(*p)))
+                .cloned()
+                .expect("a tip whose mirror image has no support");
+            window.set_support_page(1);
+            window.set_support_tool(5);
+            run.on_tool_changed();
+            run.on_tool_click_with(tip.map(|c| c as f32), false);
+            assert_eq!(run.chosen_now()[0].1, vec![id]);
+            run.mirror_chosen(0);
+            settle_click(&run);
+            let after = in_force_session(&run).expect("still editable");
+            let target = mirrored(tip);
+            assert!(
+                after.tips().iter().any(|(_, t)| {
+                    (0..3).map(|k| (t[k] - target[k]).powi(2)).sum::<f64>() < 0.5f64.powi(2)
+                }),
+                "a support at {target:?}"
+            );
+            assert_eq!(after.tips().len(), tips.len() + 1);
+        });
+    }
+
     #[test]
     fn a_row_spreads_evenly_and_starts_again_past_a_gap() {
         let path: Vec<[f32; 3]> = (0..=40).map(|i| [i as f32 * 0.25, 0.0, 5.0]).collect();
@@ -15610,7 +16486,7 @@ mod hand_edit_tests {
             run.on_tool_changed();
             assert!(run.area_brush.armed());
 
-            run.fill_painted();
+            run.fill_painted(false);
             assert!(
                 run.support_leaf().is_none(),
                 "nothing painted, nothing placed"
@@ -15640,7 +16516,7 @@ mod hand_edit_tests {
             document.apply_edit(edit.clone()).unwrap();
             document.push_edit(edit);
 
-            run.fill_painted();
+            run.fill_painted(false);
             settle_click(&run);
             let session = in_force_session(&run).expect("the grid started a set");
             let tips: Vec<[f64; 3]> = session.tips().into_iter().map(|t| t.1).collect();
@@ -16690,6 +17566,52 @@ mod hand_edit_tests {
         assert!(rows.iter().any(|row| row.0 == "dragon"));
         assert_eq!((*sets, *hollows), (1, 1));
         assert_eq!(reopened, saved, "everything comes back as it was saved");
+    }
+
+    /// #723: with the box on, each model takes the zone preset of its
+    /// height; picking a preset by hand turns the box off.
+    #[test]
+    fn each_model_takes_the_preset_of_its_height() {
+        on_fresh_slint_thread(|| {
+            let window = MainWindow::new().expect("the headless platform creates a main window");
+            let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+            let ctrl = Rc::new(ViewportController::new_for_test());
+            let document = ctrl.document();
+            let mut graph = Scene::new();
+            let mut leaves = Vec::new();
+            for (x, height) in [(0.0, 30.0), (40.0, 100.0), (80.0, 200.0)] {
+                let leaf = graph
+                    .add_leaf(
+                        None,
+                        translation([x, 0.0, 0.0]),
+                        LeafPayload::Mesh(Arc::new(box_mesh([0.0; 3], [20.0, 20.0, height]))),
+                    )
+                    .unwrap();
+                graph.add_root(leaf).unwrap();
+                leaves.push(leaf);
+            }
+            document.install_graph(graph, PathBuf::from("boxes.stl"));
+            let run =
+                SupportRun::install(&window, bus, document.clone(), ctrl.dialogs(), ctrl.clone());
+            assert!(run.request_for_selection().model_options.is_empty(), "off");
+            run.set_by_height(true);
+            assert!(window.get_support_by_height());
+            let request = run.request_for_selection();
+            let presets = run.presets.borrow().clone();
+            for (k, leaf) in leaves.iter().enumerate() {
+                let (_, options) = request
+                    .model_options
+                    .iter()
+                    .find(|(id, _)| id == leaf)
+                    .expect("each model its options");
+                assert_eq!(options.zones, presets[k].options.zones, "model {k}");
+            }
+            let line = run.height_picks.borrow().clone().expect("the line");
+            assert!(line.contains(&presets[2].name), "{line}");
+            run.on_preset_picked(1);
+            assert!(!window.get_support_by_height(), "picked by hand");
+            assert!(run.request_for_selection().model_options.is_empty());
+        });
     }
 
     // The card of supports out of date (#408), with the helpers above.

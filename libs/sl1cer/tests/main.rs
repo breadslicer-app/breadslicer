@@ -45,3 +45,4 @@ fn every_test_file_is_a_module() {
         "{missing:?} would not run: declare each one with `mod <name>;` in tests/main.rs"
     );
 }
+mod thin_tips;

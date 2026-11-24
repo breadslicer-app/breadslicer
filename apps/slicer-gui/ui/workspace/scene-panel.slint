@@ -212,6 +212,10 @@ component ObjectRow inherits Rectangle {
     in property <bool> last;
     callback hide-toggled();
     callback lock-toggled();
+    // A right click on a model's row offers its file in its folder (#732).
+    callback show-in-folder();
+    // The model's file read again (#721).
+    callback reload();
     callback clicked();
     // Ctrl+click (#13): one row in or out.
     callback toggled();
@@ -289,6 +293,9 @@ component ObjectRow inherits Rectangle {
                 root.extend = event.modifiers.control || event.modifiers.meta;
                 root.range = event.modifiers.shift && !root.extend;
             }
+            if (root.model && event.kind == PointerEventKind.up && event.button == PointerEventButton.right) {
+                row-menu.show({ x: self.mouse-x, y: self.mouse-y });
+            }
         }
         clicked => {
             if (root.range) {
@@ -297,6 +304,24 @@ component ObjectRow inherits Rectangle {
                 root.toggled();
             } else {
                 root.clicked();
+            }
+        }
+    }
+
+    row-menu := ContextMenuArea {
+        enabled: false;
+        Menu {
+            MenuItem {
+                title: @tr("Inspector" => "Show in folder");
+                activated => {
+                    root.show-in-folder();
+                }
+            }
+            MenuItem {
+                title: @tr("Inspector" => "Reload from disk");
+                activated => {
+                    root.reload();
+                }
             }
         }
     }
@@ -351,6 +376,9 @@ export component ScenePanel inherits Rectangle {
     // The eye and the padlock of an object's row (#16), by its index.
     callback object-hide-toggled(int);
     callback object-lock-toggled(int);
+    // A model's file in its folder (#732), by its index.
+    callback object-show-in-folder(int);
+    callback object-reload(int);
     callback plate-picked(int);
     callback plate-send(int);
     callback plate-remove();
@@ -434,6 +462,12 @@ export component ScenePanel inherits Rectangle {
                         }
                         lock-toggled => {
                             root.object-lock-toggled(row.index);
+                        }
+                        show-in-folder => {
+                            root.object-show-in-folder(row.index);
+                        }
+                        reload => {
+                            root.object-reload(row.index);
                         }
                         selected: row.index == root.selected-index || root.selected-rows[row.index];
                         clicked => {

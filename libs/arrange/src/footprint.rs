@@ -602,6 +602,32 @@ impl Base {
         })
     }
 
+    /// What tells two bases apart, to find the same one quickly: see
+    /// [`Self::same_as`].
+    pub(crate) fn key(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.origin.map(|o| (o * 1e6).round() as i64).hash(&mut h);
+        for b in &self.bands {
+            b.band.hash(&mut h);
+            b.rects.hash(&mut h);
+        }
+        h.finish()
+    }
+
+    /// Whether `other` covers the very same cells, band for band, about the
+    /// same point: two copies of a body seen in their own frames.
+    pub(crate) fn same_as(&self, other: &Base) -> bool {
+        let at = |b: &Base| b.origin.map(|o| (o * 1e6).round() as i64);
+        at(self) == at(other)
+            && self.bands.len() == other.bands.len()
+            && self
+                .bands
+                .iter()
+                .zip(&other.bands)
+                .all(|(a, b)| a.band == b.band && a.rects == b.rects)
+    }
+
     /// The middle of what the base covers, from its reference (mm).
     pub(crate) fn middle(&self, fine: f64) -> Option<[f64; 2]> {
         let (mut lo, mut hi) = ([u32::MAX; 2], [0u32; 2]);

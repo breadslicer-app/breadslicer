@@ -9,7 +9,7 @@
 //! from its own roots, welded by exact position into one [`IndexedMesh`],
 //! and the session that edits them.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -20,7 +20,10 @@ use bread_support_geom::perf::{PerfEntry, PerfFrame};
 use bread_support_mesh::features::slicing::smooth_shafts::{ShaftStyle, SmoothShaftParams};
 use bread_support_mesh::rafts::crenelated::geometry::model_plate_footprint::ModelTransform;
 use bread_support_model::support_kinds::get_support_type_descriptor;
-use bread_support_model::types::SupportState;
+use bread_support_model::types::{SupportCollections, SupportState};
+use bread_support_pipeline::plate::{
+    NEIGHBOUR_CLEARANCE_MM, NEIGHBOUR_REACH_MM, PlateModel, as_hosts, crowding, without,
+};
 use bread_support_pipeline::{
     ModelInput, PipelineError, PipelineSettings, Stage, plan_supports_with, prescan_models,
 };
@@ -34,6 +37,7 @@ mod compare;
 mod document;
 mod hand_log;
 mod options;
+mod pixels;
 mod session;
 mod shift;
 /// The zone presets that ship, and how one is applied.
@@ -57,6 +61,7 @@ pub use document::{
 };
 pub use hand_log::{HandEditKind, KeptEdits, LostEdit, LostWhy};
 pub use options::{DEFAULT_SUPPORT_LIFT_MM, RaftMode, SupportOptions, recommended_lift_mm};
+pub use pixels::{MIN_TIP_PIXELS, narrowest_tip_mm};
 pub use session::{
     AddNote, AddOptions, BraceEnd, COVERED_AGREEMENT, COVERED_SURFACE_MM, EditError, EditPreview,
     HandShape, ImportedPlan, PartSizes, REVIEW_NUDGE_MM, SupportContact, SupportJoint,
@@ -164,12 +169,25 @@ pub struct SupportRequest {
     /// Models that stand on a raft of their own (#198): by leaf, the options
     /// whose raft their new set is drawn on, in place of `options`' raft.
     pub own_rafts: Vec<(NodeId, SupportOptions)>,
+    /// Models made with options of their own (#723): by leaf, the options
+    /// their set is made with in place of `options` (a preset picked by
+    /// the model's height). A group is made with its first member's.
+    pub model_options: Vec<(NodeId, SupportOptions)>,
     /// Where no tip may land (#465): the channels of the hollows' drains,
     /// in world space.
     pub keep_out: Vec<KeepOut>,
     /// Groups of models made as one structure (#475), by leaf: run together
     /// as they stand, their supports braced to each other's.
     pub together: Vec<Vec<NodeId>>,
+    /// The supports of a group hang from any member's trunks, not only
+    /// their own model's (#725): a plate made as one structure. Supports
+    /// placed again clear of a neighbour may hang from its trunks too.
+    pub share_hosts: bool,
+    /// Every set keeps clear of the models standing near its own (#725):
+    /// the supports made for a model alone that come within their radius
+    /// and [`NEIGHBOUR_CLEARANCE_MM`] of another model are placed again,
+    /// routed round it. On by default.
+    pub clear_of_neighbours: bool,
     /// The faces painted as detail (#186), by leaf, in the order of its
     /// mesh's faces: tips keep off them where they can. A run reads them off
     /// its scene; set by hand, they stand in for it.
@@ -187,8 +205,11 @@ impl Default for SupportRequest {
             models: None,
             keep_edits: Vec::new(),
             own_rafts: Vec::new(),
+            model_options: Vec::new(),
             keep_out: Vec::new(),
             together: Vec::new(),
+            share_hosts: false,
+            clear_of_neighbours: true,
             detail: Vec::new(),
         }
     }
@@ -256,10 +277,45 @@ pub struct SupportOutcome {
     pub rafts_uncleared: Vec<NodeId>,
     /// Supports the plan took off once sized (they crossed the model or
     /// another shaft) and could not place again (#236): their contacts are
-    /// left for Fix all.
+    /// left for Fix all. Contacts no support clear of the neighbours could
+    /// hold (#725) count here too.
     pub unplaced: usize,
+    /// How the sets were kept clear of their neighbours (#725).
+    pub plate: PlateReport,
     /// Where the run spent its time.
     pub timings: PerfFrame,
+}
+
+/// How a run kept each set clear of the models standing near it (#725).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PlateReport {
+    /// Sets that had supports too near a neighbour.
+    pub sets: usize,
+    /// Supports found too near a neighbour.
+    pub crowded: usize,
+    /// Of them, how many of each kind (`trunk`, `brace`, ...).
+    pub crowded_kinds: Vec<(String, usize)>,
+    /// Supports taken off with them (what hung from them included).
+    pub taken: usize,
+    /// Contacts placed again clear of the neighbours.
+    pub placed: usize,
+    /// Of them, hanging from a neighbour's trunk.
+    pub on_neighbours: usize,
+    /// Contacts left without a support.
+    pub lost: usize,
+    /// Where the time went: the models' boxes and trees, finding what
+    /// crowds, placing again, drawing the sets made again (ms).
+    pub prepare_ms: f64,
+    pub crowding_ms: f64,
+    pub settle_ms: f64,
+    pub draw_ms: f64,
+    /// Summed over the sets made again (CPU ms): building their fields,
+    /// placing, bracing again.
+    pub field_ms: f64,
+    pub place_ms: f64,
+    pub brace_ms: f64,
+    /// The engine's own timings of the sets made again, summed (ms).
+    pub timings: Vec<(String, f64)>,
 }
 
 impl SupportOutcome {
@@ -734,12 +790,21 @@ fn copies_of(models: &[(NodeId, ModelInput)], request: &SupportRequest) -> Vec<O
         if keeps(leaf) {
             continue;
         }
+        // Copies are made with the same options (#723).
+        let options_of = |leaf: &NodeId| {
+            request
+                .model_options
+                .iter()
+                .find(|(m, _)| m == leaf)
+                .map(|(_, o)| o)
+        };
         of[i] = (0..i).find(|&k| {
             let (other_leaf, other) = &models[k];
             of[k].is_none()
                 && !keeps(other_leaf)
                 && Arc::ptr_eq(&model.geometry, &other.geometry)
                 && (model.transform.position.z - other.transform.position.z).abs() < 1e-6
+                && options_of(leaf) == options_of(other_leaf)
         });
     }
     of
@@ -786,6 +851,7 @@ fn merged(runs: Vec<SupportOutcome>) -> SupportOutcome {
             crowded: Vec::new(),
             rafts_uncleared: Vec::new(),
             unplaced: 0,
+            plate: PlateReport::default(),
             timings: PerfFrame::default(),
         };
     };
@@ -915,13 +981,23 @@ fn run_with_copies(
             };
             let together = (unit.members.len() > 1)
                 .then(|| leaves.iter().map(|(_, m)| m.id.clone()).collect::<Vec<_>>());
+            let base = if unit.alone.is_some() {
+                &alone_request
+            } else {
+                request
+            };
+            // A model with options of its own is made with them (#723).
+            let own = request
+                .model_options
+                .iter()
+                .find(|(leaf, _)| *leaf == models[unit.members[0]].0)
+                .map(|(_, options)| SupportRequest {
+                    options: options.clone(),
+                    ..base.clone()
+                });
             run_supports(
                 &leaves,
-                if unit.alone.is_some() {
-                    &alone_request
-                } else {
-                    request
-                },
+                own.as_ref().unwrap_or(base),
                 worker,
                 prefix,
                 &unit.copies,
@@ -979,12 +1055,6 @@ fn run_with_copies(
             sets.push(set);
         }
     }
-    outcome.models = models.len();
-    outcome.triangles = sets
-        .iter()
-        .filter_map(|s| s.mesh.as_ref())
-        .map(|m| m.faces().len())
-        .sum();
     let everyone = scene_model_leaves(scene, None).unwrap_or_default();
     // The members of a group stand side by side on purpose: crowding one
     // another is no news (#475).
@@ -994,9 +1064,269 @@ fn run_with_copies(
             .iter()
             .any(|g| g.contains(&a) && g.contains(&b))
     };
+    // Each set clear of the models standing near it (#725).
+    if request.clear_of_neighbours && everyone.len() > 1 {
+        let started = Instant::now();
+        outcome.plate = settle_plate(&mut sets, &everyone, request, &together, worker)?;
+        outcome.unplaced += outcome.plate.lost;
+        let took = started.elapsed();
+        outcome.timings.total += took;
+        outcome.timings.entries.push(PerfEntry {
+            label: "stage:plate".to_owned(),
+            total: took,
+            count: 1,
+        });
+    }
+    outcome.models = models.len();
+    outcome.triangles = sets
+        .iter()
+        .filter_map(|s| s.mesh.as_ref())
+        .map(|m| m.faces().len())
+        .sum();
     outcome.crowded = crowded_sets(&sets, &everyone, &together);
     outcome.sets = sets;
     Ok(outcome)
+}
+
+/// Keeps every set of `sets` clear of the models of `everyone` standing
+/// near its own (#725), its group's aside: the supports that come within
+/// their radius and [`NEIGHBOUR_CLEARANCE_MM`] of one are taken off, with
+/// what hangs from them, and their contacts placed again routed round the
+/// neighbours, hanging from the neighbours' trunks too when the request
+/// shares them. A set made again is drawn again, and a copy that showed its
+/// drawing shows its own. Sets with nothing too near are left as they are.
+fn settle_plate(
+    sets: &mut [ModelSupportSet],
+    everyone: &[(NodeId, ModelInput)],
+    request: &SupportRequest,
+    together: &(dyn Fn(NodeId, NodeId) -> bool + Sync),
+    worker: &JobWorker<SupportOutcome>,
+) -> Result<PlateReport, JobError> {
+    let prepared = Instant::now();
+    // Every model's box on the plate, from its geometry's box (one pass per
+    // geometry, copies share it) placed where it stands.
+    let mut local: HashMap<*const BufferGeometry, bread_support_geom::geom::Box3> = HashMap::new();
+    let boxes: Vec<bread_support_geom::geom::Box3> = everyone
+        .iter()
+        .map(|(_, m)| {
+            let b = *local.entry(Arc::as_ptr(&m.geometry)).or_insert_with(|| {
+                let mut b = bread_support_geom::geom::Box3::EMPTY;
+                for p in m
+                    .geometry
+                    .position
+                    .as_deref()
+                    .unwrap_or(&[])
+                    .as_chunks::<3>()
+                    .0
+                {
+                    b.expand_by_point(Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2])));
+                }
+                // As the pipeline re-centres it.
+                let c = b.min.add(b.max).multiply_scalar(0.5);
+                bread_support_geom::geom::Box3 {
+                    min: b.min.sub(c),
+                    max: b.max.sub(c),
+                }
+            });
+            b.apply_matrix4(&bread_support_pipeline::model_matrix(&m.transform))
+        })
+        .collect();
+    let close = |a: &bread_support_geom::geom::Box3, b: &bread_support_geom::geom::Box3| {
+        !(a.max.x + NEIGHBOUR_REACH_MM < b.min.x
+            || b.max.x + NEIGHBOUR_REACH_MM < a.min.x
+            || a.max.y + NEIGHBOUR_REACH_MM < b.min.y
+            || b.max.y + NEIGHBOUR_REACH_MM < a.min.y)
+    };
+    let at: Vec<Option<usize>> = sets
+        .iter()
+        .map(|set| everyone.iter().position(|(leaf, _)| *leaf == set.model))
+        .collect();
+    // Each set's neighbours on the plate, by index into `everyone`.
+    let near: Vec<Vec<usize>> = sets
+        .iter()
+        .zip(&at)
+        .map(|(set, at)| match at {
+            Some(k) => (0..everyone.len())
+                .filter(|&j| {
+                    j != *k && !together(everyone[j].0, set.model) && close(&boxes[j], &boxes[*k])
+                })
+                .collect(),
+            None => Vec::new(),
+        })
+        .collect();
+    // The models some set stands near, and those sets' own: their BVHs,
+    // shared by copies.
+    let mut needed = vec![false; everyone.len()];
+    for (near, at) in near.iter().zip(&at) {
+        if let (Some(k), false) = (at, near.is_empty()) {
+            needed[*k] = true;
+            for &j in near {
+                needed[j] = true;
+            }
+        }
+    }
+    let plate: Vec<Option<PlateModel>> = everyone
+        .par_iter()
+        .zip(&needed)
+        .map(|((leaf, m), needed)| {
+            needed.then(|| {
+                PlateModel::new(
+                    format!("node-{}", leaf.get()),
+                    session::shared_bvh(m),
+                    bread_support_pipeline::model_matrix(&m.transform),
+                )
+            })
+        })
+        .collect();
+    let plate_of = |j: usize| plate[j].as_ref().expect("a neighbour's model");
+    let model_id = |set: &ModelSupportSet| set.session.first_model().map(|m| m.id.clone());
+    // What of each set comes too near a neighbour.
+    let started = Instant::now();
+    let found: Vec<Vec<bread_support_pipeline::plate::Crowded>> = sets
+        .par_iter()
+        .zip(&near)
+        .map(|(set, near)| {
+            let Some(id) = model_id(set) else {
+                return Vec::new();
+            };
+            let others: Vec<&PlateModel> = near.iter().map(|&j| plate_of(j)).collect();
+            crowding(
+                &set.session.state().collections,
+                &|_, model| model == id,
+                &others,
+                NEIGHBOUR_CLEARANCE_MM,
+            )
+        })
+        .collect();
+    let crowded: Vec<HashSet<String>> = found
+        .iter()
+        .map(|f| f.iter().map(|c| c.id.clone()).collect())
+        .collect();
+    let mut kinds: Vec<(String, usize)> = Vec::new();
+    for c in found.iter().flatten() {
+        let name = get_support_type_descriptor(c.kind).singular.to_owned();
+        match kinds.iter_mut().find(|(k, _)| *k == name) {
+            Some(entry) => entry.1 += 1,
+            None => kinds.push((name, 1)),
+        }
+    }
+    kinds.sort();
+    let mut report = PlateReport {
+        sets: crowded.iter().filter(|c| !c.is_empty()).count(),
+        crowded: crowded.iter().map(HashSet::len).sum(),
+        crowded_kinds: kinds,
+        crowding_ms: started.elapsed().as_secs_f64() * 1000.0,
+        prepare_ms: (started - prepared).as_secs_f64() * 1000.0,
+        ..PlateReport::default()
+    };
+    if report.sets == 0 {
+        return Ok(report);
+    }
+    if worker.is_cancelled() {
+        return Err(JobError::Cancelled);
+    }
+    // What each set offers its neighbours to hang from: its supports but
+    // the crowded ones, under ids of its own.
+    let set_of: HashMap<usize, usize> = at
+        .iter()
+        .enumerate()
+        .filter_map(|(s, at)| at.map(|k| (k, s)))
+        .collect();
+    let offered: Vec<Option<SupportCollections>> = if request.share_hosts {
+        sets.par_iter()
+            .zip(&crowded)
+            .enumerate()
+            .map(|(s, (set, crowded))| {
+                let own = without(&set.session.state().collections, crowded);
+                Some(as_hosts(&own, &format!("@{s}")))
+            })
+            .collect()
+    } else {
+        vec![None; sets.len()]
+    };
+    let started = Instant::now();
+    let settled: Vec<Option<(SupportSession, bread_support_pipeline::plate::Settled)>> = sets
+        .par_iter()
+        .enumerate()
+        .map(|(s, set)| {
+            if crowded[s].is_empty() || worker.is_cancelled() {
+                return None;
+            }
+            let others: Vec<&PlateModel> = near[s].iter().map(|&j| plate_of(j)).collect();
+            let hosts = request.share_hosts.then(|| {
+                let mut hosts = SupportCollections::default();
+                for j in &near[s] {
+                    if let Some(offer) = set_of.get(j).and_then(|&n| offered[n].as_ref()) {
+                        hosts.roots.extend(offer.roots.clone());
+                        hosts.trunks.extend(offer.trunks.clone());
+                        hosts.branches.extend(offer.branches.clone());
+                        hosts.leaves.extend(offer.leaves.clone());
+                        hosts.knots.extend(offer.knots.clone());
+                    }
+                }
+                hosts
+            });
+            Some(
+                set.session
+                    .settled_among(&others, hosts.as_ref(), &crowded[s]),
+            )
+        })
+        .collect();
+    if worker.is_cancelled() {
+        return Err(JobError::Cancelled);
+    }
+    report.settle_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let started = Instant::now();
+    // The sets made again, drawn side by side.
+    let drawn: Vec<Option<Result<Option<IndexedMesh>, JobError>>> = settled
+        .par_iter()
+        .map(|done| {
+            let (session, _) = done.as_ref()?;
+            Some(if session.is_empty() {
+                Ok(None)
+            } else {
+                session
+                    .drawn()
+                    .map(|(mesh, _)| mesh)
+                    .map_err(|e| JobError::Failed(e.to_string()))
+            })
+        })
+        .collect();
+    let mut changed = vec![false; sets.len()];
+    for (s, (done, mesh)) in settled.into_iter().zip(drawn).enumerate() {
+        let (Some((session, settled)), Some(mesh)) = (done, mesh) else {
+            continue;
+        };
+        report.taken += settled.taken;
+        report.placed += settled.placed;
+        report.on_neighbours += settled.on_neighbours;
+        report.lost += settled.lost.len();
+        report.field_ms += settled.field_ms;
+        report.place_ms += settled.place_ms;
+        report.brace_ms += settled.brace_ms;
+        for (label, ms) in &settled.timings {
+            match report.timings.iter_mut().find(|(l, _)| l == label) {
+                Some(entry) => entry.1 += ms,
+                None => report.timings.push((label.clone(), *ms)),
+            }
+        }
+        let set = &mut sets[s];
+        set.mesh = mesh?;
+        set.session = session;
+        set.same_as = None;
+        changed[s] = true;
+    }
+    report.draw_ms = started.elapsed().as_secs_f64() * 1000.0;
+    // A copy that showed a set made again shows its own drawing.
+    for set in sets.iter_mut() {
+        if set
+            .same_as
+            .is_some_and(|same| changed.get(same.set) == Some(&true))
+        {
+            set.same_as = None;
+        }
+    }
+    Ok(report)
 }
 
 /// The hand edits of `old` put back on `set`, carried to where its model
@@ -1142,6 +1472,78 @@ fn mesh_bounds(mesh: &IndexedMesh) -> ([f64; 3], [f64; 3]) {
     (lo, hi)
 }
 
+/// Keeps the support sets `sets` (by the leaf of the model each stands
+/// under) clear of the models of `scene` standing near them (#725), as a
+/// run does once it has made them: for sets moved since (Arrange, Fill
+/// bed) that now crowd a neighbour, without making them again. The outcome
+/// holds only the sets it made again, drawn; its [`SupportOutcome::plate`]
+/// says what it did and [`SupportOutcome::crowded`] which still run into a
+/// model. `request` says whether supports may hang from a neighbour's
+/// trunks ([`SupportRequest::share_hosts`]) and which models stand as a
+/// group ([`SupportRequest::together`]).
+pub fn start_settle(
+    scene: &Scene,
+    sets: Vec<(NodeId, SupportSession)>,
+    request: SupportRequest,
+) -> JobHandle<SupportOutcome> {
+    let scene = scene.clone();
+    JobHandle::spawn(move |worker: &JobWorker<SupportOutcome>| {
+        let started = Instant::now();
+        let everyone =
+            scene_model_leaves(&scene, None).map_err(|e| JobError::Failed(e.to_string()))?;
+        let mut made: Vec<ModelSupportSet> = sets
+            .into_iter()
+            .map(|(model, session)| ModelSupportSet {
+                model,
+                mesh: None,
+                session,
+                kept: None,
+                same_as: None,
+            })
+            .collect();
+        let before: Vec<SupportState> = made.iter().map(|s| s.session.state().clone()).collect();
+        let together = |a: NodeId, b: NodeId| {
+            request
+                .together
+                .iter()
+                .any(|g| g.contains(&a) && g.contains(&b))
+        };
+        let plate = settle_plate(&mut made, &everyone, &request, &together, worker)?;
+        let changed: Vec<ModelSupportSet> = made
+            .into_iter()
+            .zip(&before)
+            .filter(|(set, before)| set.session.state() != *before)
+            .map(|(set, _)| set)
+            .collect();
+        let crowded = crowded_sets(&changed, &everyone, &together);
+        let took = started.elapsed();
+        Ok(SupportOutcome {
+            triangles: changed
+                .iter()
+                .filter_map(|s| s.mesh.as_ref())
+                .map(|m| m.faces().len())
+                .sum(),
+            support: SupportState::default(),
+            models: changed.len(),
+            islands: 0,
+            placed: Vec::new(),
+            crowded,
+            rafts_uncleared: Vec::new(),
+            unplaced: plate.lost,
+            plate,
+            timings: PerfFrame {
+                total: took,
+                entries: vec![PerfEntry {
+                    label: "stage:plate".to_owned(),
+                    total: took,
+                    count: 1,
+                }],
+            },
+            sets: changed,
+        })
+    })
+}
+
 /// A session of `model` with no support on it yet, made as `request` says, for
 /// a set born from its first tip (#444): nothing runs and nothing is scanned.
 /// `None` when `model` is no model of `scene`.
@@ -1216,6 +1618,10 @@ impl SettingsRecipe {
             ..PipelineSettings::defaults(self.layer_height_mm)
         };
         self.options.apply(&mut settings);
+        // No tip thinner than the printer's screen draws (#724).
+        if let Some(pitch) = self.pixel_pitch_mm {
+            pixels::widen_tips(&mut settings, narrowest_tip_mm(pitch));
+        }
         settings
     }
 }
@@ -1320,6 +1726,8 @@ fn run_supports(
     // A group's supports are braced to each other's (#475).
     if let Some(group) = together {
         settings.supports.auto_bracing.brace_together = vec![group];
+        // And hang from each other's trunks, when asked (#725).
+        settings.supports.auto_support.share_hosts = request.share_hosts;
     }
     let models: Vec<ModelInput> = leaves.iter().map(|(_, m)| m.clone()).collect();
     let models = &models[..];
@@ -1472,5 +1880,6 @@ fn run_supports(
         crowded: Vec::new(),
         rafts_uncleared,
         unplaced,
+        plate: PlateReport::default(),
     })
 }

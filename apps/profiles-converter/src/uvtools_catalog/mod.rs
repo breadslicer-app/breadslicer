@@ -63,8 +63,16 @@ const PROFILE_EXTENSION: &str = "ini";
 const UVTOOLS_OWN_PROFILE: &str = "UVtools ";
 
 /// The printers whose profile was checked against files that print on the
-/// machine. A run leaves them as they are, whatever UVtools states.
-const PINNED: [&str; 1] = ["anycubic-photon-mono-m7-pro"];
+/// machine. A run leaves them as they are, whatever UVtools states. The
+/// Elegoos print GOO first, which UVtools does not list for them (#751).
+const PINNED: [&str; 6] = [
+    "anycubic-photon-mono-m7-pro",
+    "elegoo-mars-5-ultra",
+    "elegoo-saturn-4-ultra",
+    "elegoo-saturn-4-ultra-16k",
+    "elegoo-jupiter",
+    "elegoo-jupiter-se",
+];
 
 /// The printers UVtools lists that are not resin printers anyone sells: a
 /// run never adds them. "CT-005 Pro" is Creality's inner name for the CR-5

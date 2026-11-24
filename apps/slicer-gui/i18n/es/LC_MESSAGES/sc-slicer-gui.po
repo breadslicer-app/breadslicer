@@ -3069,6 +3069,10 @@ msgctxt "Workspace"
 msgid "Supports regenerated for the model's new pose."
 msgstr "Soportes regenerados para la pose nueva del modelo."
 
+msgctxt "Workspace"
+msgid "Slicing starts as soon as the supports are ready."
+msgstr "El laminado arranca apenas estén listos los soportes."
+
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
 msgid "ARRANGE"
@@ -6489,6 +6493,10 @@ msgctxt "Review"
 msgid "Left by Fix All: more tips here are placed by hand, in the Supports tab."
 msgstr "Corregir todo lo dejó: las puntas de más se ubican a mano, en la pestaña Soportes."
 
+msgctxt "Review"
+msgid "Left by Fix All: generate the supports again for this printer, or widen these tips."
+msgstr "Corregir todo lo dejó: generá de nuevo los soportes para esta impresora, o ensanchá estas puntas."
+
 #: ui/message-layer.slint
 msgctxt "AddSupportsDialog"
 msgid "Yes"
@@ -6912,6 +6920,14 @@ msgid "The raft of 1 set of supports changed; the supports stayed where they wer
 msgid_plural "The raft of {n} sets of supports changed; the supports stayed where they were."
 msgstr[0] "Cambió la balsa de 1 juego de soportes; los soportes quedaron donde estaban."
 msgstr[1] "Cambió la balsa de {n} juegos de soportes; los soportes quedaron donde estaban."
+
+#: src/support_run.rs
+#, rust-format
+msgctxt "Workspace"
+msgid "The supports of 1 model were moved clear of the models next to it."
+msgid_plural "The supports of {n} models were moved clear of the models next to them."
+msgstr[0] "Los soportes de 1 modelo se movieron para no tocar a los modelos de al lado."
+msgstr[1] "Los soportes de {n} modelos se movieron para no tocar a los modelos de al lado."
 
 #: ui/workspace/inspectors.slint
 msgctxt "Inspector"
@@ -11009,3 +11025,258 @@ msgstr "Nada para reforzar: lo débil son refuerzos o barras entre partes."
 msgctxt "SupportDialog"
 msgid "Reinforcing {} supports: their tips or shafts made wider."
 msgstr "Reforzando {} soportes: más gruesa la punta o el tronco."
+
+msgctxt "Inspector"
+msgid "LEAN BACK"
+msgstr "INCLINAR HACIA ATRÁS"
+
+msgctxt "Inspector"
+msgid "Angle"
+msgstr "Ángulo"
+
+msgctxt "Inspector"
+msgid "Lean back"
+msgstr "Inclinar"
+
+msgctxt "Inspector"
+msgid "Every selected model faces the front, leans back by exactly this angle and rests on the plate: copies stand alike."
+msgstr "Cada modelo elegido mira al frente, se inclina hacia atrás exactamente este ángulo y queda apoyado en la cama: las copias quedan iguales."
+
+msgctxt "Inspector"
+msgid "Already leaning back by {}°."
+msgstr "Ya está inclinado hacia atrás {}°."
+
+msgctxt "Inspector"
+msgid "Leaned back by {}°. Undo puts them back."
+msgstr "Inclinado hacia atrás {}°. Deshacer los vuelve a poner como estaban."
+
+msgctxt "Inspector"
+msgid "Pick by each model's height"
+msgstr "Elegir según la altura de cada modelo"
+
+msgctxt "Inspector"
+msgid "Generate gives each model the preset its height asks for: up to 65 mm Miniatures, up to 150 mm Figures, taller Statues. Picking a preset turns this off."
+msgstr "Generar le da a cada modelo el preset que pide su altura: hasta 65 mm Miniaturas, hasta 150 mm Figuras, más alto Estatuas. Elegir un preset lo apaga."
+
+msgctxt "SupportDialog"
+msgid "By height: {}."
+msgstr "Por altura: {}."
+
+msgctxt "SlicePanel"
+msgid "Send from disk…"
+msgstr "Enviar desde el disco…"
+
+#, rust-format
+msgctxt "SlicePanel"
+msgid "From the disk: {}"
+msgstr "Desde el disco: {}"
+
+msgctxt "FileDialog"
+msgid "Printer file to send"
+msgstr "Archivo de impresora para enviar"
+
+#, rust-format
+msgctxt "SendToPrinter"
+msgid "{} is not a printer file."
+msgstr "{} no es un archivo de impresora."
+
+#, rust-format
+msgctxt "SendToPrinter"
+msgid "Printing {} on {}. Sent in {}."
+msgstr "Imprimiendo {} en {}. Enviado en {}."
+
+#, rust-format
+msgctxt "SendToPrinter"
+msgid "Sent to {}: {} is on the printer, ready to print from its screen. Sent in {}."
+msgstr "Enviado a {}: {} está en la impresora, listo para imprimir desde su pantalla. Enviado en {}."
+
+msgctxt "ErrorDialog"
+msgid "Printer files are sent, not opened"
+msgstr "Los archivos de impresora se envían, no se abren"
+
+msgctxt "ErrorDialog"
+msgid "A printer file goes to a printer from the Send to printer card of the Slice tab, which shows while the printer in use takes prints over the network."
+msgstr "Un archivo de impresora se manda a una impresora desde la tarjeta Enviar a la impresora de la pestaña Laminar, que aparece cuando la impresora en uso recibe impresiones por la red."
+
+msgctxt "Inspector"
+msgid "Hide (H)"
+msgstr "Ocultar (H)"
+
+msgctxt "Inspector"
+msgid "Show {n} hidden (Alt+H)"
+msgid_plural "Show {n} hidden (Alt+H)"
+msgstr[0] "Mostrar {n} oculto (Alt+H)"
+msgstr[1] "Mostrar {n} ocultos (Alt+H)"
+
+msgctxt "ShortcutsCard"
+msgid "Hide the picked, show them all"
+msgstr "Ocultar los elegidos, mostrar todos"
+
+msgctxt "PreferencesLayer"
+msgid "EXPORTING"
+msgstr "EXPORTAR"
+
+msgctxt "PreferencesLayer"
+msgid "Exported file name"
+msgstr "Nombre del archivo exportado"
+
+#, rust-format
+msgctxt "PreferencesLayer"
+msgid "For example: {}"
+msgstr "Por ejemplo: {}"
+
+msgctxt "Inspector"
+msgid "Show in folder"
+msgstr "Mostrar en la carpeta"
+
+#, rust-format
+msgctxt "StartDialog"
+msgid "Show {} in its folder"
+msgstr "Mostrar {} en su carpeta"
+
+msgctxt "ErrorDialog"
+msgid "Cannot show the file"
+msgstr "No se puede mostrar el archivo"
+
+msgctxt "ErrorDialog"
+msgid "Neither the file nor its folder is there any more."
+msgstr "Ni el archivo ni su carpeta están más ahí."
+
+#, rust-format
+msgctxt "ErrorDialog"
+msgid "The file browser did not open: {}"
+msgstr "El explorador de archivos no se abrió: {}"
+
+msgctxt "Inspector"
+msgid "Larger than the plate: it does not print whole."
+msgstr "Más grande que la cama: no se imprime entero."
+
+msgctxt "Inspector"
+msgid "Scale to fit"
+msgstr "Escalar para que entre"
+
+msgctxt "Inspector"
+msgid "Mirror in X"
+msgstr "Espejar en X"
+
+msgctxt "Inspector"
+msgid "Mirror in Y"
+msgstr "Espejar en Y"
+
+msgctxt "Inspector"
+msgid "Row"
+msgstr "Fila"
+
+msgctxt "Inspector"
+msgid "Circle"
+msgstr "Círculo"
+
+msgctxt "Inspector"
+msgid "Where"
+msgstr "Dónde"
+
+msgctxt "Inspector"
+msgid "Grid"
+msgstr "Grilla"
+
+msgctxt "Inspector"
+msgid "Edge only"
+msgstr "Solo el borde"
+
+msgctxt "Inspector"
+msgid "Click the middle of the circle, then a point on it: a support at every dot around it, as the model is seen. Esc drops the middle."
+msgstr "Hacé clic en el centro del círculo y después en un punto del borde: un soporte en cada punto alrededor, como se ve el modelo. Esc suelta el centro."
+
+msgctxt "SupportDialog"
+msgid "Their mirror image already has supports: nothing to add."
+msgstr "Su imagen espejada ya tiene soportes: no hay nada que agregar."
+
+msgctxt "SupportDialog"
+msgid "Click a point on the circle."
+msgstr "Hacé clic en un punto del borde del círculo."
+
+msgctxt "SupportDialog"
+msgid "Click a point on the circle: {n} support."
+msgid_plural "Click a point on the circle: {n} supports."
+msgstr[0] "Hacé clic en un punto del borde: {n} soporte."
+msgstr[1] "Hacé clic en un punto del borde: {n} soportes."
+
+msgctxt "StressCard"
+msgid "Imported supports: not painted, their tips are not known"
+msgstr "Soportes importados: sin pintar, no se conocen sus puntas"
+
+msgctxt "Workspace"
+msgid "Designed by {}"
+msgstr "Diseñado por {}"
+
+msgctxt "Workspace"
+msgid "View source"
+msgstr "Ver fuente"
+
+msgctxt "MeshViewer"
+msgid "Reload from disk"
+msgstr "Recargar desde el disco"
+
+msgctxt "Inspector"
+msgid "Reload from disk"
+msgstr "Recargar desde el disco"
+
+msgctxt "PreferencesLayer"
+msgid "Reload when the file changes"
+msgstr "Recargar cuando cambia el archivo"
+
+msgctxt "PreferencesLayer"
+msgid "When a model's file is saved again, in a sculpting or CAD program, it reloads at the same place, hollowed and supported again. One undo takes it back."
+msgstr "Cuando el archivo de un modelo se vuelve a guardar, en un programa de escultura o de CAD, se recarga en el mismo lugar, ahuecado y con soportes otra vez. Un Deshacer lo vuelve atrás."
+
+msgctxt "Reload"
+msgid "it is a project, not a model's file"
+msgstr "es un proyecto, no el archivo de un modelo"
+
+msgctxt "Reload"
+msgid "This model came from no file it can be read again from."
+msgstr "Este modelo no vino de un archivo que se pueda volver a leer."
+
+msgctxt "Reload"
+msgid "{} could not be read again."
+msgstr "No se pudo volver a leer {}."
+
+msgctxt "Reload"
+msgid "{} no longer holds the models it gave, so they stay as they are."
+msgstr "{} ya no tiene los modelos que dio, así que quedan como están."
+
+msgctxt "Reload"
+msgid "{} could not be reloaded."
+msgstr "No se pudo recargar {}."
+
+msgctxt "Reload"
+msgid "Reloaded {} from disk; hollowing it again."
+msgstr "{} recargado desde el disco; ahuecándolo otra vez."
+
+msgctxt "Reload"
+msgid "Reloaded {} from disk."
+msgstr "{} recargado desde el disco."
+
+msgctxt "DeadZones"
+msgid "Pick your printer first: the dead zones are its own."
+msgstr "Elegí primero tu impresora: las zonas muertas son de ella."
+
+msgctxt "DeadZones"
+msgid "Drag on the plate where the screen's pixels are dead; click a zone to take it away."
+msgstr "Arrastrá sobre la cama donde la pantalla tiene píxeles muertos; un clic sobre una zona la quita."
+
+msgctxt "Inspector"
+msgid "SCREEN"
+msgstr "PANTALLA"
+
+msgctxt "Inspector"
+msgid "Mark dead zones"
+msgstr "Marcar zonas muertas"
+
+msgctxt "Inspector"
+msgid "{} dead zones on this printer's screen: Arrange keeps away from them, and Slice warns about what lands on one."
+msgstr "{} zonas muertas en la pantalla de esta impresora: Acomodar las esquiva y Laminar avisa si algo cae en una."
+
+msgctxt "Inspector"
+msgid "Where the screen's pixels are dead, nothing is placed: drag on the plate to mark them, click one to take it away."
+msgstr "Donde la pantalla tiene píxeles muertos no se pone nada: arrastrá sobre la cama para marcarlos, un clic sobre una zona la quita."

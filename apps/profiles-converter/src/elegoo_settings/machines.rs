@@ -14,12 +14,19 @@
 ///
 /// A model we ship no profile for maps to nothing, which is what makes
 /// its rows reportable rather than silently keyed to an absent id.
-const MODELS: [(&str, &[&str]); 21] = [
+const MODELS: [(&str, &[&str]); 26] = [
     ("ELEGOO Jupiter", &["elegoo-jupiter"]),
+    ("ELEGOO Jupiter 2", &["elegoo-jupiter-2"]),
     ("ELEGOO Jupiter SE", &["elegoo-jupiter-se"]),
-    ("ELEGOO Mars", &[]),
-    ("ELEGOO Mars 2 Pro/Mars 2", &["elegoo-mars-2-pro"]),
-    ("ELEGOO Mars 2 Pro/Mars2", &["elegoo-mars-2-pro"]),
+    ("ELEGOO Mars", &["elegoo-mars"]),
+    (
+        "ELEGOO Mars 2 Pro/Mars 2",
+        &["elegoo-mars-2-pro", "elegoo-mars-2"],
+    ),
+    (
+        "ELEGOO Mars 2 Pro/Mars2",
+        &["elegoo-mars-2-pro", "elegoo-mars-2"],
+    ),
     (
         "ELEGOO Mars 3/Mars 3 Pro",
         &["elegoo-mars-3", "elegoo-mars-3-pro"],
@@ -28,17 +35,26 @@ const MODELS: [(&str, &[&str]); 21] = [
     ("ELEGOO Mars 4 DLP", &["elegoo-mars-4-dlp"]),
     ("ELEGOO Mars 4 MAX", &["elegoo-mars-4-max"]),
     ("ELEGOO Mars 4 Ultra", &["elegoo-mars-4-ultra"]),
+    // The settings page's fast-printing variants of the Ultras: the
+    // normal-speed rows make their profile (#752).
+    ("ELEGOO Mars 4 Ultra（normal resin+fast printing）", &[]),
+    ("ELEGOO Mars 4 Ultra（fast resin+fast printing）", &[]),
     ("ELEGOO Mars 5", &["elegoo-mars-5"]),
     ("ELEGOO Mars 5 Ultra", &["elegoo-mars-5-ultra"]),
-    ("ELEGOO Mars Pro", &[]),
+    ("ELEGOO Mars Pro", &["elegoo-mars-pro"]),
     ("ELEGOO Saturn 2", &["elegoo-saturn-2"]),
     ("ELEGOO Saturn 3", &["elegoo-saturn-3"]),
     ("ELEGOO Saturn 3 Ultra", &["elegoo-saturn-3-ultra"]),
+    ("ELEGOO Saturn 3 Ultra（normal resin+fast printing）", &[]),
+    ("ELEGOO Saturn 3 Ultra（fast resin+fast printing）", &[]),
     ("ELEGOO Saturn 4", &["elegoo-saturn-4"]),
     ("ELEGOO Saturn 4 Ultra", &["elegoo-saturn-4-ultra"]),
     ("ELEGOO Saturn 4 Ultra 16K", &["elegoo-saturn-4-ultra-16k"]),
-    ("ELEGOO Saturn 8K", &[]),
-    ("ELEGOO Saturn/Saturn S", &[]),
+    ("ELEGOO Saturn 8K", &["elegoo-saturn-8k"]),
+    (
+        "ELEGOO Saturn/Saturn S",
+        &["elegoo-saturn", "elegoo-saturn-s"],
+    ),
 ];
 
 /// What a model cell names: the machines it covers, and whether the
@@ -93,7 +109,10 @@ mod machines_tests {
 
     #[test]
     fn a_model_we_ship_no_profile_for_is_told_apart_from_one_we_do_not_know() {
-        assert_eq!(machines_named_by("ELEGOO Saturn 8K"), Machines::NotOurs);
+        assert_eq!(
+            machines_named_by("ELEGOO Mars 4 Ultra（normal resin+fast printing）"),
+            Machines::NotOurs
+        );
         assert_eq!(machines_named_by("ELEGOO Mars 9"), Machines::Unknown);
     }
 

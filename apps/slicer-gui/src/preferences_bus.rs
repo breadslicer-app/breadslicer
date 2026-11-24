@@ -150,16 +150,25 @@ pub(crate) struct PreferencesSnapshot {
     /// opened file lived in. `None` until the first open; the dialog then falls
     /// back to the home directory. App-wide state.
     pub last_open_dir: Option<PathBuf>,
+    /// Directory the printer-file export dialog should start in: the folder
+    /// the last printer file was written to (#729). App-wide state.
+    pub last_export_dir: Option<PathBuf>,
+    /// The template printer files are named by (#730).
+    pub export_name_template: String,
     /// Whether the start dialog shows when the app opens with no file
     /// (#381): its "Don't show at startup" box and Preferences turn it off
     /// and on.
     pub show_start_dialog: bool,
     /// Whether models that come in and do not slice are repaired (#677).
     pub repair_on_import: bool,
+    /// Whether a model reloads when its file is saved again (#721).
+    pub reload_on_change: bool,
     /// The files last opened or saved, newest first (`recent_files`).
     pub recent_files: Vec<RecentFile>,
     /// What the user pays for each resin (#101).
     pub resin_prices: BTreeMap<MaterialId, crate::resin_cost::ResinPrice>,
+    /// The dead zones of each printer's screen (#726).
+    pub dead_zones: crate::dead_zones::DeadZonesByPrinter,
 }
 
 impl From<&PreferencesSnapshot> for PrintDefaults {
@@ -224,10 +233,14 @@ impl PreferencesSnapshot {
             slice_view_height: None,
             slice_view_minimized: false,
             last_open_dir: None,
+            last_export_dir: None,
+            export_name_template: crate::file_name_template::DEFAULT_TEMPLATE.to_owned(),
             show_start_dialog: true,
             repair_on_import: true,
+            reload_on_change: true,
             recent_files: Vec::new(),
             resin_prices: BTreeMap::new(),
+            dead_zones: BTreeMap::new(),
         }
     }
 }
@@ -268,10 +281,18 @@ pub(crate) enum PreferencesChange {
     SliceControlPanel,
     SliceViewPanel,
     LastOpenDir,
+    /// The folder printer files were last written to (#729).
+    LastExportDir,
+    /// The template printer files are named by (#730).
+    ExportNameTemplate,
     /// Whether the start dialog shows at launch (#381).
     StartDialog,
     /// Repair on import (#677).
     RepairOnImport,
+    /// Reload a model when its file changes (#721).
+    ReloadOnChange,
+    /// The dead zones of a printer's screen (#726).
+    DeadZones,
     /// A file was opened or saved, or taken off the recent list (#381).
     RecentFiles,
     /// A resin's price (#101).

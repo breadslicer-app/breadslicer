@@ -440,6 +440,24 @@ pub(crate) fn review_sets(
             tip_diameter_mm: 0.0,
             contacts: Vec::new(),
             feet: Vec::new(),
+            geometry: false,
+        });
+    // Supports that came with an imported model (#754): read by their
+    // geometry, no model in the raft.
+    let imported = (0..)
+        .map_while(|i| spatial.leaf_id_at_index(i))
+        .filter(|&id| {
+            spatial
+                .graph()
+                .leaf_mesh_arc(id)
+                .is_some_and(|mesh| sc_geom::supports::is_imported_supports(mesh))
+        })
+        .map(|leaf| SupportSet {
+            leaf,
+            tip_diameter_mm: 0.0,
+            contacts: Vec::new(),
+            feet: Vec::new(),
+            geometry: true,
         });
     sets_in_force(spatial, sessions)
         .into_iter()
@@ -453,8 +471,10 @@ pub(crate) fn review_sets(
                 .flat_map(|piece| piece.contacts)
                 .collect(),
             feet: drawn.session.feet_on_model(),
+            geometry: false,
         })
         .chain(rafts)
+        .chain(imported)
         .collect()
 }
 

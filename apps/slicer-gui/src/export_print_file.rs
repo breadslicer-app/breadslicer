@@ -34,8 +34,8 @@ use crate::export_progress::ExportPhase;
 use crate::export_progress_panel::ExportProgressPanel;
 use crate::i18n::ctr;
 use crate::mesh_loader::panic_message;
+use crate::preferences_bus::{PreferencesBus, PreferencesChange};
 use crate::scene_document::SceneDocument;
-use crate::scene_export;
 use crate::slice_panel::SlicePanelBridge;
 use crate::slice_projection::{SliceFailure, load_selected_profiles};
 use crate::slice_result::{
@@ -290,7 +290,9 @@ pub(crate) fn wire_export_print_file(
         let document = ctrl.document();
         let dialogs = ctrl.dialogs();
         let export_progress = ctrl.export_progress();
-        let default_stem = scene_export::default_export_stem(&document);
+        let bus = panel.bus();
+        // Named by the template of Preferences (#730).
+        let default_stem = template_name(&panel, &document, false);
         let previews_from = ctrl.clone();
         // The plate the held slice was cut for (#547).
         let scene = document
@@ -303,6 +305,7 @@ pub(crate) fn wire_export_print_file(
                 scene,
                 dialogs,
                 export_progress,
+                &bus,
                 format,
                 default_stem,
                 move |format| previews_from.print_file_previews(format),
@@ -319,12 +322,15 @@ pub(crate) fn wire_export_print_file(
 /// failure surfaces its own dialog.
 ///
 /// `previews_for` runs once the target is settled, so a cancelled export draws
-/// nothing.
+/// nothing. The dialog starts where the last printer file went, and a file
+/// written there is remembered (#729).
+#[allow(clippy::too_many_arguments)]
 async fn run_export_flow(
     document: Rc<SceneDocument>,
     scene: Option<Scene>,
     dialogs: Rc<DialogManager>,
     export_progress: Rc<ExportProgressPanel>,
+    bus: &PreferencesBus,
     format: PrinterFileFormat,
     default_stem: Option<String>,
     previews_for: impl FnOnce(PrinterFileFormat) -> Option<PrintPreviews>,
@@ -343,19 +349,45 @@ async fn run_export_flow(
     for line in fallback_report_lines(job.config()) {
         eprintln!("{line}");
     }
-    let Some(target) = pick_printer_file_target(dialogs.file_dialog(), default_stem, format).await
-    else {
+    let mut dialog = dialogs.file_dialog();
+    if let Some(dir) = export_dialog_dir(bus) {
+        dialog = dialog.set_directory(dir);
+    }
+    let Some(target) = pick_printer_file_target(dialog, default_stem, format).await else {
         return;
     };
-    write_and_log(
+    let written = write_and_log(
         &dialogs,
         &export_progress,
         job,
-        target,
+        target.clone(),
         format,
         previews_for,
     )
     .await;
+    if written && let Some(dir) = target.parent() {
+        remember_export_dir(bus, dir);
+    }
+}
+
+/// The folder the printer-file dialogs start in (#729): the one the last
+/// printer file was written to, while it is there; `None` leaves it to the
+/// system.
+pub(crate) fn export_dialog_dir(bus: &PreferencesBus) -> Option<PathBuf> {
+    bus.snapshot().last_export_dir.filter(|dir| dir.is_dir())
+}
+
+/// Remembers `dir` as the folder printer files go to (#729), apart from the
+/// one models come from.
+pub(crate) fn remember_export_dir(bus: &PreferencesBus, dir: &Path) {
+    if dir.as_os_str().is_empty() || bus.snapshot().last_export_dir.as_deref() == Some(dir) {
+        return;
+    }
+    let dir = dir.to_path_buf();
+    bus.update(move |snap| {
+        snap.last_export_dir = Some(dir);
+        PreferencesChange::LastExportDir
+    });
 }
 
 /// Writes `job` to `target` with what the machine shows for it, notes it in
@@ -506,9 +538,9 @@ pub(crate) fn wire_export_every_plate(
         let Some(format) = panel.selected_print_format() else {
             return;
         };
-        let (ctrl, slice) = (ctrl.clone(), slice.clone());
+        let (ctrl, slice, panel) = (ctrl.clone(), slice.clone(), panel.clone());
         if let Err(err) = slint::spawn_local(async move {
-            run_export_every_plate(ctrl, slice, format).await;
+            run_export_every_plate(ctrl, slice, &panel, format).await;
         }) {
             eprintln!("Failed to spawn the every-plate export: {err}");
         }
@@ -534,14 +566,34 @@ fn file_stem_of(name: &str) -> String {
     }
 }
 
-/// The file of plate `name` in `folder`: the project's name and the plate's.
-fn plate_file(folder: &Path, stem: Option<&str>, name: &str, format: PrinterFileFormat) -> PathBuf {
-    let plate = file_stem_of(name);
-    let file = match stem {
-        Some(stem) => format!("{} - {plate}.{}", file_stem_of(stem), format.extension()),
-        None => format!("{plate}.{}", format.extension()),
-    };
-    folder.join(file)
+/// The file of a plate in `folder`: `named`, what the template gives it
+/// (#730), or the plate's `name` when it gives nothing.
+fn plate_file(
+    folder: &Path,
+    named: Option<&str>,
+    name: &str,
+    format: PrinterFileFormat,
+) -> PathBuf {
+    let stem = named.map_or_else(|| file_stem_of(name), str::to_owned);
+    folder.join(format!("{stem}.{}", format.extension()))
+}
+
+/// What the template of Preferences names the held slice's printer file
+/// (#730): with `every_plate`, each plate's carries its name. `None` when
+/// it gives nothing.
+fn template_name(
+    panel: &SlicePanelBridge,
+    document: &SceneDocument,
+    every_plate: bool,
+) -> Option<String> {
+    let parts = crate::file_name_template::NameParts::of_held_slice(
+        document,
+        &panel.catalog(),
+        every_plate,
+    );
+    let name =
+        crate::file_name_template::file_name(&panel.bus().snapshot().export_name_template, &parts);
+    (!name.is_empty()).then_some(name)
 }
 
 /// Asks for a folder, then slices each plate with models on it in turn and
@@ -550,24 +602,25 @@ fn plate_file(folder: &Path, stem: Option<&str>, name: &str, format: PrinterFile
 async fn run_export_every_plate(
     ctrl: Rc<ViewportController>,
     slice: Rc<crate::slice_run::SliceRun>,
+    panel: &SlicePanelBridge,
     format: PrinterFileFormat,
 ) {
+    let bus = &panel.bus();
     let document = ctrl.document();
     let dialogs = ctrl.dialogs();
     let plates = ctrl.plates_in_use();
     if plates.is_empty() {
         return;
     }
-    let Some(folder) = dialogs
+    let mut dialog = dialogs
         .file_dialog()
-        .set_title(ctr!("FileDialog", "Folder for the plates' printer files").to_string())
-        .pick_folder()
-        .await
-        .map(|h| h.path().to_path_buf())
-    else {
+        .set_title(ctr!("FileDialog", "Folder for the plates' printer files").to_string());
+    if let Some(dir) = export_dialog_dir(bus) {
+        dialog = dialog.set_directory(dir);
+    }
+    let Some(folder) = dialog.pick_folder().await.map(|h| h.path().to_path_buf()) else {
         return;
     };
-    let stem = scene_export::default_export_stem(&document);
     let back_to = document.plates().active();
     let mut written = Vec::new();
     for plate in plates {
@@ -595,7 +648,8 @@ async fn run_export_every_plate(
                 break;
             }
         };
-        let target = plate_file(&folder, stem.as_deref(), &name, format);
+        let named = template_name(panel, &document, true);
+        let target = plate_file(&folder, named.as_deref(), &name, format);
         let previews = ctrl.print_file_previews(format);
         match write_job(
             &ctrl.export_progress(),
@@ -619,6 +673,7 @@ async fn run_export_every_plate(
     if written.is_empty() {
         return;
     }
+    remember_export_dir(bus, &folder);
     let listed: Vec<String> = written
         .iter()
         .filter_map(|path| path.file_name().map(|n| n.to_string_lossy().into_owned()))
@@ -677,7 +732,7 @@ mod plate_file_tests {
     #[test]
     fn a_plates_file_carries_the_projects_name_and_its_own() {
         let format = PrinterFileFormat::Goo(sc_sla_formats::GooVersion::V3_0);
-        let path = plate_file(Path::new("out"), Some("minis"), "Plate 2", format);
+        let path = plate_file(Path::new("out"), Some("minis - Plate 2"), "Plate 2", format);
         assert_eq!(
             path,
             Path::new("out").join(format!("minis - Plate 2.{}", format.extension()))
@@ -688,6 +743,40 @@ mod plate_file_tests {
             format!("Esqueletos- grandes-.{}", format.extension())
         );
         assert_eq!(file_stem_of("  ..  "), "plate");
+    }
+}
+
+/// #729: the folder printer files go to is kept apart from the one models
+/// come from, and the dialogs start there while it is on the disk.
+#[cfg(test)]
+mod export_dir_tests {
+    use super::*;
+    use crate::preferences_bus::PreferencesSnapshot;
+
+    #[test]
+    fn the_export_folder_is_remembered_apart_from_the_import_one() {
+        let usb = tempfile::TempDir::new().unwrap();
+        let models = PathBuf::from("/models");
+        let bus = PreferencesBus::new(PreferencesSnapshot {
+            last_open_dir: Some(models.clone()),
+            ..PreferencesSnapshot::for_tests()
+        });
+        assert_eq!(export_dialog_dir(&bus), None, "nothing written yet");
+
+        remember_export_dir(&bus, usb.path());
+        assert_eq!(bus.snapshot().last_export_dir.as_deref(), Some(usb.path()));
+        assert_eq!(bus.snapshot().last_open_dir, Some(models), "untouched");
+        assert_eq!(export_dialog_dir(&bus).as_deref(), Some(usb.path()));
+
+        // A stick taken out: the system picks.
+        let gone = usb.path().to_path_buf();
+        drop(usb);
+        assert_eq!(export_dialog_dir(&bus), None);
+        assert_eq!(
+            bus.snapshot().last_export_dir,
+            Some(gone),
+            "kept for when it is back"
+        );
     }
 }
 

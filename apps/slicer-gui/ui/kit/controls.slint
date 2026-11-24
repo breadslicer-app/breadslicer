@@ -334,6 +334,8 @@ export component ToolButton inherits Rectangle {
 // label, quiet until hovered.
 export component SupportLink inherits Rectangle {
     in property <string> label;
+    // The heart alone, where the bar has no room for the words.
+    in property <bool> compact;
     callback clicked();
 
     height: 26px;
@@ -357,7 +359,7 @@ export component SupportLink inherits Rectangle {
             color: Theme.brand;
             fill: Theme.brand;
         }
-        Text {
+        if !root.compact: Text {
             text: root.label;
             color: touch.has-hover ? Theme.text : Theme.text-muted;
             font-size: Theme.font-sm;

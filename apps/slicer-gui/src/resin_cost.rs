@@ -86,8 +86,78 @@ impl ResinPrice {
 }
 
 /// `3.4`, `3,4` or ` 3.40 ` as a number: `None` for anything else.
+/// The currency list of the card, with `stored` picked.
+fn show_currency(ui: &MainWindow, stored: &str) {
+    let (labels, at) = currency_choices(stored);
+    let labels: Vec<SharedString> = labels.into_iter().map(SharedString::from).collect();
+    ui.set_slice_price_currencies(ModelRc::new(VecModel::from(labels)));
+    ui.set_slice_price_currency_index(at as i32);
+}
+
 pub(crate) fn parse_number(text: &str) -> Option<f64> {
     crate::numbers::parse_number(text).filter(|v| v.is_finite())
+}
+
+/// The currencies the cost card offers (#747): its code, and the symbol a
+/// price is shown with. Symbols the interface's font draws; a symbol stored
+/// before the list (typed by hand) is offered beside them.
+pub(crate) const CURRENCIES: [(&str, &str); 24] = [
+    ("USD", "$"),
+    ("EUR", "\u{20ac}"),
+    ("GBP", "\u{a3}"),
+    ("JPY", "\u{a5}"),
+    ("CNY", "CN\u{a5}"),
+    ("CAD", "CA$"),
+    ("AUD", "A$"),
+    ("NZD", "NZ$"),
+    ("BRL", "R$"),
+    ("ARS", "ARS$"),
+    ("MXN", "MX$"),
+    ("CLP", "CLP$"),
+    ("COP", "COL$"),
+    ("CHF", "CHF"),
+    ("SEK", "SEK"),
+    ("NOK", "NOK"),
+    ("DKK", "DKK"),
+    ("PLN", "z\u{142}"),
+    ("CZK", "K\u{10d}"),
+    ("ZAR", "R"),
+    ("SGD", "S$"),
+    ("HKD", "HK$"),
+    ("TWD", "NT$"),
+    ("INR", "Rs"),
+];
+
+/// The currency list as the card shows it, "USD ($)", with `stored` (a
+/// symbol typed before the list) at the end when it is none of them, and
+/// where `stored` stands in it: the first with no currency stored.
+pub(crate) fn currency_choices(stored: &str) -> (Vec<String>, usize) {
+    let stored = stored.trim();
+    let mut labels: Vec<String> = CURRENCIES
+        .iter()
+        .map(|(code, symbol)| format!("{code} ({symbol})"))
+        .collect();
+    let at = match CURRENCIES.iter().position(|(_, symbol)| *symbol == stored) {
+        Some(at) => at,
+        None if stored.is_empty() => 0,
+        None => {
+            labels.push(stored.to_owned());
+            labels.len() - 1
+        }
+    };
+    (labels, at)
+}
+
+/// The symbol a label of [`currency_choices`] stands for: its own text for
+/// a symbol stored before the list.
+pub(crate) fn currency_of_label(label: &str) -> String {
+    CURRENCIES
+        .iter()
+        .find(|(code, symbol)| format!("{code} ({symbol})") == label)
+        .map_or_else(
+            || label.trim().to_owned(),
+            |(_, symbol)| (*symbol).to_owned(),
+        )
 }
 
 /// `$ 3.40`, or `3.40` with no currency.
@@ -265,7 +335,11 @@ impl ResinCostPanel {
         let drafts = match &price {
             Some(p) => [
                 tidy(p.price),
-                p.currency.clone(),
+                if p.currency.trim().is_empty() {
+                    CURRENCIES[0].1.to_owned()
+                } else {
+                    p.currency.clone()
+                },
                 tidy(p.amount),
                 if p.losses_pct == 0.0 {
                     String::new()
@@ -274,12 +348,19 @@ impl ResinCostPanel {
                 },
                 String::new(),
             ],
-            None => Default::default(),
+            None => [
+                String::new(),
+                CURRENCIES[0].1.to_owned(),
+                String::new(),
+                String::new(),
+                String::new(),
+            ],
         };
         *self.unit.borrow_mut() = price.as_ref().map(|p| p.unit).unwrap_or_default();
         if let Some(ui) = self.ui.upgrade() {
             ui.set_slice_price_text(drafts[0].clone().into());
             ui.set_slice_price_currency(drafts[1].clone().into());
+            show_currency(&ui, &drafts[1]);
             ui.set_slice_price_amount(drafts[2].clone().into());
             ui.set_slice_price_losses(drafts[3].clone().into());
             ui.set_slice_price_weighed(SharedString::default());
@@ -316,6 +397,26 @@ impl ResinCostPanel {
     fn edited(&self, field: i32, text: &str) {
         if !(PRICE..=WEIGHED).contains(&field) {
             return;
+        }
+        // The card's fields are drawn again when the tab comes back: each
+        // keeps what was typed (#747).
+        let text = if field == CURRENCY {
+            currency_of_label(text)
+        } else {
+            text.to_owned()
+        };
+        let text = text.as_str();
+        if let Some(ui) = self.ui.upgrade() {
+            match field {
+                PRICE => ui.set_slice_price_text(text.into()),
+                CURRENCY => {
+                    ui.set_slice_price_currency(text.into());
+                    show_currency(&ui, text);
+                }
+                AMOUNT => ui.set_slice_price_amount(text.into()),
+                LOSSES => ui.set_slice_price_losses(text.into()),
+                _ => ui.set_slice_price_weighed(text.into()),
+            }
         }
         self.drafts.borrow_mut()[field as usize] = text.to_owned();
         if field == WEIGHED {
@@ -477,6 +578,19 @@ mod tests {
         let cost = price(BottleUnit::G, 0.0).cost_of(25.0, Some(27.5)).unwrap();
         assert!((cost - 0.825).abs() < 1e-12);
         assert_eq!(price(BottleUnit::G, 0.0).cost_of(25.0, None), None);
+    }
+
+    #[test]
+    fn a_currency_typed_before_the_list_is_offered_beside_it() {
+        let (labels, at) = currency_choices("");
+        assert_eq!(at, 0, "no currency: the first");
+        assert_eq!(labels.len(), CURRENCIES.len());
+        let (labels, at) = currency_choices("\u{20ac}");
+        assert_eq!(currency_of_label(&labels[at]), "\u{20ac}");
+        let (labels, at) = currency_choices("pesos");
+        assert_eq!(labels.len(), CURRENCIES.len() + 1);
+        assert_eq!(labels[at], "pesos");
+        assert_eq!(currency_of_label(&labels[at]), "pesos");
     }
 
     #[test]

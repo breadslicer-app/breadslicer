@@ -32,6 +32,9 @@ use bread_support_model::support_kinds::{
 };
 use bread_support_model::types::LimitationCode;
 use bread_support_model::types::{Knot, SupportCollections, SupportState};
+use bread_support_pipeline::plate::{
+    NEIGHBOUR_CLEARANCE_MM, NEIGHBOUR_REACH_MM, PlateModel, SettleInput, Settled, settle_crowded,
+};
 use bread_support_pipeline::{ModelInput, PipelineSettings, support_soup};
 use bread_support_placement::auto_support::auto_place::fan::{
     FanArgs, FanHostOrder, FanLeafRefusal, FanLeafResult, add_fanned, fan_leaf_to_host,
@@ -239,7 +242,7 @@ static SHARED_BVHS: std::sync::Mutex<
 /// The BVH of `model`'s geometry in its own frame (re-centred on its box,
 /// as the pipeline re-centres it): the one copies of the model built, or a
 /// new one.
-fn shared_bvh(model: &ModelInput) -> Arc<MeshBvh> {
+pub(crate) fn shared_bvh(model: &ModelInput) -> Arc<MeshBvh> {
     let held = |list: &Vec<(
         std::sync::Weak<bread_support_geom::geom::buffer_geometry::BufferGeometry>,
         std::sync::Weak<MeshBvh>,
@@ -301,6 +304,10 @@ pub struct SupportSession {
     /// The hand edits as places on the model, to put back on a run made
     /// again (#408).
     hand_log: HandLog,
+    /// The models standing near its own on the plate (#725): an edit routes
+    /// its supports round them and keeps its braces off them, as a run
+    /// does. Set by [`Self::set_neighbours`]; moving a model forgets them.
+    neighbours: Arc<[PlateModel]>,
 }
 
 /// The first hand-placed id is the one after this.
@@ -607,7 +614,22 @@ struct Placed {
 /// limits on hanging from a support eased (and eased further for a forced
 /// attach) and the size `how` names. Returns that size's index among the
 /// zone sizes, `None` for the run's own.
-fn hand_settings(settings: &mut PipelineSettings, how: &AddOptions) -> Option<usize> {
+fn hand_settings(
+    settings: &mut PipelineSettings,
+    how: &AddOptions,
+    narrowest_tip: Option<f64>,
+) -> Option<usize> {
+    let zone = hand_size(settings, how);
+    // A size of the person's own is no thinner than the screen draws (#724).
+    if let Some(narrowest) = narrowest_tip {
+        crate::pixels::widen_tips(settings, narrowest);
+    }
+    zone
+}
+
+/// The size `how` names among the zone sizes of `settings`, added when the
+/// run has none like it.
+fn hand_size(settings: &mut PipelineSettings, how: &AddOptions) -> Option<usize> {
     let max_angle = if how.attach {
         FORCED_MAX_ANGLE_DEG
     } else {
@@ -1033,6 +1055,7 @@ impl SupportSession {
             next_id,
             hand_edited,
             hand_log,
+            neighbours: Arc::new([]),
         }
     }
 
@@ -1065,6 +1088,13 @@ impl SupportSession {
     /// settings.
     pub fn options(&self) -> Option<&crate::SupportOptions> {
         self.recipe.as_deref().map(|r| &r.options)
+    }
+
+    /// The narrowest tip the printer the run was made for draws (#724);
+    /// `None` when the run did not say which printer.
+    fn narrowest_tip(&self) -> Option<f64> {
+        let pitch = self.recipe.as_deref()?.pixel_pitch_mm?;
+        Some(crate::narrowest_tip_mm(pitch))
     }
 
     /// The session on the raft of `options` (#519): its kind, thickness and
@@ -1135,9 +1165,9 @@ impl SupportSession {
 
     /// The session with model `index` moved by `delta` (mm along X and Y)
     /// and every support that stands on it moved with it (#119): nothing is
-    /// placed again. The models' geometry is shared; the moved model's BVH
-    /// and distance field build afresh on the next edit, and the others'
-    /// carry over.
+    /// placed again. The models' geometry is shared; the moved model's
+    /// distance field builds afresh on the next edit, its BVH (built in its
+    /// own frame, #561) and the others' carry over.
     pub fn moved_in_plane(&self, index: usize, delta: [f64; 2]) -> Self {
         let mut model = self.models[index].clone();
         model.transform.position = model
@@ -1153,8 +1183,8 @@ impl SupportSession {
     /// stands on the plate the way it did, so its supports still hold it, and
     /// nothing is placed again. `now` is the model where it now stands, as a
     /// run makes it from the scene; it keeps the session's id. The moved
-    /// model's BVH and distance field build afresh on the next edit, and the
-    /// others' carry over.
+    /// model's distance field builds afresh on the next edit, its BVH (built
+    /// in its own frame, #561) and the others' carry over.
     pub fn turned_in_plane(
         &self,
         index: usize,
@@ -1262,13 +1292,16 @@ impl SupportSession {
         move_model_supports(&mut state.collections, &model.id, motion);
         let hand_log = self.hand_log.moved(&model.id, motion);
         let mut models = self.models.to_vec();
+        // A BVH is built in its model's frame (#561): the moved model keeps
+        // its own while its geometry is the same.
+        let same_geometry = Arc::ptr_eq(&models[index].geometry, &model.geometry);
         models[index] = model;
         let bvhs = self
             .bvhs
             .iter()
             .enumerate()
             .map(|(i, bvh)| match bvh.get() {
-                Some(bvh) if i != index => BvhSlot::holding(bvh),
+                Some(bvh) if i != index || same_geometry => BvhSlot::holding(bvh),
                 _ => BvhSlot::default(),
             })
             .collect();
@@ -1307,6 +1340,8 @@ impl SupportSession {
             next_id: self.next_id,
             hand_edited: self.hand_edited,
             hand_log,
+            // Where it stands now, the plate round it is another.
+            neighbours: Arc::new([]),
         }
     }
 
@@ -1348,6 +1383,7 @@ impl SupportSession {
                     next_id: self.next_id,
                     hand_edited: self.hand_edited,
                     hand_log,
+                    neighbours: self.neighbours.clone(),
                 }
             })
             .collect()
@@ -1429,6 +1465,177 @@ impl SupportSession {
                 .count(),
         ));
         parts
+    }
+
+    /// Sets the models standing near this session's on the plate (#725):
+    /// from now on an edit routes its supports round them and keeps its
+    /// braces off them, as a run does, each grown by
+    /// [`NEIGHBOUR_CLEARANCE_MM`]. A model of `others` standing where one of
+    /// the session's own stands is its own, and is left out; so is one too
+    /// far to matter. Moving a model of the session forgets them.
+    pub fn set_neighbours(&mut self, others: &[ModelInput]) {
+        let near = self.near_models(others);
+        self.keep_neighbours(near);
+    }
+
+    /// This session with the models of `others` standing near its own as
+    /// its neighbours ([`Self::set_neighbours`]), when they are not the ones
+    /// it has (#725); `None` when nothing would change, so a session given
+    /// the same neighbours again keeps its warm distance fields.
+    pub fn with_neighbours(&self, others: &[ModelInput]) -> Option<SupportSession> {
+        let near = self.near_models(others);
+        let same = near.len() == self.neighbours.len()
+            && near
+                .iter()
+                .zip(self.neighbours.iter())
+                .all(|(a, b)| a.id == b.id && Arc::ptr_eq(&a.bvh, &b.bvh) && a.matrix == b.matrix);
+        if same {
+            return None;
+        }
+        let mut next = self.clone();
+        next.keep_neighbours(near);
+        Some(next)
+    }
+
+    /// The models of `others` standing near this session's own, its own
+    /// left out.
+    fn near_models(&self, others: &[ModelInput]) -> Vec<PlateModel> {
+        let own: Vec<PlateModel> = (0..self.models.len())
+            .map(|i| self.plate_model(i))
+            .collect();
+        let same = |a: &ModelInput, b: &ModelInput| {
+            Arc::ptr_eq(&a.geometry, &b.geometry)
+                && a.transform.position.distance_to(b.transform.position) < 1e-6
+                && a.transform.rotation.distance_to(b.transform.rotation) < 1e-9
+                && a.transform.scale.distance_to(b.transform.scale) < 1e-9
+        };
+        let near: Vec<PlateModel> = others
+            .iter()
+            .filter(|m| !self.models.iter().any(|own| same(own, m)))
+            .map(|m| {
+                PlateModel::new(
+                    m.id.clone(),
+                    shared_bvh(m),
+                    bread_support_pipeline::model_matrix(&m.transform),
+                )
+            })
+            .filter(|m| own.iter().any(|o| m.near(&o.bounds, NEIGHBOUR_REACH_MM)))
+            .collect();
+        near
+    }
+
+    /// The models standing near it that an edit keeps clear of (#725).
+    pub fn neighbour_count(&self) -> usize {
+        self.neighbours.len()
+    }
+
+    /// Keeps `near` as the neighbours: the fields built without them go,
+    /// and copies of the session keep theirs.
+    pub(crate) fn keep_neighbours(&mut self, near: Vec<PlateModel>) {
+        self.neighbours = near.into();
+        self.sdfs = (0..self.models.len()).map(|_| SdfSlot::default()).collect();
+    }
+
+    /// Model `i` as the plate reads it, under its id.
+    pub(crate) fn plate_model(&self, i: usize) -> PlateModel {
+        let bvh = self.bvh(i);
+        PlateModel::new(self.models[i].id.clone(), bvh.bvh, bvh.to_world)
+    }
+
+    /// The neighbours near the model `bvh` places (#725).
+    fn neighbours_near(&self, bvh: &PlacedBvh) -> Vec<&PlateModel> {
+        if self.neighbours.is_empty() {
+            return Vec::new();
+        }
+        let own = PlateModel::new("", bvh.bvh.clone(), bvh.to_world);
+        self.neighbours
+            .iter()
+            .filter(|m| m.near(&own.bounds, NEIGHBOUR_REACH_MM))
+            .collect()
+    }
+
+    /// A distance field of the model `bvh` places, for an edit: its own,
+    /// and the neighbours near it grown by [`NEIGHBOUR_CLEARANCE_MM`]
+    /// (#725).
+    fn field(&self, bvh: &PlacedBvh, cell_mm: f64) -> SdfCache {
+        let field = SdfCache::new(bvh.bvh.clone(), bvh.to_world, Some(cell_mm));
+        let near = self.neighbours_near(bvh);
+        if near.is_empty() {
+            return field;
+        }
+        field.with_placed_obstacles(
+            near.iter().map(|m| (m.bvh.clone(), m.matrix, m.bounds)),
+            NEIGHBOUR_CLEARANCE_MM,
+        )
+    }
+
+    /// The models a brace of model `model_id` (placed by `bvh`) keeps clear
+    /// of: its own and the `neighbours` near it (#725).
+    fn brace_meshes<'a>(
+        model_id: &str,
+        bvh: &'a PlacedBvh,
+        neighbours: &'a [PlateModel],
+    ) -> BraceMeshes<'a> {
+        let mut meshes: BraceMeshes<'a> = BraceMeshes::default();
+        meshes.insert(
+            model_id.to_owned(),
+            BraceMesh {
+                bvh: &bvh.bvh,
+                matrix: bvh.to_world,
+                grown_mm: 0.0,
+            },
+        );
+        if !neighbours.is_empty() {
+            let own = PlateModel::new("", bvh.bvh.clone(), bvh.to_world);
+            for (k, m) in neighbours.iter().enumerate() {
+                if m.near(&own.bounds, NEIGHBOUR_REACH_MM) {
+                    meshes.insert(
+                        format!("{}#n{k}", m.id),
+                        BraceMesh {
+                            bvh: &m.bvh,
+                            matrix: m.matrix,
+                            grown_mm: NEIGHBOUR_CLEARANCE_MM,
+                        },
+                    );
+                }
+            }
+        }
+        meshes
+    }
+
+    /// The session with `crowded` (supports of its one model that come too
+    /// near `others`) taken off and their contacts placed again round them
+    /// (#725), hanging from `hosts` when given; it keeps `others` as its
+    /// neighbours. What was done comes with it.
+    pub(crate) fn settled_among(
+        &self,
+        others: &[&PlateModel],
+        hosts: Option<&SupportCollections>,
+        crowded: &HashSet<String>,
+    ) -> (SupportSession, Settled) {
+        let model = self.plate_model(0);
+        let prefix = format!("{}-p", self.id_prefix);
+        let mut next = 0u64;
+        let mut new_id = || {
+            next += 1;
+            format!("{prefix}{next}")
+        };
+        let settled = settle_crowded(
+            &SettleInput {
+                model: &model,
+                others,
+                state: &self.state,
+                hosts,
+                crowded,
+                settings: &self.settings,
+            },
+            &mut new_id,
+        );
+        let mut session = self.clone();
+        session.state = settled.state.clone();
+        session.removal_index = Arc::default();
+
+        (session, settled)
     }
 
     /// Model `i`'s BVH, in world mm: built in the model's own frame, once
@@ -1607,13 +1814,11 @@ impl SupportSession {
         };
         let bvh = self.bvh(i);
         let mut settings = (*self.settings).clone();
-        let zone = hand_settings(&mut settings, how);
+        let zone = hand_settings(&mut settings, how, self.narrowest_tip());
         let model_id = self.models[i].id.clone();
         let before = all_ids(&self.state.collections);
         let pooled = self.sdfs[i].0.lock().ok().and_then(|mut slot| slot.take());
-        let sdf = RefCell::new(pooled.unwrap_or_else(|| {
-            SdfCache::new(bvh.bvh.clone(), bvh.to_world, Some(settings.sdf_cell_mm))
-        }));
+        let sdf = RefCell::new(pooled.unwrap_or_else(|| self.field(&bvh, settings.sdf_cell_mm)));
         let bands =
             SizingBands::factory().with_zone_sizes(&settings.supports.auto_support.zone_rules);
         let mut state = std::mem::take(&mut self.state);
@@ -1745,14 +1950,8 @@ impl SupportSession {
         if let Some(trunk) = trunk
             && !settings.supports.auto_support.debug_skip_auto_bracing
         {
-            let meshes: BraceMeshes<'_> = [(
-                self.models[i].id.clone(),
-                BraceMesh {
-                    bvh: &bvh.bvh,
-                    matrix: bvh.to_world,
-                },
-            )]
-            .into();
+            let neighbours = self.neighbours.clone();
+            let meshes = Self::brace_meshes(&self.models[i].id, &bvh, &neighbours);
             let braced = brace_new_shaft(
                 &mut self.state,
                 &trunk,
@@ -2081,7 +2280,7 @@ impl SupportSession {
         // Of the size asked for (#564: a red one showed the run's size, not
         // the one a click would place).
         let mut settings = (*self.settings).clone();
-        if let Some(zone) = hand_settings(&mut settings, how) {
+        if let Some(zone) = hand_settings(&mut settings, how, self.narrowest_tip()) {
             let rules = settings.supports.auto_support.zone_rules.clone();
             apply_zone_size(&mut settings.supports, &rules, zone);
         }
@@ -2913,14 +3112,8 @@ impl SupportSession {
             return;
         };
         let bvh = self.bvh(i);
-        let meshes: BraceMeshes<'_> = [(
-            model,
-            BraceMesh {
-                bvh: &bvh.bvh,
-                matrix: bvh.to_world,
-            },
-        )]
-        .into();
+        let neighbours = self.neighbours.clone();
+        let meshes = Self::brace_meshes(&model, &bvh, &neighbours);
         let settings = self.settings.clone();
         let (bracing, live) = (&settings.supports.auto_bracing, &settings.supports);
         let braced = match lost {
@@ -3348,14 +3541,8 @@ impl SupportSession {
             return Err((EditError::CannotBrace(HandBraceRefusal::NotAShaft), None));
         };
         let bvh = self.bvh(i);
-        let meshes: BraceMeshes<'_> = [(
-            self.models[i].id.clone(),
-            BraceMesh {
-                bvh: &bvh.bvh,
-                matrix: bvh.to_world,
-            },
-        )]
-        .into();
+        let neighbours = self.neighbours.clone();
+        let meshes = Self::brace_meshes(&self.models[i].id, &bvh, &neighbours);
         let prefix = self.id_prefix.clone();
         let mut next = self.next_id;
         let mut new_id = || {
@@ -3522,6 +3709,20 @@ impl SupportSession {
     /// `None` when nothing is left.
     pub fn mesh(&self) -> Result<Option<IndexedMesh>, EditError> {
         Ok(self.drawn()?.0)
+    }
+
+    /// [`Self::mesh`] without supports `ids`, for a view that hides them
+    /// (#728). Their feet stay, so the raft is the one drawn with them;
+    /// `None` when nothing is left.
+    pub fn mesh_without(&self, ids: &[String]) -> Result<Option<IndexedMesh>, EditError> {
+        let hidden: HashSet<&String> = ids.iter().collect();
+        let state = SupportState {
+            collections: picked(&self.state.collections, |id| !hidden.contains(id)),
+            ..SupportState::default()
+        };
+        let sink = support_soup(&state, &self.models, &self.settings)
+            .map_err(|e| EditError::Tessellation(format!("{e:?}")))?;
+        Ok(weld_parts(&sink.floats, &sink.parts, SUPPORT_MESH_NAME))
     }
 
     /// [`Self::mesh`], and whether its raft had to be drawn without its
@@ -4597,6 +4798,58 @@ pub(crate) mod session_tests {
         assert_eq!(session.shape_of(&tips[0].0), Some(shape));
     }
 
+    /// #724: on a printer with coarse pixels no tip is thinner than three of
+    /// them, whatever size the preset or the person asks for; on a fine one
+    /// the sizes stay as they are.
+    #[test]
+    fn no_tip_is_thinner_than_the_screen_draws() {
+        let coarse = [0.137, 0.137];
+        let narrowest = crate::narrowest_tip_mm(coarse);
+        assert!((narrowest - 0.411).abs() < 1e-9);
+        let made = |pitch| {
+            crate::settings_for(&crate::SupportRequest {
+                pixel_pitch_mm: pitch,
+                ..crate::SupportRequest::default()
+            })
+        };
+        let plain = made(None);
+        let fine = made(Some([0.034, 0.034]));
+        assert_eq!(
+            plain.supports, fine.supports,
+            "a fine screen draws every tip of the preset"
+        );
+        let widened = made(Some(coarse));
+        let sizes = &widened.supports.auto_support.zone_rules.sizes;
+        assert!(!sizes.is_empty());
+        for size in sizes {
+            assert!(size.tip_diameter_mm >= narrowest - 1e-12, "{size:?}");
+            assert!(size.trunk_diameter_mm >= size.tip_diameter_mm);
+            if let Some(base) = size.base_tip {
+                assert!(base.diameter_mm >= narrowest - 1e-12);
+            }
+        }
+        assert!(widened.supports.tip.contact_diameter_mm >= narrowest - 1e-12);
+
+        // A size of the person's own, by hand.
+        let mut session = bare_slab(
+            12.0,
+            crate::SupportRequest {
+                pixel_pitch_mm: Some(coarse),
+                ..crate::SupportRequest::default()
+            },
+        );
+        let mut shape = crate::zone_presets::support_sizes().remove(0);
+        shape.tip_diameter_mm = 0.18;
+        let how = AddOptions {
+            shape: Some(HandShape(shape)),
+            ..AddOptions::default()
+        };
+        session.add_at([5.0, 5.0, 12.0], &how).unwrap();
+        let tip = session.tip_near([5.0, 5.0, 12.0], 1.0).unwrap();
+        let drawn = session.tip_diameter(&tip).unwrap();
+        assert!(drawn >= narrowest - 1e-12, "{drawn}");
+    }
+
     /// #377: a support hung from another is routed again on its own, and
     /// hung again; its tip stays where it was.
     #[test]
@@ -5007,7 +5260,8 @@ pub(crate) mod session_tests {
     /// A run over copies of one mesh standing alike makes the supports of
     /// the first and hands them to the others, turned and moved with each
     /// (#561); a copy at another height is a run of its own. A copy whose
-    /// handed supports run into a neighbour is named for Arrange all.
+    /// handed supports run into a neighbour is named for Arrange all, when
+    /// the run leaves them so; else they are placed again round it (#725).
     #[test]
     fn copies_standing_alike_take_the_first_ones_supports() {
         use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
@@ -5105,11 +5359,155 @@ pub(crate) mod session_tests {
             block,
             AffineTransform3D::from_translation([0.0, 100.0, 0.0]),
         );
+        let alone = crate::start_supports(
+            &crowded,
+            crate::SupportRequest {
+                clear_of_neighbours: false,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .join()
+        .unwrap();
+        assert_eq!(alone.crowded, vec![copy]);
+        assert_eq!(alone.plate, crate::PlateReport::default());
+        // Sets made earlier, kept clear afterwards (as after Arrange): only
+        // the copy's is made again.
+        let settled = crate::start_settle(
+            &crowded,
+            alone
+                .sets
+                .iter()
+                .map(|s| (s.model, s.session.clone()))
+                .collect(),
+            crate::SupportRequest::default(),
+        )
+        .join()
+        .unwrap();
+        assert_eq!(settled.plate.sets, 1, "{:?}", settled.plate);
+        assert_eq!(settled.sets.len(), 1);
+        assert_eq!(settled.sets[0].model, copy);
+        assert!(settled.sets[0].mesh.is_some());
+        // Kept clear of its neighbour (#725): what came down through the
+        // block is placed again round it, drawn as its own.
         let outcome = crate::start_supports(&crowded, crate::SupportRequest::default())
             .unwrap()
             .join()
             .unwrap();
-        assert_eq!(outcome.crowded, vec![copy]);
+        assert_eq!(outcome.plate.sets, 1, "{:?}", outcome.plate);
+        assert!(outcome.plate.placed > 0, "{:?}", outcome.plate);
+        let set = outcome.sets.iter().find(|s| s.model == copy).unwrap();
+        assert!(set.same_as.is_none());
+        let models = crate::scene_model_leaves(&crowded, None).unwrap();
+        let block = models
+            .iter()
+            .find(|(leaf, _)| *leaf != copy && *leaf != first)
+            .map(|(_, m)| {
+                PlateModel::new(
+                    "block",
+                    shared_bvh(m),
+                    bread_support_pipeline::model_matrix(&m.transform),
+                )
+            })
+            .unwrap();
+        let own = set.session.first_model().unwrap().id.clone();
+        let near = bread_support_pipeline::plate::crowding(
+            &set.session.state().collections,
+            &|_, m| m == own,
+            &[&block],
+            NEIGHBOUR_CLEARANCE_MM,
+        );
+        assert!(near.is_empty(), "{near:?}");
+        // Its contacts are held, or counted for Fix all.
+        let tips = |o: &crate::SupportOutcome| {
+            o.sets
+                .iter()
+                .find(|s| s.model == copy)
+                .map_or(0, |s| s.session.tips().len())
+        };
+        assert!(tips(&outcome) + outcome.plate.lost >= tips(&alone));
+    }
+
+    /// An edit given the models standing near its own routes round them
+    /// (#725): a trunk added over a block keeps clear of it.
+    #[test]
+    fn an_edit_keeps_clear_of_the_neighbours_it_is_given() {
+        use sc_mesh_core::transform::{AffineTransform3D, Transform3D};
+        use sc_scene::LeafPayload;
+        let mut scene = boxes_scene(&[([0.0, 0.0, 25.0], [30.0, 10.0, 27.0])]);
+        let slab = crate::scene_model_leaves(&scene, None).unwrap()[0].0;
+        let block_scene = boxes_scene(&[([10.0, 0.0, 0.0], [20.0, 10.0, 12.0])]);
+        let block_leaf = crate::scene_model_leaves(&block_scene, None).unwrap()[0].0;
+        let block_mesh = block_scene.leaf_mesh_arc(block_leaf).unwrap().clone();
+        let leaf = scene
+            .add_leaf(
+                None,
+                Transform3D::Affine(AffineTransform3D::from_translation([0.0, 0.0, 0.0])),
+                LeafPayload::Mesh(block_mesh),
+            )
+            .unwrap();
+        scene.add_root(leaf).unwrap();
+        let mut session = crate::start_supports(
+            &scene,
+            crate::SupportRequest {
+                models: Some(vec![slab]),
+                clear_of_neighbours: false,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .join()
+        .unwrap()
+        .sets
+        .remove(0)
+        .session;
+        session.state = SupportState::default();
+        session.removal_index = Arc::default();
+        let models: Vec<ModelInput> = crate::scene_model_leaves(&scene, None)
+            .unwrap()
+            .into_iter()
+            .map(|(_, m)| m)
+            .collect();
+        let block = models
+            .iter()
+            .find(|m| m.id != session.models[0].id)
+            .map(|m| {
+                PlateModel::new(
+                    "block",
+                    shared_bvh(m),
+                    bread_support_pipeline::model_matrix(&m.transform),
+                )
+            })
+            .unwrap();
+        let near = |s: &SupportSession| {
+            let own = s.models[0].id.clone();
+            bread_support_pipeline::plate::crowding(
+                &s.state.collections,
+                &|_, m| m == own,
+                &[&block],
+                NEIGHBOUR_CLEARANCE_MM,
+            )
+        };
+        let over_the_block = [15.0, 5.0, 25.0];
+        let mut plain = session.clone();
+        plain
+            .add_at(over_the_block, &AddOptions::default())
+            .unwrap();
+        assert!(!near(&plain).is_empty(), "a trunk straight down");
+        let mut aware = session.clone();
+        aware.set_neighbours(&models);
+        assert_eq!(
+            aware.neighbour_count(),
+            1,
+            "its own model is not its neighbour"
+        );
+        match aware.add_at(over_the_block, &AddOptions::default()) {
+            Ok(()) => assert!(near(&aware).is_empty(), "{:?}", near(&aware)),
+            Err(e) => panic!("a way round the block: {e}"),
+        }
+        // Moved, the plate round it is another: the neighbours go.
+        let moved = aware.moved_in_plane(0, [0.0, 50.0]);
+        assert_eq!(moved.neighbour_count(), 0);
     }
 
     /// A model's supports, raft and all, are the same wherever it stands

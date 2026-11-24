@@ -97,6 +97,28 @@ fn a_change_on_the_card_goes_through_the_bus() {
     assert_eq!(snap.gizmo_style.combo_index(), 1);
 }
 
+/// #730: the template printer files are named by is set on the General
+/// page, with a name it gives below, and kept; Restore defaults puts back
+/// the shipped one.
+#[test]
+fn the_exported_file_name_follows_the_template_typed() {
+    let (shown, kept, restored) = on_fresh_slint_thread(|| {
+        let bus = PreferencesBus::new(PreferencesSnapshot::for_tests());
+        let (ui, _l, _w, _a) = opened(&bus);
+        let prefs = ui.global::<Prefs>();
+        assert_eq!(prefs.get_export_name_preview(), "dragon - Plate 2");
+        prefs.set_export_name_template("{printer} {project}".into());
+        prefs.invoke_export_name_template_edited("{printer} {project}".into());
+        let shown = prefs.get_export_name_preview().to_string();
+        let kept = bus.snapshot().export_name_template;
+        prefs.invoke_restore_defaults(page::GENERAL);
+        (shown, kept, bus.snapshot().export_name_template)
+    });
+    assert_eq!(shown, "Saturn 4 Ultra dragon");
+    assert_eq!(kept, "{printer} {project}");
+    assert_eq!(restored, crate::file_name_template::DEFAULT_TEMPLATE);
+}
+
 #[test]
 fn restore_defaults_puts_back_only_the_page_asked() {
     let snap = on_fresh_slint_thread(|| {

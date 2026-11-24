@@ -31,13 +31,21 @@
 //! did: a model and its supports turn together as one rigid piece, so
 //! nothing has to be generated again.
 
+mod across;
 mod cache;
 mod fill;
 mod footprint;
 mod grid;
+mod nest;
+mod packing;
+mod pattern;
 mod plate;
+mod press;
+mod scene_file;
 mod search;
 mod separate;
+
+pub use scene_file::SceneJob;
 
 pub use cache::{kept_bytes, kept_parts, kept_parts_of};
 pub use fill::{FillCopy, Filled, fill};
@@ -78,6 +86,36 @@ pub struct Plate {
     pub max: [f64; 2],
     /// The plate's height.
     pub floor: f64,
+    /// Where nothing may stand, at any height: the dead zones of the
+    /// printer's screen (#726).
+    pub keep_out: KeepOut,
+}
+
+/// Rectangles of a plate nothing may stand on (#726), world mm
+/// `[x0, y0, x1, y1]`; as many as [`KeepOut::MAX`].
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct KeepOut {
+    rects: [[f64; 4]; KeepOut::MAX],
+    len: usize,
+}
+
+impl KeepOut {
+    /// How many rectangles a plate keeps out.
+    pub const MAX: usize = 16;
+
+    /// The first [`Self::MAX`] of `rects`.
+    pub fn new(rects: &[[f64; 4]]) -> Self {
+        let mut out = Self::default();
+        for rect in rects.iter().take(Self::MAX) {
+            out.rects[out.len] = *rect;
+            out.len += 1;
+        }
+        out
+    }
+
+    pub fn rects(&self) -> &[[f64; 4]] {
+        &self.rects[..self.len]
+    }
 }
 
 /// How to arrange.
@@ -113,6 +151,11 @@ pub struct Settings {
     /// anyway and the bodies around it move until none overlaps. Costs
     /// about a second a plate; never places fewer.
     pub squeeze: bool,
+    /// Fill bed keeps pressing more copies in until this long after it
+    /// started, when its first tries leave room it could not fill; zero
+    /// stops at its first tries, and the same scene then always fills the
+    /// same.
+    pub squeeze_for: Duration,
 }
 
 impl Default for Settings {
@@ -129,6 +172,7 @@ impl Default for Settings {
             free_below: 0.0,
             tight: false,
             squeeze: true,
+            squeeze_for: Duration::from_secs(3),
         }
     }
 }
@@ -198,6 +242,8 @@ struct Frame {
     height: usize,
     /// The angles a body may take.
     angles: Vec<f64>,
+    /// What the plate keeps clear (#726).
+    keep_out: KeepOut,
 }
 
 impl Frame {
@@ -229,6 +275,7 @@ impl Frame {
             angles: (0..turns)
                 .map(|k| TAU * f64::from(k) / f64::from(turns))
                 .collect(),
+            keep_out: plate.keep_out,
         }
     }
 
@@ -237,6 +284,13 @@ impl Frame {
     /// so its first angle can be stamped where it stands. `None` for no
     /// triangles.
     fn footprint(&self, body: &Body, snap: bool, angles: &[f64]) -> Option<Footprint> {
+        Some(self.turned(&self.ready(body)?, snap, angles))
+    }
+
+    /// The bands of `body` joined in its own frame, about the middle of
+    /// what it covers: what [`Self::turned`] turns into its footprint.
+    /// `None` for no triangles.
+    fn ready(&self, body: &Body) -> Option<Ready> {
         // Each part's bands, drawn in the body's own frame and kept between
         // runs (#560), then joined and turned the way the body stands.
         let own = OwnFrame::of(&body.parts.first()?.world);
@@ -254,12 +308,21 @@ impl Frame {
             (middle[0] / fine).round() * fine,
             (middle[1] / fine).round() * fine,
         ];
-        let joined = joined.about(about);
+        let base = joined.about(about);
         let (s, c) = own.turn.sin_cos();
         let world = [
             own.at[0] + c * about[0] - s * about[1],
             own.at[1] + s * about[0] + c * about[1],
         ];
+        Some(Ready { base, own, world })
+    }
+
+    /// The footprint of a body [`Self::ready`] drew, at each of `angles`,
+    /// turning about the middle of its shadow; with `snap`, about the grid
+    /// corner nearest it, so its first angle can be stamped where it
+    /// stands.
+    fn turned(&self, ready: &Ready, snap: bool, angles: &[f64]) -> Footprint {
+        let Ready { base, own, world } = ready;
         let (reference, offset) = if snap {
             let cell = self.geo.cell;
             let at: [f64; 2] = std::array::from_fn(|k| {
@@ -267,9 +330,9 @@ impl Frame {
             });
             (at, [world[0] - at[0], world[1] - at[1]])
         } else {
-            (world, [0.0, 0.0])
+            (*world, [0.0, 0.0])
         };
-        Some(joined.turned_about(angles, &self.geo, own.turn, offset, reference))
+        base.turned_about(angles, &self.geo, own.turn, offset, reference)
     }
 
     /// An empty plate as high as `bands`, with the first shape of each of
@@ -287,6 +350,21 @@ impl Frame {
                 ((fp.reference[1] - self.origin[1]) / cell).round() as i32 - fp.radius,
             ];
             occupancy.stamp(&fp.shapes[0], at);
+        }
+        // What the plate keeps clear holds every band, grown by half the
+        // gap as a body's footprint is (#726).
+        for rect in self.keep_out.rects() {
+            let half = self.geo.gap * 0.5;
+            let cell_of = |v: f64, k: usize| (v - self.origin[k]) / cell;
+            let lo = [
+                cell_of(rect[0] - half, 0).floor() as i64,
+                cell_of(rect[1] - half, 1).floor() as i64,
+            ];
+            let hi = [
+                cell_of(rect[2] + half, 0).ceil() as i64,
+                cell_of(rect[3] + half, 1).ceil() as i64,
+            ];
+            occupancy.block(lo, hi);
         }
         occupancy
     }
@@ -308,6 +386,15 @@ impl Frame {
             on_plate: true,
         }
     }
+}
+
+/// A body's bands joined in its own frame, about the middle of what it
+/// covers, with the frame and where that middle stands in the world.
+#[derive(Debug)]
+struct Ready {
+    base: Base,
+    own: OwnFrame,
+    world: [f64; 2],
 }
 
 /// A body's own frame (#560): where its first part stands in the plate
@@ -336,20 +423,30 @@ impl OwnFrame {
     }
 
     /// `world`, a part's pose in the world, as a pose in this frame.
+    /// Rounded to a billionth, so copies standing turned apart, whose poses
+    /// differ only by the rounding of the turn, take the very same pose and
+    /// draw the very same bands (#554).
     fn pose(&self, world: &AffineTransform3D) -> AffineTransform3D {
         let (s, c) = (-self.turn).sin_cos();
         let (l, t) = (world.linear(), world.translation());
+        let even = |v: f64| (v * 1e9).round() * 1e-9;
         let linear: [[f64; 3]; 3] = std::array::from_fn(|r| {
-            std::array::from_fn(|k| match r {
-                0 => c * l[0][k] - s * l[1][k],
-                1 => s * l[0][k] + c * l[1][k],
-                _ => l[2][k],
+            std::array::from_fn(|k| {
+                even(match r {
+                    0 => c * l[0][k] - s * l[1][k],
+                    1 => s * l[0][k] + c * l[1][k],
+                    _ => l[2][k],
+                })
             })
         });
         let d = [t[0] - self.at[0], t[1] - self.at[1]];
         AffineTransform3D::from_linear_and_translation(
             linear,
-            [c * d[0] - s * d[1], s * d[0] + c * d[1], t[2]],
+            [
+                even(c * d[0] - s * d[1]),
+                even(s * d[0] + c * d[1]),
+                even(t[2]),
+            ],
         )
     }
 }
@@ -458,7 +555,9 @@ pub fn arrange(
         target: [frame.width as i32 / 2, frame.height as i32 / 2],
         cell,
         origin: frame.origin,
-        balance: fixed.is_empty(),
+        // A pile shifts to balance only on a plate nothing holds: neither
+        // a body that stays nor what the plate keeps out (#726).
+        balance: fixed.is_empty() && frame.keep_out.rects().is_empty(),
         passes: settings.passes,
         deadline: started + settings.time_limit,
         tight: settings.tight,
@@ -587,10 +686,11 @@ impl Across {
 
 /// Arranges `bodies` over `plates`, in their order, on as few of them as it
 /// can (#554): the first plate takes as many as fit, the next the rest, and
-/// so on. A body that stays (`fixed`) stands on the plate `stands_on` names,
-/// which keeps clear of it; one on no plate is left out. Each body's
-/// footprint is drawn once, whatever the plates tried. Checks `cancel`
-/// between plates.
+/// so on; the plates a body that stays stands on first. A body that stays
+/// (`fixed`) stands on the plate `stands_on` names, which keeps clear of
+/// it; one on no plate is left out. Each body's footprint is drawn once,
+/// whatever the plates tried, and copies share it. Checks `cancel` between
+/// plates.
 pub fn arrange_across(
     bodies: &[Body],
     stands_on: &[Option<usize>],
@@ -598,161 +698,7 @@ pub fn arrange_across(
     settings: &Settings,
     cancel: &AtomicBool,
 ) -> Result<Across, Cancelled> {
-    let started = Instant::now();
-    let Some(first_plate) = plates.first() else {
-        return Ok(Across {
-            placements: vec![None; bodies.len()],
-            plates_used: 0,
-            spread: 0.0,
-            timings: Timings::default(),
-        });
-    };
-    let base = Frame::new(first_plate, settings);
-    let keys: Vec<Option<BodyKey>> = bodies.iter().map(BodyKey::of).collect();
-    let first_of: Vec<usize> = (0..bodies.len())
-        .map(|i| {
-            keys[i]
-                .as_ref()
-                .and_then(|k| keys[..i].iter().position(|other| other.as_ref() == Some(k)))
-                .unwrap_or(i)
-        })
-        .collect();
-    // The bodies that move, at every angle; those that stay are drawn on
-    // their own plate below.
-    let made: Vec<Option<Footprint>> = bodies
-        .par_iter()
-        .enumerate()
-        .map(|(i, body)| {
-            if first_of[i] != i || body.fixed {
-                return None;
-            }
-            base.footprint(body, false, &base.angles)
-        })
-        .collect();
-    let footprints: Vec<Option<Footprint>> = (0..bodies.len())
-        .map(|i| {
-            if bodies[i].fixed {
-                return None;
-            }
-            let first = first_of[i];
-            let fp = made[first].as_ref()?;
-            if first == i {
-                return Some(fp.clone());
-            }
-            let (a, b) = (offset(&bodies[i]), offset(&bodies[first]));
-            Some(fp.moved([a[0] - b[0], a[1] - b[1]]))
-        })
-        .collect();
-    let standing: Vec<Option<Footprint>> = bodies
-        .par_iter()
-        .enumerate()
-        .map(|(i, body)| {
-            let plate = (*stands_on.get(i)?)?;
-            if !body.fixed {
-                return None;
-            }
-            Frame::new(plates.get(plate)?, settings).footprint(body, true, &[0.0])
-        })
-        .collect();
-    let footprinted = Instant::now();
-    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-        return Err(Cancelled);
-    }
-    let bands = bands_of(footprints.iter().chain(&standing).flatten());
-    let mut placements: Vec<Option<(usize, Placement)>> = vec![None; bodies.len()];
-    // The bodies still to place, in their order.
-    let mut left: Vec<usize> = (0..bodies.len())
-        .filter(|&i| footprints[i].is_some())
-        .collect();
-    // The last plate a body that stays stands on: past it, a plate that
-    // takes nothing takes nothing on any plate after it.
-    let last_standing = (0..bodies.len())
-        .filter(|&i| standing[i].is_some())
-        .filter_map(|i| stands_on[i])
-        .max();
-    let mut used = last_standing.map_or(0, |p| p + 1);
-    let mut spread = Spread::default();
-    for (p, plate) in plates.iter().enumerate() {
-        if left.is_empty() {
-            break;
-        }
-        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-            return Err(Cancelled);
-        }
-        let frame = Frame::new(plate, settings);
-        let fixed: Vec<&Footprint> = (0..bodies.len())
-            .filter(|&i| stands_on.get(i).copied().flatten() == Some(p))
-            .filter_map(|i| standing[i].as_ref())
-            .collect();
-        let occupancy = frame.plate_with(bands, fixed.iter().copied());
-        for fp in &fixed {
-            let cell = frame.geo.cell;
-            let at = [
-                ((fp.reference[0] - frame.origin[0]) / cell).round() as i32 - fp.radius,
-                ((fp.reference[1] - frame.origin[1]) / cell).round() as i32 - fp.radius,
-            ];
-            spread.add(p, &fp.shapes[0], at);
-        }
-        let moving: Vec<Footprint> = left.iter().filter_map(|&i| footprints[i].clone()).collect();
-        let problem = Problem {
-            footprints: &moving,
-            plate: occupancy,
-            target: [frame.width as i32 / 2, frame.height as i32 / 2],
-            cell: frame.geo.cell,
-            origin: frame.origin,
-            balance: fixed.is_empty(),
-            passes: settings.passes,
-            deadline: Instant::now() + settings.time_limit,
-            tight: settings.tight,
-        };
-        let layout = search::search(&problem, cancel).ok_or(Cancelled)?;
-        let layout = if settings.squeeze {
-            search::squeezed(&problem, layout, cancel).ok_or(Cancelled)?
-        } else {
-            layout
-        };
-        let mut still = Vec::new();
-        for (k, &body) in left.iter().enumerate() {
-            match layout.placed[k] {
-                Some((angle, at)) => {
-                    spread.add(p, &moving[k].shapes[angle], at);
-                    placements[body] =
-                        Some((p, frame.placement(&moving[k], angle, at, layout.shift)));
-                }
-                None => still.push(body),
-            }
-        }
-        let took = still.len() < left.len();
-        if took {
-            used = used.max(p + 1);
-        }
-        left = still;
-        // An empty plate past every body that stays took none of them: no
-        // plate after it will.
-        if !took && last_standing.is_none_or(|s| p > s) {
-            break;
-        }
-    }
-    if !left.is_empty() {
-        let last = used.saturating_sub(1).min(plates.len() - 1);
-        let mut parking = Parking::new(&plates[last], base.geo.gap);
-        for body in left {
-            if let Some(fp) = &footprints[body] {
-                placements[body] = Some((last, parking.park(fp, base.geo.cell)));
-            }
-        }
-        used = used.max(last + 1);
-    }
-    let done = Instant::now();
-    Ok(Across {
-        placements,
-        plates_used: used,
-        spread: spread.mm2(base.geo.cell),
-        timings: Timings {
-            footprints: footprinted - started,
-            search: done - footprinted,
-        },
-    })
+    across::arrange_across(bodies, stands_on, plates, settings, cancel)
 }
 
 /// What makes two bodies copies of each other: the same meshes, each the
@@ -848,5 +794,9 @@ impl Parking {
     }
 }
 
+#[cfg(test)]
+mod bench;
+#[cfg(test)]
+mod fill_bench;
 #[cfg(test)]
 mod tests;

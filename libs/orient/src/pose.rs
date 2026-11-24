@@ -164,6 +164,38 @@ pub fn turned_about_footprint(
     )
 }
 
+/// `world` leaned back by `angle_deg` (#722): the model faces the front of
+/// the plate (−Y) with no turn of its own left, leans back about X by
+/// exactly that angle (its top toward +Y), keeps its scale and the centre
+/// of its footprint, and rests on the plate. Every model given the same
+/// angle ends in the same pose, whatever pose it had.
+pub fn leaned_back(
+    mesh: &IndexedMesh,
+    world: &AffineTransform3D,
+    angle_deg: f64,
+) -> AffineTransform3D {
+    let l = world.linear();
+    let scale: [f64; 3] =
+        std::array::from_fn(|j| (l[0][j] * l[0][j] + l[1][j] * l[1][j] + l[2][j] * l[2][j]).sqrt());
+    let leaned = AffineTransform3D::from_rotation_x(-angle_deg.to_radians())
+        .compose(&AffineTransform3D::from_non_uniform_scale(scale));
+    let (lo0, hi0) = world_bounds(mesh, world);
+    let (lo1, hi1) = world_bounds(mesh, &leaned);
+    if !lo0[0].is_finite() || !lo1[0].is_finite() {
+        return *world;
+    }
+    let shift = [
+        (lo0[0] + hi0[0] - lo1[0] - hi1[0]) / 2.0,
+        (lo0[1] + hi0[1] - lo1[1] - hi1[1]) / 2.0,
+        -lo1[2],
+    ];
+    drawn_no_lower_than(
+        mesh,
+        &AffineTransform3D::from_translation(shift).compose(&leaned),
+        0.0,
+    )
+}
+
 /// The lowest point of `mesh` under `world` as the viewport draws it: in
 /// f32, with the matrix cast to f32 and the GPU's order of operations
 /// (glam's `Mat4::transform_point3`).

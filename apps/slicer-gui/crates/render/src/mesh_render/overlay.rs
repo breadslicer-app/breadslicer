@@ -152,11 +152,14 @@ impl OverlaySlot {
         if same {
             return;
         }
+        // Told when the count changes: marks drawn again every moment (the
+        // hint and island rings) would push everything else out of the
+        // trail a diagnostic carries (#756).
+        let count = |p: Option<&Overlay>| p.map_or(0, |p| p.len());
+        if count(self.source.as_ref()) != count(pieces) {
+            crate::breadcrumbs::note(&format!("gpu: {what} {} piece(s)", count(pieces)));
+        }
         self.source = pieces.cloned();
-        crate::breadcrumbs::note(&format!(
-            "gpu: {what} {} piece(s)",
-            pieces.map_or(0, |p| p.len())
-        ));
         let mut kept = std::mem::take(&mut self.pieces);
         let Some(pieces) = pieces else {
             return;

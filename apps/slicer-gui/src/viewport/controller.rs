@@ -102,12 +102,64 @@ pub(crate) struct NameBeingEdited {
     pub(crate) anchor: usize,
 }
 
+/// The supports hidden from the view with H (#728).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct HiddenSupports {
+    /// Each by its set's leaf and its tip, as the Pick tool knows them.
+    pub(crate) tips: Vec<(sc_scene::NodeId, [f64; 3])>,
+    /// What each set with supports hidden is drawn as instead.
+    pub(crate) sets: Vec<HiddenSet>,
+}
+
+/// A support set drawn without the supports hidden from it (#728).
+#[derive(Clone, Debug)]
+pub(crate) struct HiddenSet {
+    pub(crate) leaf: sc_scene::NodeId,
+    /// The mesh the leaf held when this was drawn: with another one, the
+    /// set has changed since, and it shows whole.
+    pub(crate) from: Arc<sc_mesh_core::IndexedMesh>,
+    /// The set without its hidden supports; `None` with nothing left.
+    pub(crate) drawn: Option<Arc<sc_mesh_core::IndexedMesh>>,
+}
+
+impl PartialEq for HiddenSet {
+    /// The same meshes, not meshes alike: comparing a set's vertices would
+    /// cost what drawing it does.
+    fn eq(&self, other: &Self) -> bool {
+        let same = |a: &Option<Arc<_>>, b: &Option<Arc<_>>| match (a, b) {
+            (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        self.leaf == other.leaf
+            && Arc::ptr_eq(&self.from, &other.from)
+            && same(&self.drawn, &other.drawn)
+    }
+}
+
+/// How far over its room a model may stand before Scale to fit is offered
+/// (#733), mm: what a print does not show.
+const FIT_SLACK_MM: f64 = 0.01;
+
 /// Told each time the held slice's estimate is worked out again.
 type EstimateListener = Rc<dyn Fn()>;
 
 /// Told the pixel of a click in the Slice tab (#245).
 type SliceClick = Rc<dyn Fn(f32, f32)>;
 
+/// What reloads models from their files (#721).
+type ReloadHook = Rc<dyn Fn(Vec<sc_scene::NodeId>)>;
+/// Where a dead zone being drawn started and is now, on its plate (#726).
+type ZoneDrawing = (u32, [f64; 2], [f64; 2]);
+/// What an edit of the dead zones goes to (#726).
+type DeadZoneHook = Rc<dyn Fn(crate::dead_zones::DeadZoneEdit)>;
+/// The overlay the dead zones were joined to, their marks, and the two
+/// joined (#726).
+type JoinedMarks = (
+    Option<crate::mesh_render::Overlay>,
+    crate::mesh_render::Overlay,
+    crate::mesh_render::Overlay,
+);
 pub(crate) struct ViewportController {
     ui: slint::Weak<MainWindow>,
     session: SessionState,
@@ -134,6 +186,9 @@ pub(crate) struct ViewportController {
     /// The selection the Slice tab put aside (#140): nothing is selected
     /// there, and leaving it brings back what is still in the scene.
     kept_out_of_slice: RefCell<Selection>,
+    /// The supports hidden from the view with H (#728). View only: the
+    /// scene keeps them; leaving the tab shows them again.
+    hidden_supports: RefCell<HiddenSupports>,
     /// The held slice's estimate as last shown, and who is told each time it
     /// is worked out again (the resin's cost, #101).
     last_estimate: Cell<Option<crate::export_print_file::PrintEstimate>>,
@@ -233,6 +288,17 @@ pub(crate) struct ViewportController {
     queued_imports: RefCell<Vec<PathBuf>>,
     /// Runs when Delete takes the scene's last object (#397).
     on_emptied: RefCell<Option<Rc<dyn Fn()>>>,
+    /// What reloads models from their files (#721).
+    on_reload: RefCell<Option<ReloadHook>>,
+    /// The screen's dead zones (#726): those of the printer, the drawing
+    /// tool, the one being drawn, what an edit goes to, and their marks
+    /// joined to the overlay.
+    dead_zones: RefCell<(Vec<crate::dead_zones::DeadZone>, u32)>,
+    dead_zone_tool: Cell<bool>,
+    dead_zone_drawing: Cell<Option<ZoneDrawing>>,
+    on_dead_zone_edit: RefCell<Option<DeadZoneHook>>,
+    dead_zone_marks: RefCell<Option<crate::mesh_render::Overlay>>,
+    dead_zone_joined: RefCell<Option<JoinedMarks>>,
     /// The drag tool armed, for tests that run without a window.
     #[cfg(test)]
     drag_tool_for_test: Cell<Option<SupportDragKind>>,
@@ -375,6 +441,7 @@ impl ViewportController {
             slice_current: Cell::new(false),
             paint_marks: Cell::new([None; 3]),
             kept_out_of_slice: RefCell::new(Selection::None),
+            hidden_supports: RefCell::new(HiddenSupports::default()),
             review_highlight: RefCell::new(None),
             highlight_generation: Cell::new(0),
             plate_printer_name: RefCell::new(None),
@@ -411,6 +478,13 @@ impl ViewportController {
             right_dropped_drag: Cell::new(false),
             queued_imports: RefCell::new(Vec::new()),
             on_emptied: RefCell::new(None),
+            on_reload: RefCell::new(None),
+            dead_zones: RefCell::new((Vec::new(), 1)),
+            dead_zone_tool: Cell::new(false),
+            dead_zone_drawing: Cell::new(None),
+            on_dead_zone_edit: RefCell::new(None),
+            dead_zone_marks: RefCell::new(None),
+            dead_zone_joined: RefCell::new(None),
             #[cfg(test)]
             drag_tool_for_test: Cell::new(None),
             surface_brush: RefCell::new(None),
@@ -463,6 +537,7 @@ impl ViewportController {
             slice_current: Cell::new(false),
             paint_marks: Cell::new([None; 3]),
             kept_out_of_slice: RefCell::new(Selection::None),
+            hidden_supports: RefCell::new(HiddenSupports::default()),
             review_highlight: RefCell::new(None),
             highlight_generation: Cell::new(0),
             plate_printer_name: RefCell::new(None),
@@ -499,6 +574,13 @@ impl ViewportController {
             right_dropped_drag: Cell::new(false),
             queued_imports: RefCell::new(Vec::new()),
             on_emptied: RefCell::new(None),
+            on_reload: RefCell::new(None),
+            dead_zones: RefCell::new((Vec::new(), 1)),
+            dead_zone_tool: Cell::new(false),
+            dead_zone_drawing: Cell::new(None),
+            on_dead_zone_edit: RefCell::new(None),
+            dead_zone_marks: RefCell::new(None),
+            dead_zone_joined: RefCell::new(None),
             #[cfg(test)]
             drag_tool_for_test: Cell::new(None),
             surface_brush: RefCell::new(None),
@@ -779,15 +861,20 @@ impl ViewportController {
         match event {
             SceneEvent::Installed => {
                 self.on_scene_installed();
+                self.mirror_credit_to_ui();
                 self.mirror_prep_layers_to_ui();
                 self.mirror_slice_current_to_ui();
             }
-            SceneEvent::Cleared => self.on_scene_cleared(),
+            SceneEvent::Cleared => {
+                self.on_scene_cleared();
+                self.mirror_credit_to_ui();
+            }
             SceneEvent::Painted => self.mark_dirty(),
             SceneEvent::PlatesChanged => self.on_plates_changed(),
             SceneEvent::SelectionChanged => {
                 self.on_modal_transform_finish(false);
                 self.mirror_selection_to_ui();
+                self.mirror_credit_to_ui();
                 self.mark_dirty();
             }
             SceneEvent::Mutated => {
@@ -816,6 +903,9 @@ impl ViewportController {
                 if let Some(ui) = self.ui.upgrade() {
                     self.refresh_object_list_on(&ui);
                 }
+                // The last model gone, the scene no longer stands for its
+                // file; Undo brings the name back (#748).
+                self.mirror_title_to_ui();
                 self.mirror_plates_to_ui();
                 self.mirror_prep_layers_to_ui();
                 self.mirror_slice_current_to_ui();
@@ -1034,6 +1124,24 @@ impl ViewportController {
     /// title. Empty while no scene is loaded. Runs on scene install and clear;
     /// the save flow calls [`Self::refresh_document_title`] after a "Save As"
     /// moves the document to a new path.
+    /// The creator's credit of the model picked, or of the file (#745).
+    fn mirror_credit_to_ui(&self) {
+        if let Some(ui) = self.ui.upgrade() {
+            let document = self.session.document();
+            let credit = document.credit_of(document.selection_primary_node_id());
+            let line = credit.as_ref().map_or_else(String::new, |credit| {
+                credit.line(|designer| ctr!("Workspace", "Designed by {}", designer).to_string())
+            });
+            let link = credit
+                .as_ref()
+                .and_then(crate::credit::Credit::link)
+                .unwrap_or_default()
+                .to_owned();
+            ui.set_credit_line(line.into());
+            ui.set_credit_link(link.into());
+        }
+    }
+
     fn mirror_title_to_ui(&self) {
         if let Some(ui) = self.ui.upgrade() {
             let document = self.session.document();
@@ -1414,12 +1522,14 @@ impl ViewportController {
     pub(crate) fn thumbnail_png(&self) -> Option<Vec<u8>> {
         const SIDE: u32 = 256;
         let build_volume = self.build_volume();
+        let hiding = self.hiding_supports();
         let mut cell = self.render.renderer_cell().borrow_mut();
         let renderer = cell.as_mut()?;
         // The scene reaches the GPU when the window paints: a save before that
         // paint would draw a scene the renderer does not hold, which shows the
-        // background alone.
-        if self.render.frame().upload_owed() {
+        // background alone. Supports hidden from the view (#728) are saved,
+        // so the picture shows them: the next paint hides them again.
+        if self.render.frame().upload_owed() || hiding {
             match self
                 .session
                 .document()
@@ -1431,6 +1541,10 @@ impl ViewportController {
                 }
                 _ => return None,
             }
+            renderer.set_hidden_nodes(&self.session.document().hidden_leaves());
+        }
+        if hiding {
+            self.upload_scene_again();
         }
         let mut rgba = self
             .session
@@ -1459,9 +1573,19 @@ impl ViewportController {
         // the installed buffers.
         let sizes = format.preview_sizes()?;
         let build_volume = self.build_volume();
+        let hiding = self.hiding_supports();
         let mut cell = self.render.renderer_cell().borrow_mut();
         let renderer = cell.as_mut()?;
         let document = self.session.document();
+        // Supports hidden from the view (#728) print: the pictures show them,
+        // and the next paint hides them again.
+        if hiding {
+            document
+                .with_scene(|spatial| renderer.upload_scene(spatial.graph()))?
+                .ok()?;
+            renderer.set_hidden_nodes(&document.hidden_leaves());
+            self.upload_scene_again();
+        }
         let plates = document.plates();
         // The plate the file prints, of several (#547).
         let plate = document.slice_params().map_or(0, |params| params.plate);
@@ -1558,6 +1682,8 @@ impl ViewportController {
             return;
         }
         crate::breadcrumbs::note(&format!("tab: {section:?}"));
+        // The supports hidden with H come back with another tab (#728).
+        self.set_hidden_supports(HiddenSupports::default());
         let document = self.session.document();
         if section == WorkspaceSection::Slice {
             *self.kept_out_of_slice.borrow_mut() = document.selection();
@@ -1878,6 +2004,92 @@ impl ViewportController {
         let lines =
             (view == 1 || lines_under).then(|| self.support_lines.lines(self.session.document()));
         (shown_up_to, lines)
+    }
+
+    /// The supports hidden from the view (#728).
+    pub(crate) fn hidden_supports(&self) -> HiddenSupports {
+        self.hidden_supports.borrow().clone()
+    }
+
+    /// Hides `hidden` from the view, in place of what was hidden; an empty
+    /// one shows every support again.
+    pub(crate) fn set_hidden_supports(&self, hidden: HiddenSupports) {
+        if *self.hidden_supports.borrow() == hidden {
+            return;
+        }
+        let count = hidden.tips.len() as i32;
+        *self.hidden_supports.borrow_mut() = hidden;
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_support_hidden_count(count);
+        }
+        self.upload_scene_again();
+    }
+
+    /// Whether the view hides any support (#728).
+    fn hiding_supports(&self) -> bool {
+        !self.hidden_supports.borrow().sets.is_empty()
+    }
+
+    /// The scene as the view draws it: `graph` with the supports hidden
+    /// with H left out of their sets (#728); `None` with none hidden.
+    pub(crate) fn scene_for_view(&self, graph: &sc_scene::Scene) -> Option<sc_scene::Scene> {
+        let hidden = self.hidden_supports.borrow();
+        let mut shown: Option<sc_scene::Scene> = None;
+        for set in &hidden.sets {
+            let Some(drawn) = &set.drawn else {
+                continue;
+            };
+            if !graph
+                .leaf_mesh_arc(set.leaf)
+                .is_some_and(|now| Arc::ptr_eq(now, &set.from))
+            {
+                continue;
+            }
+            let scene = shown.get_or_insert_with(|| graph.clone());
+            let resource = match scene.node(set.leaf).map(|node| &node.kind) {
+                Some(sc_scene::NodeKind::Leaf(sc_scene::LeafPayload::MeshResource(rid))) => {
+                    Some(*rid)
+                }
+                _ => None,
+            };
+            match resource {
+                // A mesh another leaf shares (a copy) is left as it is.
+                Some(rid) if !scene.other_leaf_references_resource(rid, set.leaf) => {
+                    let _ = scene.replace_mesh_resource(rid, &set.from, drawn.clone());
+                }
+                Some(_) => {}
+                None => {
+                    let _ = scene.replace_inline_leaf_mesh(set.leaf, &set.from, drawn.clone());
+                }
+            }
+        }
+        shown
+    }
+
+    /// The leaves the view leaves out: the ones hidden in the scene, and the
+    /// support sets whose every support is hidden with H (#728).
+    fn leaves_hidden_in_view(&self) -> Vec<sc_scene::NodeId> {
+        let document = self.session.document();
+        let mut leaves = document.hidden_leaves();
+        let hidden = self.hidden_supports.borrow();
+        let emptied: Vec<sc_scene::NodeId> = document
+            .with_scene(|spatial| {
+                hidden
+                    .sets
+                    .iter()
+                    .filter(|set| set.drawn.is_none())
+                    .filter(|set| {
+                        spatial
+                            .graph()
+                            .leaf_mesh_arc(set.leaf)
+                            .is_some_and(|now| Arc::ptr_eq(now, &set.from))
+                    })
+                    .map(|set| set.leaf)
+                    .collect()
+            })
+            .unwrap_or_default();
+        leaves.extend(emptied);
+        leaves
     }
 
     /// Whether the supports are left out of the view: while the Hollow tab's
@@ -2944,6 +3156,168 @@ impl ViewportController {
         *self.on_emptied.borrow_mut() = Some(emptied);
     }
 
+    /// The dead zones of the printer's screen (#726), drawn on each of the
+    /// `plates`.
+    pub(crate) fn set_dead_zones(&self, zones: Vec<crate::dead_zones::DeadZone>, plates: u32) {
+        *self.dead_zones.borrow_mut() = (zones, plates);
+        self.redraw_dead_zones();
+    }
+
+    /// Sets what a drawing of a dead zone goes to (#726).
+    pub(crate) fn set_on_dead_zone_edit(&self, edit: Rc<dyn Fn(crate::dead_zones::DeadZoneEdit)>) {
+        *self.on_dead_zone_edit.borrow_mut() = Some(edit);
+    }
+
+    /// Arms or puts away the dead zones' drawing tool (#726).
+    pub(crate) fn set_dead_zone_tool(&self, on: bool) {
+        self.dead_zone_tool.set(on);
+        self.dead_zone_drawing.set(None);
+        self.redraw_dead_zones();
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_dead_zone_tool(on);
+            ui.set_status_notice(if on {
+                ctr!(
+                    "DeadZones",
+                    "Drag on the plate where the screen's pixels are dead; click a zone to take it away."
+                )
+            } else {
+                Default::default()
+            });
+        }
+    }
+
+    fn redraw_dead_zones(&self) {
+        let (zones, plates) = self.dead_zones.borrow().clone();
+        let drawing = self
+            .dead_zone_drawing
+            .get()
+            .map(|(plate, a, b)| (plate, crate::dead_zones::DeadZone::between(a, b)));
+        let volume = self.session.build_volume();
+        *self.dead_zone_marks.borrow_mut() =
+            crate::dead_zones::overlay(&volume, plates, &zones, drawing);
+        self.mark_dirty();
+    }
+
+    /// Where `cursor` meets the plate's floor: the plate, and the point
+    /// from its middle, mm.
+    fn floor_under(&self, cursor: ScreenPoint) -> Option<(u32, [f64; 2])> {
+        let vp = self.render.viewport()?;
+        let camera = self.camera.camera_cell().borrow();
+        let ray = picking::ray_from_pixel(
+            camera.as_ref()?,
+            crate::mesh_render::default_fov_y(),
+            vp.width(),
+            vp.height(),
+            cursor.x,
+            cursor.y,
+        );
+        let (x, y) = picking::ray_z_plane_intersection(&ray, 0.0)?;
+        let volume = self.session.build_volume();
+        let plate = self.session.document().plates().active();
+        let at = crate::plates::offset(&volume, plate);
+        Some((plate, [f64::from(x - at.x), f64::from(y - at.y)]))
+    }
+
+    fn dead_zone_down(&self, cursor: ScreenPoint) -> bool {
+        if !self.dead_zone_tool.get() {
+            return false;
+        }
+        if let Some((plate, p)) = self.floor_under(cursor) {
+            self.dead_zone_drawing.set(Some((plate, p, p)));
+        }
+        true
+    }
+
+    fn dead_zone_move(&self, cursor: ScreenPoint) -> bool {
+        let Some((plate, a, _)) = self.dead_zone_drawing.get() else {
+            return false;
+        };
+        if let Some((_, b)) = self.floor_under(cursor) {
+            self.dead_zone_drawing.set(Some((plate, a, b)));
+            self.redraw_dead_zones();
+        }
+        true
+    }
+
+    fn dead_zone_up(&self) -> bool {
+        if !self.dead_zone_tool.get() {
+            return false;
+        }
+        let Some((_, a, b)) = self.dead_zone_drawing.take() else {
+            return true;
+        };
+        let zone = crate::dead_zones::DeadZone::between(a, b);
+        let edit = if zone.max[0] - zone.min[0] < 0.3 && zone.max[1] - zone.min[1] < 0.3 {
+            // A click: the zone under it goes.
+            let zones = self.dead_zones.borrow().0.clone();
+            zones
+                .iter()
+                .position(|z| z.holds(a))
+                .map(crate::dead_zones::DeadZoneEdit::Remove)
+        } else {
+            Some(crate::dead_zones::DeadZoneEdit::Add(zone))
+        };
+        self.redraw_dead_zones();
+        let on_edit = self.on_dead_zone_edit.borrow().clone();
+        if let (Some(edit), Some(on_edit)) = (edit, on_edit) {
+            on_edit(edit);
+        }
+        true
+    }
+
+    /// `overlay` with the dead zones' marks (#726).
+    fn with_dead_zones(
+        &self,
+        overlay: Option<crate::mesh_render::Overlay>,
+    ) -> Option<crate::mesh_render::Overlay> {
+        let Some(marks) = self.dead_zone_marks.borrow().clone() else {
+            return overlay;
+        };
+        let Some(base) = overlay else {
+            return Some(marks);
+        };
+        let mut joined = self.dead_zone_joined.borrow_mut();
+        if let Some((b, m, both)) = joined.as_ref()
+            && b.as_ref().is_some_and(|b| Arc::ptr_eq(b, &base))
+            && Arc::ptr_eq(m, &marks)
+        {
+            return Some(both.clone());
+        }
+        let both: crate::mesh_render::Overlay = base.iter().chain(marks.iter()).cloned().collect();
+        *joined = Some((Some(base), marks, both.clone()));
+        Some(both)
+    }
+
+    /// Sets what reloads models from their files (#721).
+    pub(crate) fn set_on_reload(&self, reload: Rc<dyn Fn(Vec<sc_scene::NodeId>)>) {
+        *self.on_reload.borrow_mut() = Some(reload);
+    }
+
+    /// Reloads `models` from their files (#721).
+    fn reload_models(&self, models: Vec<sc_scene::NodeId>) {
+        let reload = self.on_reload.borrow().clone();
+        if let Some(reload) = reload
+            && !models.is_empty()
+        {
+            reload(models);
+        }
+    }
+
+    /// Reloads the model of the object list's row `index` (#721).
+    pub(crate) fn reload_row(&self, index: i32) {
+        let document = self.session.document();
+        let Ok(index) = usize::try_from(index) else {
+            return;
+        };
+        let model = document
+            .with_scene(|spatial| {
+                let id = spatial.leaf_id_at_index(index)?;
+                (!shows_supports(spatial, id)).then_some(id)
+            })
+            .flatten();
+        self.reload_models(model.into_iter().collect());
+    }
+
     /// Whether the window's scene holds at least 1 object.
     pub(crate) fn holds_objects(&self) -> bool {
         self.session
@@ -3447,7 +3821,11 @@ impl ViewportController {
 
     pub(crate) fn on_pointer_down(&self, cursor: ScreenPoint, mut modifiers: PointerModifiers) {
         self.pointer_mods.set((modifiers.control, modifiers.shift));
-        if self.lasso_down(cursor) || self.brush_down(cursor, &modifiers) || self.cut_down(cursor) {
+        if self.dead_zone_down(cursor)
+            || self.lasso_down(cursor)
+            || self.brush_down(cursor, &modifiers)
+            || self.cut_down(cursor)
+        {
             return;
         }
         // Shift+click with Add armed hangs the support from the nearest one
@@ -3501,7 +3879,10 @@ impl ViewportController {
         // gizmo drag and hover run in Prepare and Transform.
         self.input.note_hover_cursor(cursor);
         self.pointer_mods.set((modifiers.control, modifiers.shift));
-        if self.lasso_move(cursor) || self.brush_move(cursor, &modifiers) {
+        if self.dead_zone_move(cursor)
+            || self.lasso_move(cursor)
+            || self.brush_move(cursor, &modifiers)
+        {
             return;
         }
         if self.support_drag_move(cursor) || self.cut_move(cursor) {
@@ -3543,7 +3924,7 @@ impl ViewportController {
     /// Shift, the object joins the selection or leaves it, #13), or selects
     /// what a Shift drag's box touches, on top of the selection.
     pub(crate) fn on_pointer_up(&self, cursor: ScreenPoint, modifiers: PointerModifiers) {
-        if self.lasso_up(cursor) || self.brush_up() || self.cut_up(cursor) {
+        if self.dead_zone_up() || self.lasso_up(cursor) || self.brush_up() || self.cut_up(cursor) {
             return;
         }
         if let Some(ui) = self.ui.upgrade() {
@@ -4208,6 +4589,20 @@ impl ViewportController {
         self.mark_dirty();
     }
 
+    /// The file the model of the object list's row `index` came from
+    /// (#732); `None` for a support set's row.
+    pub(crate) fn file_of_row(&self, index: i32) -> Option<PathBuf> {
+        let document = self.session.document();
+        let index = usize::try_from(index).ok()?;
+        let model = document
+            .with_scene(|spatial| {
+                let id = spatial.leaf_id_at_index(index)?;
+                (!shows_supports(spatial, id)).then_some(id)
+            })
+            .flatten()?;
+        document.model_file(model)
+    }
+
     /// Whether the next click lays a model on a face (#15).
     #[cfg(test)]
     pub(crate) fn laying_on_face(&self) -> bool {
@@ -4490,6 +4885,48 @@ impl ViewportController {
         });
         out.push(to);
         out
+    }
+
+    /// The points of the model along a circle as seen (#734): around the
+    /// screen point of `centre`, through the screen point of `edge`, each
+    /// where a ray through it meets the model first, in turn round the
+    /// circle; rays that meet nothing leave a gap.
+    pub(crate) fn surface_circle(&self, centre: [f32; 3], edge: [f32; 3]) -> Vec<[f32; 3]> {
+        let Some(vp) = self.render.viewport() else {
+            return Vec::new();
+        };
+        let Some(camera) = self.camera.camera_cell().borrow().as_ref().cloned() else {
+            return Vec::new();
+        };
+        let fov = crate::mesh_render::default_fov_y();
+        let (w, h) = (vp.width(), vp.height());
+        let screen =
+            |p: [f32; 3]| picking::project_world_to_screen(&camera, fov, w, h, glam::Vec3::from(p));
+        let (Some(c), Some(e)) = (screen(centre), screen(edge)) else {
+            return Vec::new();
+        };
+        let radius = (e.0 - c.0).hypot(e.1 - c.1);
+        let start = (e.1 - c.1).atan2(e.0 - c.0);
+        // One sample every 1.5 px round the circle, at least 12, at most 2000.
+        let steps = ((std::f32::consts::TAU * radius / 1.5).ceil() as usize).clamp(12, 2000);
+        self.session
+            .document()
+            .with_scene(|spatial| {
+                let sample = |i: usize| {
+                    let a = start + std::f32::consts::TAU * i as f32 / steps as f32;
+                    let (x, y) = (c.0 + radius * a.cos(), c.1 + radius * a.sin());
+                    let ray = picking::ray_from_pixel(&camera, fov, w, h, x, y);
+                    picking::pick_face_where(&ray, spatial, |id| !shows_supports(spatial, id)).map(
+                        |hit| {
+                            let p = ray.origin + ray.direction * hit.t;
+                            [p.x, p.y, p.z]
+                        },
+                    )
+                };
+                use rayon::prelude::*;
+                path_pool().install(|| (0..steps).into_par_iter().filter_map(sample).collect())
+            })
+            .unwrap_or_default()
     }
 
     pub(crate) fn measure_click(&self, cursor: ScreenPoint, chain: bool) {
@@ -5259,6 +5696,19 @@ impl ViewportController {
             "ungroup" => self.group_selection(false),
             "mirror-x" => self.mirror_selection(crate::mirror::MirrorAxis::X),
             "mirror-y" => self.mirror_selection(crate::mirror::MirrorAxis::Y),
+            "reload" => {
+                let document = self.session.document();
+                let models: Vec<sc_scene::NodeId> = document
+                    .selection_node_ids()
+                    .into_iter()
+                    .filter(|&id| {
+                        document
+                            .with_scene(|spatial| !shows_supports(spatial, id))
+                            .unwrap_or(false)
+                    })
+                    .collect();
+                self.reload_models(models);
+            }
             _ => {}
         }
     }
@@ -5853,6 +6303,81 @@ impl ViewportController {
         ui.set_selection_scale_x(r.axis_scale_pct[0] as f32);
         ui.set_selection_scale_y(r.axis_scale_pct[1] as f32);
         ui.set_selection_scale_z(r.axis_scale_pct[2] as f32);
+        // Too large for its plate, with the plate's margin (#733).
+        // Not during a gesture: the box is read again when it ends.
+        if !gesture {
+            let room = self.fit_room(id);
+            ui.set_selection_too_large(
+                (0..3).any(|k| r.size[k] > room[1][k] - room[0][k] + FIT_SLACK_MM),
+            );
+        }
+    }
+
+    /// The room a model `id` has on its plate (#733): the build volume over
+    /// the plate it stands on, its edges the plate's margin in (Arrange's).
+    fn fit_room(&self, id: sc_scene::NodeId) -> [[f64; 3]; 2] {
+        let volume = self.build_volume();
+        let (lo, hi) = (volume.envelope_min_mm(), volume.envelope_max_mm());
+        let on = crate::plates::offset(&volume, self.plate_of_leaf(id).unwrap_or(0));
+        let margin = self
+            .ui
+            .upgrade()
+            .map_or(2.0, |ui| f64::from(ui.get_arrange_margin()).max(0.0));
+        let half = [f64::from(hi.x - lo.x) * 0.5, f64::from(hi.y - lo.y) * 0.5]
+            .map(|h| margin.min(h * 0.45));
+        [
+            [
+                f64::from(lo.x + on.x) + half[0],
+                f64::from(lo.y + on.y) + half[1],
+                f64::from(lo.z),
+            ],
+            [
+                f64::from(hi.x + on.x) - half[0],
+                f64::from(hi.y + on.y) - half[1],
+                f64::from(hi.z),
+            ],
+        ]
+    }
+
+    /// Scale to fit (#733): the selected model, too large for its plate,
+    /// scaled evenly to the largest size that fits it with the plate's
+    /// margin, and moved in as far as that takes, in one undo step.
+    pub(crate) fn scale_to_fit(&self) {
+        if !self.allows_layout_tools() || self.gesture_active() {
+            return;
+        }
+        let document = self.session.document();
+        if document.selection_len() != 1 {
+            return;
+        }
+        let Some(id) = document.selection_primary_node_id() else {
+            return;
+        };
+        let [lo, hi] = self.fit_room(id);
+        let change = document
+            .with_scene(|spatial| {
+                let query = spatial.leaf(id)?;
+                let before = query.local_transform();
+                let after =
+                    super::numeric_transform::apply(&query, NumericEdit::FitInto { lo, hi })?;
+                Some((before, after))
+            })
+            .flatten();
+        let Some((before, after)) = change else {
+            return;
+        };
+        let edit = SceneEdit::SetLocalTransform {
+            node_id: id,
+            before,
+            after,
+        };
+        match document.apply_edit(edit.clone()) {
+            Ok(()) => document.push_edit(edit),
+            Err(EditNotApplied::Rejected(reason)) => self.show_edit_rejected(reason),
+            Err(_) => {}
+        }
+        self.readout_owed.set(true);
+        self.mark_dirty();
     }
 
     /// The viewport aids of a gesture in flight (BS-69): what it has done so
@@ -6260,10 +6785,12 @@ impl ViewportController {
 
         if self.render.frame().upload_owed() {
             crate::breadcrumbs::note("gpu: scene upload");
-            let upload = self
-                .session
-                .document()
-                .with_scene(|spatial| renderer.upload_scene(spatial.graph()));
+            let upload = self.session.document().with_scene(|spatial| {
+                match self.scene_for_view(spatial.graph()) {
+                    Some(shown) => renderer.upload_scene(&shown),
+                    None => renderer.upload_scene(spatial.graph()),
+                }
+            });
             crate::breadcrumbs::note(&format!(
                 "gpu: scene upload ok={}",
                 matches!(upload, Some(Ok(())))
@@ -6402,6 +6929,7 @@ impl ViewportController {
             .over(self.overlay.borrow().as_ref(), marks_shown);
         let overlay = self.with_measure(overlay);
         let overlay = self.with_lay_hover(overlay);
+        let overlay = self.with_dead_zones(overlay);
         renderer.set_overlay(overlay.as_ref());
         let hints = (self.session.section() == WorkspaceSection::Supports)
             .then(|| self.hint_marks.borrow().clone())
@@ -6424,7 +6952,7 @@ impl ViewportController {
         renderer.set_support_lines(shown_up_to, lines.as_ref());
         renderer.set_supports_hidden(self.supports_hidden());
         renderer.set_support_view_fade(self.support_view_fade());
-        renderer.set_hidden_nodes(&self.session.document().hidden_leaves());
+        renderer.set_hidden_nodes(&self.leaves_hidden_in_view());
         renderer.set_plates(self.session.document().plates());
         renderer.set_dim_all(self.dims_off_plate());
         renderer.set_plate_tools(
@@ -6990,6 +7518,58 @@ mod lasso_region_tests {
     use super::*;
     use crate::camera::OrbitCamera;
     use glam::Vec3;
+
+    /// #745: a project that credits its creator shows it on the view: the
+    /// model's own credit while it is picked, the file's otherwise; a
+    /// source that is a web address can be opened.
+    #[test]
+    fn a_project_s_creator_shows_on_the_view() {
+        crate::test_support::slint_thread::on_fresh_slint_thread(|| {
+            let window = MainWindow::new().unwrap();
+            let ctrl = Rc::new(ViewportController::new_for_test_with_ui(&window));
+            ctrl.register_document_listener();
+            let mut graph = sc_scene::Scene::new();
+            let leaf = graph
+                .add_leaf(
+                    None,
+                    Transform3D::Identity,
+                    sc_scene::node::LeafPayload::Mesh(Arc::new(sc_mesh_fixtures::unit_cube_mesh())),
+                )
+                .unwrap();
+            graph.add_root(leaf).unwrap();
+            let meta = |node, key: &str, value: &str| sc_project_formats::FileMetadata {
+                node,
+                key: key.to_owned(),
+                value: value.as_bytes().to_vec(),
+            };
+            let payload = sc_project_formats::ProjectPayload {
+                metadata: vec![
+                    meta(None, "designer", "Studio"),
+                    meta(None, "license", "CC-BY-4.0"),
+                    meta(None, "source", "https://example.com/goblin"),
+                    meta(Some(leaf), "designer", "Fulano"),
+                ],
+                ..Default::default()
+            };
+            let document = ctrl.document();
+            document.install_project_graph(graph, "goblin.bread".into(), payload);
+            assert!(window.get_credit_line().contains("Studio"));
+            assert!(window.get_credit_line().contains("CC-BY-4.0"));
+            assert_eq!(
+                window.get_credit_link().as_str(),
+                "https://example.com/goblin"
+            );
+            document.set_selection(Selection::One(LeafId(leaf)));
+            assert!(
+                window.get_credit_line().contains("Fulano"),
+                "{}",
+                window.get_credit_line()
+            );
+            assert_eq!(window.get_credit_link().as_str(), "");
+            document.clear_scene();
+            assert_eq!(window.get_credit_line().as_str(), "");
+        });
+    }
 
     /// #512: the supports leave the view while the lasso is armed in the
     /// Hollow tab, and come back with it put away or in another tab.

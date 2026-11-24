@@ -8,9 +8,7 @@ use super::ladder::{BraceWriter, lay_ladder};
 use super::pairing::{Edge, bracing_grid, is_cardinal_delta, min_pair_span_mm, plan_point};
 use super::samples::{EPS, Shaft, anchor_at, collect_shafts, plan_distance};
 use bread_support_geom::geom::math_utils::{js_atan2, js_max, js_min};
-use bread_support_model::auto_bracing::mesh_clearance::{
-    BraceMeshes, line_passes_mesh_clearance, line_stays_off_mesh,
-};
+use bread_support_model::auto_bracing::mesh_clearance::{BraceMeshes, line_clear_of_meshes};
 use bread_support_model::auto_bracing::settings::{
     AutoBracingSettings, auto_bracing_hard_rules, normalize_auto_bracing_settings,
 };
@@ -177,12 +175,7 @@ pub fn brace_again(
         if plan_distance(own.pos, far.pos) > settings.max_brace_length_mm + EPS {
             continue;
         }
-        let clear = settings.braced_with(&own.model_id).iter().all(|model| {
-            let mesh = meshes.get(*model);
-            line_passes_mesh_clearance(own.pos, far.pos, mesh, diameter)
-                && line_stays_off_mesh(own.pos, far.pos, mesh, diameter)
-        });
-        if !clear {
+        if !line_clear_of_meshes(own.pos, far.pos, meshes, diameter) {
             continue;
         }
         if brace.own_start {
@@ -348,11 +341,8 @@ pub fn hand_brace(
     if span > max_len + EPS || rise > max_len + EPS {
         refuse(HandBraceRefusal::TooLong, &mut why);
     }
-    let mesh = meshes.get(&start.model_id);
     let diameter = settings.brace_diameter_mm;
-    if !line_passes_mesh_clearance(start.pos, end.pos, mesh, diameter)
-        || !line_stays_off_mesh(start.pos, end.pos, mesh, diameter)
-    {
+    if !line_clear_of_meshes(start.pos, end.pos, meshes, diameter) {
         refuse(HandBraceRefusal::HitsModel, &mut why);
     }
     // A preset's diameter, capped by the thinner shaft, as a run sizes it.

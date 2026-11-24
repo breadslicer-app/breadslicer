@@ -144,6 +144,7 @@ pub fn check_regions(ctx: &ReviewContext<'_>, options: &ReviewOptions) -> Review
     findings.extend(traps);
     findings.extend(output);
     findings.extend(tip_load::run(ctx, &plate_loads, &options.tip_load));
+    findings.extend(crate::checks::thin_tips::run(ctx));
     tip_load::grade_cups(
         &mut findings,
         &plate_loads,

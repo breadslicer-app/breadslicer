@@ -279,14 +279,22 @@ fn several_files_join_together_as_one_undo_step() {
         let base = scene_with_a_box(&document, [40.0, 30.0, 10.0]);
         let before = rows(&document);
 
-        ctrl.open_models(vec![goblin, pair]);
+        ctrl.open_models(vec![goblin.clone(), pair.clone()]);
         finish_loads(&ctrl);
 
         let now = leaves(&document);
         assert_eq!(now.len(), 4, "the STL and both objects of the 3MF");
+        // Each knows its file, for Show in folder (#732).
+        assert_eq!(document.model_file(now[1]), Some(goblin));
+        assert_eq!(document.model_file(now[3]), Some(pair));
+        assert_eq!(
+            document.model_file(now[0]),
+            document.source_path(),
+            "the scene's own model: the scene's file"
+        );
         let names: Vec<String> = rows(&document).into_iter().map(|r| r.0).collect();
-        // Named after their files, whatever the files call them.
-        assert_eq!(names, ["Object 1", "goblin", "pair 1", "pair 2"]);
+        // The 3MF's parts keep the names it gives them (#731).
+        assert_eq!(names, ["Object 1", "goblin", "Knight", "Horse"]);
         assert_eq!(
             document.selection(),
             Selection::of(now[1..].iter().copied().map(LeafId)),
@@ -728,6 +736,92 @@ pub(crate) fn gap_between(a: [f32; 4], b: [f32; 4]) -> f32 {
         .max(a[1] - b[3])
 }
 
+/// #731: the parts of a file of several keep the names it gives them; one
+/// it gives none, or one any part could have, or its exporter's header, is
+/// numbered after the file; two parts of one name are told apart. A file of
+/// a single model gives it the file's name.
+#[test]
+fn the_parts_of_a_file_keep_their_own_names() {
+    use sc_mesh_core::MeshMetadata;
+
+    let named = |name: Option<&str>| {
+        let mut mesh = sc_mesh_fixtures::unit_cube_mesh();
+        mesh.meta = name.map(|n| MeshMetadata {
+            name: Some(n.to_owned()),
+            ..MeshMetadata::default()
+        });
+        mesh
+    };
+    let scene_of = |names: &[Option<&str>]| {
+        let mut scene = Scene::new();
+        for name in names {
+            let leaf = scene
+                .add_leaf(
+                    None,
+                    Transform3D::Identity,
+                    LeafPayload::Mesh(Arc::new(named(*name))),
+                )
+                .unwrap();
+            scene.add_root(leaf).unwrap();
+        }
+        scene
+    };
+    let names_of = |scene: &Scene| -> Vec<String> {
+        scene
+            .roots()
+            .iter()
+            .map(|id| {
+                let node = scene.node(*id).unwrap();
+                node.meta.as_ref().unwrap().name.clone().unwrap()
+            })
+            .collect()
+    };
+
+    let mut scene = scene_of(&[
+        Some("Knight"),
+        Some("Object 2"),
+        None,
+        Some("Exported from Blender-3.3.1"),
+        Some("Mesh.002"),
+        Some("Arm"),
+        Some("arm"),
+        Some("chess"),
+    ]);
+    crate::model_import::name_models_after_file(&mut scene, Path::new("C:/minis/chess.3mf"));
+    assert_eq!(
+        names_of(&scene),
+        [
+            "Knight", "chess 2", "chess 3", "chess 4", "chess 5", "Arm", "arm 2", "chess 8"
+        ]
+    );
+
+    let mut single = scene_of(&[Some("Knight")]);
+    crate::model_import::name_models_after_file(&mut single, Path::new("C:/minis/rook.3mf"));
+    assert_eq!(names_of(&single), ["rook"]);
+
+    for generic in [
+        "",
+        "  ",
+        "Object",
+        "Body_3",
+        "Part (2)",
+        "solid ascii",
+        "Untitled",
+        "123",
+    ] {
+        assert!(
+            crate::model_import::is_generic_name(generic, "rook"),
+            "{generic:?}"
+        );
+    }
+    for own in ["Knight", "Objective marker", "Bodyguard", "Dragón 2"] {
+        assert!(
+            !crate::model_import::is_generic_name(own, "rook"),
+            "{own:?}"
+        );
+    }
+}
+
 /// #420: the model of a file a scene opens from is named after the file,
 /// as an import names it: alone, and first of several opened together.
 #[test]
@@ -866,6 +960,13 @@ fn a_scene_emptied_and_filled_again_is_named_after_the_new_file() {
         document.apply_edit(gone.clone()).expect("removed");
         document.push_edit(gone);
         assert!(leaves(&document).is_empty());
+        // Emptied, the scene stands for no file: the title and an export's
+        // name no longer take the old one (#748); Undo brings it back.
+        assert_eq!(document.source_file_name(), None);
+        assert!(document.undo().expect("undoes"));
+        assert_eq!(document.source_file_name().as_deref(), Some("base.stl"));
+        assert!(document.redo().expect("redoes"));
+        assert_eq!(document.source_file_name(), None);
 
         ctrl.open_models(vec![goblin]);
         finish_loads(&ctrl);

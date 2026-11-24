@@ -55,6 +55,10 @@ pub(crate) enum NumericEdit {
     DropToPlate,
     /// Footprint centre on the plate's centre.
     Center([f64; 2]),
+    /// Scale to fit (#733): uniform, to the largest size that fits the box
+    /// from `lo` to `hi` (world mm), moved in no further than it takes to
+    /// stand inside it. Only ever smaller.
+    FitInto { lo: [f64; 3], hi: [f64; 3] },
     /// One world dimension to `mm`, the others as they are (#14).
     AxisSize { axis: usize, mm: f64 },
     /// One dimension along the object's own axes to `mm`, the others as
@@ -217,6 +221,19 @@ fn anchor(min: [f64; 3], max: [f64; 3]) -> [f64; 3] {
     [(min[0] + max[0]) * 0.5, (min[1] + max[1]) * 0.5, min[2]]
 }
 
+/// The uniform scale that brings the box `bounds` (min, max) to the largest
+/// size that fits `room` (#733); `None` when it fits already or the room has
+/// no size.
+pub(crate) fn fit_factor(bounds: [[f64; 3]; 2], room: [[f64; 3]; 2]) -> Option<f64> {
+    let [min, max] = bounds;
+    let [lo, hi] = room;
+    let f = (0..3)
+        .filter(|&k| max[k] - min[k] > 1e-9)
+        .map(|k| (hi[k] - lo[k]) / (max[k] - min[k]))
+        .fold(f64::INFINITY, f64::min);
+    (f.is_finite() && f > 0.0 && f < 1.0 - 1e-9).then_some(f)
+}
+
 /// The full readout of the object under its current world transform.
 pub(crate) fn readout(query: &ObjectQuery<'_>) -> Option<Readout> {
     let world = query.world_transform();
@@ -315,6 +332,10 @@ pub(crate) fn apply(query: &ObjectQuery<'_>, edit: NumericEdit) -> Option<Transf
             }
             Some(scaled_column(&m, axis, pct / now))
         }
+        NumericEdit::FitInto { lo, hi } => {
+            let f = fit_factor([min, max], [lo, hi])?;
+            Some(m.map(|row| row.map(|v| v * f)))
+        }
         _ => None,
     };
     let reshaped = match new_linear {
@@ -332,6 +353,16 @@ pub(crate) fn apply(query: &ObjectQuery<'_>, edit: NumericEdit) -> Option<Transf
         NumericEdit::Lift(mm) => [before[0], before[1], mm.max(0.0)],
         NumericEdit::DropToPlate => [before[0], before[1], 0.0],
         NumericEdit::Center([x, y]) => [x, y, before[2]],
+        NumericEdit::FitInto { lo, hi } => {
+            let f = fit_factor([min, max], [lo, hi])?;
+            let size = [0, 1, 2].map(|k| (max[k] - min[k]) * f);
+            let inside = |at: f64, from: f64, to: f64| at.max(from).min(to.max(from));
+            [
+                inside(before[0], lo[0] + size[0] * 0.5, hi[0] - size[0] * 0.5),
+                inside(before[1], lo[1] + size[1] * 0.5, hi[1] - size[1] * 0.5),
+                inside(before[2], lo[2], hi[2] - size[2]),
+            ]
+        }
         _ => before,
     };
     let reshaped_world = Transform3D::Affine(reshaped);

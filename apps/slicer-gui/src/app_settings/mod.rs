@@ -62,16 +62,17 @@ impl From<ThemeSetting> for ThemePreference {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 enum MenuLayoutSetting {
-    #[default]
     Bar,
+    /// The folded menu, the default since #749: the bar is a choice.
+    #[default]
     Compact,
 }
 
 impl MenuLayoutSetting {
-    /// `Bar` is the default; skipped when serializing so a fresh config stays
-    /// minimal.
-    fn is_bar(&self) -> bool {
-        matches!(self, MenuLayoutSetting::Bar)
+    /// `Compact` is the default; skipped when serializing so a fresh config
+    /// stays minimal.
+    fn is_compact(&self) -> bool {
+        matches!(self, MenuLayoutSetting::Compact)
     }
 }
 
@@ -185,8 +186,8 @@ pub(crate) struct Appearance {
     /// config stays minimal.
     #[serde(default, skip_serializing_if = "LanguageSetting::is_system")]
     language: LanguageSetting,
-    /// Omitted in TOML when the user is on `Bar` (the default).
-    #[serde(default, skip_serializing_if = "MenuLayoutSetting::is_bar")]
+    /// Omitted in TOML when the user is on `Compact` (the default).
+    #[serde(default, skip_serializing_if = "MenuLayoutSetting::is_compact")]
     menu_layout: MenuLayoutSetting,
 }
 
@@ -441,6 +442,15 @@ fn is_default_repair_on_import(on: &bool) -> bool {
     *on
 }
 
+/// A model whose file is saved again reloads by default (#721).
+fn default_reload_on_change() -> bool {
+    true
+}
+
+fn is_default_reload_on_change(on: &bool) -> bool {
+    *on
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub(crate) struct AppSettings {
     /// On-disk schema version. Files predating this field are read with the
@@ -575,6 +585,15 @@ pub(crate) struct AppSettings {
     /// then falls back to the home directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_open_dir: Option<PathBuf>,
+    /// Directory the printer-file export dialog starts in: the folder the
+    /// last printer file was written to (#729), apart from the one models
+    /// are imported from. Omitted in TOML until the first export.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_export_dir: Option<PathBuf>,
+    /// The template printer files are named by (#730). Omitted in TOML
+    /// while it is the shipped one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    export_name_template: Option<String>,
     /// Whether the start dialog shows when the app opens with no file (#381).
     /// Omitted in TOML while on (the default).
     #[serde(
@@ -589,6 +608,13 @@ pub(crate) struct AppSettings {
         skip_serializing_if = "is_default_repair_on_import"
     )]
     repair_on_import: bool,
+    /// Whether a model reloads when its file is saved again (#721).
+    /// Omitted in TOML while on (the default).
+    #[serde(
+        default = "default_reload_on_change",
+        skip_serializing_if = "is_default_reload_on_change"
+    )]
+    reload_on_change: bool,
     /// The files last opened or saved, newest first (#381). User data: the
     /// diagnostics file leaves them out. Omitted in TOML while empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -598,6 +624,10 @@ pub(crate) struct AppSettings {
     /// it changes with the country and the shop. Omitted in TOML while empty.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     resin_prices: BTreeMap<MaterialId, crate::resin_cost::ResinPrice>,
+    /// The dead zones of each of the person's printers' screens (#726):
+    /// theirs, not the shared profile's. Omitted in TOML while empty.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    dead_zones: crate::dead_zones::DeadZonesByPrinter,
 }
 
 impl Default for AppSettings {
@@ -629,10 +659,14 @@ impl Default for AppSettings {
             slice_panel: SliceControlPanelSettings::default(),
             slice_view: SliceViewSettings::default(),
             last_open_dir: None,
+            last_export_dir: None,
+            export_name_template: None,
             show_start_dialog: default_show_start_dialog(),
             repair_on_import: default_repair_on_import(),
+            reload_on_change: default_reload_on_change(),
             recent_files: Vec::new(),
             resin_prices: BTreeMap::new(),
+            dead_zones: BTreeMap::new(),
         }
     }
 }
@@ -1029,6 +1063,28 @@ impl AppSettings {
         self.last_open_dir = dir;
     }
 
+    pub(crate) fn last_export_dir(&self) -> Option<PathBuf> {
+        self.last_export_dir.clone()
+    }
+
+    pub(crate) fn set_last_export_dir(&mut self, dir: Option<PathBuf>) {
+        self.last_export_dir = dir;
+    }
+
+    pub(crate) fn export_name_template(&self) -> String {
+        self.export_name_template
+            .clone()
+            .unwrap_or_else(|| crate::file_name_template::DEFAULT_TEMPLATE.to_owned())
+    }
+
+    /// Keeps `template`; the shipped one, or none, is not written.
+    pub(crate) fn set_export_name_template(&mut self, template: &str) {
+        let template = template.trim();
+        self.export_name_template = (!template.is_empty()
+            && template != crate::file_name_template::DEFAULT_TEMPLATE)
+            .then(|| template.to_owned());
+    }
+
     pub(crate) fn show_start_dialog(&self) -> bool {
         self.show_start_dialog
     }
@@ -1043,6 +1099,14 @@ impl AppSettings {
 
     pub(crate) fn set_repair_on_import(&mut self, on: bool) {
         self.repair_on_import = on;
+    }
+
+    pub(crate) fn reload_on_change(&self) -> bool {
+        self.reload_on_change
+    }
+
+    pub(crate) fn set_reload_on_change(&mut self, on: bool) {
+        self.reload_on_change = on;
     }
 
     pub(crate) fn recent_files(&self) -> Vec<RecentFile> {
@@ -1062,6 +1126,14 @@ impl AppSettings {
         prices: BTreeMap<MaterialId, crate::resin_cost::ResinPrice>,
     ) {
         self.resin_prices = prices;
+    }
+
+    pub(crate) fn dead_zones(&self) -> crate::dead_zones::DeadZonesByPrinter {
+        self.dead_zones.clone()
+    }
+
+    pub(crate) fn set_dead_zones(&mut self, zones: crate::dead_zones::DeadZonesByPrinter) {
+        self.dead_zones = zones;
     }
 }
 
@@ -1089,8 +1161,8 @@ mod app_settings_tests {
     }
 
     #[test]
-    fn default_menu_layout_is_bar() {
-        assert_eq!(AppSettings::default().menu_layout(), MenuLayout::Bar);
+    fn default_menu_layout_is_compact() {
+        assert_eq!(AppSettings::default().menu_layout(), MenuLayout::Compact);
     }
 
     #[test]

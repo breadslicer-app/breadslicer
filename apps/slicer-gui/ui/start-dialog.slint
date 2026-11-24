@@ -85,6 +85,8 @@ component RecentRow inherits Rectangle {
     in property <RecentFileRow> file;
     callback open();
     callback remove();
+    // The file in its folder (#732).
+    callback show-in-folder();
 
     height: 58px;
     border-radius: Theme.radius;
@@ -153,6 +155,35 @@ component RecentRow inherits Rectangle {
             accessible-role: none;
         }
 
+        // Shows the file in its folder (#732).
+        if !root.file.missing: Rectangle {
+            width: 26px;
+            height: 26px;
+            y: (parent.height - self.height) / 2;
+            border-radius: Theme.radius-sm;
+            background: folder-touch.has-hover ? Theme.raised : transparent;
+            accessible-role: button;
+            accessible-label: @tr("StartDialog" => "Show {} in its folder", root.file.name);
+            accessible-action-default => {
+                root.show-in-folder();
+            }
+
+            Icon {
+                commands: Icons.folder;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                size: 14px;
+                color: folder-touch.has-hover ? Theme.text : touch.has-hover ? Theme.text-muted : Theme.text-faint.transparentize(0.4);
+            }
+
+            folder-touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.show-in-folder();
+                }
+            }
+        }
+
         // Takes the file off the list; the file itself stays where it is.
         remove-button := Rectangle {
             width: 26px;
@@ -196,6 +227,7 @@ export component StartLayer inherits Rectangle {
     callback reopen-last();
     callback open-recent(int);
     callback remove-recent(int);
+    callback show-recent-in-folder(int);
     callback open-file(StartOpen);
     callback dont-show-changed(bool);
 
@@ -363,6 +395,9 @@ export component StartLayer inherits Rectangle {
                                     }
                                     remove => {
                                         root.remove-recent(index);
+                                    }
+                                    show-in-folder => {
+                                        root.show-recent-in-folder(index);
                                     }
                                 }
                             }

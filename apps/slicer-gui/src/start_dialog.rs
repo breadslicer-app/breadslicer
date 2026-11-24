@@ -159,6 +159,10 @@ impl StartDialog {
             let with = with.clone();
             window.on_start_remove_recent(move |row| with(&|d| d.remove_row(row)));
         }
+        {
+            let with = with.clone();
+            window.on_start_show_recent_in_folder(move |row| with(&|d| d.show_row_in_folder(row)));
+        }
         window.on_start_dont_show_changed(move |dont_show| {
             with(&|d| {
                 d.prefs.update(move |snap| {
@@ -287,6 +291,15 @@ impl StartDialog {
         }
         crate::breadcrumbs::note("start: recent file opened");
         (self.open)(path);
+    }
+
+    /// Shows the file of row `row` in its folder (#732).
+    fn show_row_in_folder(&self, row: i32) {
+        if let Some(path) = self.path_of(row)
+            && let Err(err) = crate::show_in_folder::reveal(&path)
+        {
+            eprintln!("The file browser did not open: {err}");
+        }
     }
 
     /// Takes the file of row `row` off the list.

@@ -435,6 +435,79 @@ fn a_priced_resin_tells_what_the_print_costs() {
     });
 }
 
+/// The cost card's fields keep what was typed when the tab changes and the
+/// card is drawn again (#747), and the currency is picked from a list.
+#[test]
+fn the_cost_fields_keep_what_was_typed() {
+    on_fresh_slint_thread(|| {
+        let w = two_plates();
+        w.ctrl.register_document_listener();
+        w.document.set_active_plate(1);
+        w.press_slice();
+        let estimate = w.ctrl.last_estimate().expect("an estimate");
+        // A price typed before the bottle's content: not a price yet, but the
+        // field keeps it.
+        w.window.invoke_slice_price_edited(0, "30".into());
+        assert_eq!(w.window.get_slice_price_text().as_str(), "30");
+        use slint::Model as _;
+        let labels: Vec<String> = w
+            .window
+            .get_slice_price_currencies()
+            .iter()
+            .map(|label| label.to_string())
+            .collect();
+        let euro = labels
+            .iter()
+            .find(|label| label.starts_with("EUR"))
+            .expect("the euro on the list")
+            .clone();
+        w.window.invoke_slice_price_edited(1, euro.as_str().into());
+        assert_eq!(w.window.get_slice_price_currency().as_str(), "\u{20ac}");
+        let at = w.window.get_slice_price_currency_index();
+        assert_eq!(labels[at as usize], euro, "the euro shows picked");
+        w.window.invoke_slice_price_edited(2, "1000".into());
+        w.window.invoke_slice_price_edited(3, "5".into());
+        assert_eq!(w.window.get_slice_price_amount().as_str(), "1000");
+        assert_eq!(w.window.get_slice_price_losses().as_str(), "5");
+        let liquid = estimate.liquid_g.expect("the resin gives a density");
+        let weighed = format!("{:.4}", liquid * 1.2);
+        w.window
+            .invoke_slice_price_edited(4, weighed.as_str().into());
+        assert_eq!(w.window.get_slice_price_weighed().as_str(), weighed);
+        assert_eq!(w.window.get_slice_price_losses().as_str(), "20.0");
+        let cost = estimate.volume_ml * 30.0 / 1000.0 * 1.2;
+        assert_eq!(
+            w.window.get_slice_cost().as_str(),
+            crate::resin_cost::money("\u{20ac}", cost)
+        );
+        assert_eq!(
+            w.cost_bus_snapshot().values().next().unwrap().currency,
+            "\u{20ac}"
+        );
+    });
+}
+
+/// Slice pressed while supports are being made waits for them and then
+/// slices, saying so (#750); before, the press did nothing.
+#[test]
+fn a_slice_pressed_while_supports_are_made_waits_for_them() {
+    on_fresh_slint_thread(|| {
+        let w = two_plates();
+        w.window.set_support_gen_in_progress(true);
+        w.window.invoke_slice_requested();
+        assert!(!w.window.get_slicing_in_progress(), "it waits");
+        assert!(!w.window.get_status_notice().is_empty(), "and says so");
+        // Still making them: the next look keeps waiting.
+        w.slice.forces_tick();
+        assert!(!w.window.get_slicing_in_progress());
+        w.window.set_support_gen_in_progress(false);
+        w.slice.forces_tick();
+        assert!(w.window.get_status_notice().is_empty());
+        w.finish();
+        assert!(w.document.slice_params().is_some(), "it sliced");
+    });
+}
+
 impl Window {
     fn cost_bus_snapshot(
         &self,

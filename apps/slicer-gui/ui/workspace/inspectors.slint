@@ -517,6 +517,9 @@ export component OrientCard inherits Card {
     callback apply();
     callback close();
     callback arrange();
+    // Lean back (#722): the angle, remembered, and the button with it.
+    in-out property <float> lean-angle: 37;
+    callback lean-back(float);
 
     property <bool> advanced: false;
 
@@ -526,6 +529,38 @@ export component OrientCard inherits Card {
 
     Note {
         text: @tr("Inspector" => "Finds the best way up for printing: fewer supports, less peel force, less height. Hover an option to see it on the model.");
+    }
+    Text {
+        text: @tr("Inspector" => "LEAN BACK");
+        font-size: Theme.font-xs;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        color: Theme.text-muted;
+    }
+    HorizontalLayout {
+        spacing: 8px;
+
+        NumberField {
+            label: @tr("Inspector" => "Angle");
+            field-width: 72px;
+            unit: "°";
+            decimals: 1;
+            value: root.lean-angle;
+            horizontal-stretch: 1;
+            committed(v) => {
+                root.lean-angle = Math.clamp(v, 0, 90);
+            }
+        }
+        ScButton {
+            text: @tr("Inspector" => "Lean back");
+            enabled: root.enabled && !root.running;
+            clicked => {
+                root.lean-back(root.lean-angle);
+            }
+        }
+    }
+    Note {
+        text: @tr("Inspector" => "Every selected model faces the front, leans back by exactly this angle and rests on the plate: copies stand alike.");
     }
     Text {
         text: @tr("Inspector" => "PROTECT DETAIL");
@@ -1321,6 +1356,10 @@ export component TransformInspector inherits VerticalLayout {
     in property <float> scale-y;
     in property <float> scale-z;
     in-out property <bool> size-uniform: true;
+    // Larger than its plate (#733): Scale to fit brings it to the largest
+    // size that fits, in one undo step.
+    in property <bool> too-large;
+    callback scale-to-fit();
     callback object-picked(int);
     // Shift+click or Ctrl+click on a row.
     callback object-toggled(int);
@@ -1752,6 +1791,16 @@ export component TransformInspector inherits VerticalLayout {
             value: root.scale-z;
             committed(v) => {
                 root.numeric-edit(23, v);
+            }
+        }
+        if root.too-large: WarningNote {
+            text: @tr("Inspector" => "Larger than the plate: it does not print whole.");
+        }
+        if root.too-large: ScButton {
+            text: @tr("Inspector" => "Scale to fit");
+            icon: Icons.scale;
+            clicked => {
+                root.scale-to-fit();
             }
         }
         CheckBox {
@@ -2288,6 +2337,9 @@ export component SupportsInspector inherits VerticalLayout {
     // An option change: its code (SupportRun::on_option) and value.
     callback option-changed(int, float);
     callback preset-picked(int);
+    // Each model takes the zone preset of its height (#723).
+    in property <bool> by-height;
+    callback by-height-toggled(bool);
     callback preset-save(string);
     callback preset-delete();
     callback lift-edit(float);
@@ -2358,13 +2410,26 @@ export component SupportsInspector inherits VerticalLayout {
     // The Area tool (#177): its brush, and filling or clearing the paint.
     in property <float> area-brush: 3;
     callback area-brush-edited(float);
-    callback area-fill();
+    // 0 a grid over the paint, 1 its edge only (#734).
+    in-out property <int> area-mode: 0;
+    callback area-fill(int);
     callback area-clear();
+    // The line tool's shape (#734): 0 a row, 1 a circle.
+    in property <int> line-mode;
+    callback line-mode-picked(int);
+    // The picked supports mirrored across the model's middle (#735): 0 in
+    // X, 1 in Y.
+    callback picked-mirror(int);
     // The supports picked routed again (#377), and how many there are.
     callback picked-reroute(bool);
     // The supports picked after the first joined onto its trunk (#377).
     callback picked-join();
     in property <int> picked-count;
+    // The supports hidden from the view (#728), how to hide the picked ones
+    // and how to show them all again.
+    in property <int> hidden-count;
+    callback picked-hide();
+    callback hidden-show();
     in property <[int]> shape-choices;
     in property <[int]> shape-choice-defaults;
     in property <[string]> bracing-presets;
@@ -2585,11 +2650,47 @@ export component SupportsInspector inherits VerticalLayout {
                 }
             }
         }
+        if root.tool == 5 && root.picked-count > 0: HorizontalLayout {
+            spacing: 8px;
+
+            ScButton {
+                text: @tr("Inspector" => "Mirror in X");
+                enabled: !root.running;
+                clicked => {
+                    root.picked-mirror(0);
+                }
+            }
+            ScButton {
+                text: @tr("Inspector" => "Mirror in Y");
+                enabled: !root.running;
+                clicked => {
+                    root.picked-mirror(1);
+                }
+            }
+        }
         if root.tool == 5 && root.picked-count > 1: ScButton {
             text: @tr("Inspector" => "Join onto the first picked");
             enabled: !root.running;
             clicked => {
                 root.picked-join();
+            }
+        }
+        if root.tool == 5 && (root.picked-count > 0 || root.hidden-count > 0): HorizontalLayout {
+            spacing: 8px;
+
+            if root.picked-count > 0: ScButton {
+                text: @tr("Inspector" => "Hide (H)");
+                icon: Icons.eye-off;
+                clicked => {
+                    root.picked-hide();
+                }
+            }
+            if root.hidden-count > 0: ScButton {
+                text: @tr("Inspector" => "Show {n} hidden (Alt+H)" | "Show {n} hidden (Alt+H)" % root.hidden-count);
+                icon: Icons.eye;
+                clicked => {
+                    root.hidden-show();
+                }
             }
         }
         if root.tool == 5: Note {
@@ -2598,8 +2699,22 @@ export component SupportsInspector inherits VerticalLayout {
         if root.tool == 4: Note {
             text: @tr("Inspector" => "Click a support where the brace starts, then the support it goes to.");
         }
-        if root.tool == 6: Note {
+        if root.tool == 6: LabeledRow {
+            label: @tr("Inspector" => "Shape");
+            Segmented {
+                width: 190px;
+                options: [@tr("Inspector" => "Row"), @tr("Inspector" => "Circle")];
+                current: root.line-mode;
+                picked(i) => {
+                    root.line-mode-picked(i);
+                }
+            }
+        }
+        if root.tool == 6 && root.line-mode == 0: Note {
             text: @tr("Inspector" => "Click the model where the row starts, then where it ends: a support at every dot, along the surface. Keys 1–4 pick the size. Esc drops the first point.");
+        }
+        if root.tool == 6 && root.line-mode == 1: Note {
+            text: @tr("Inspector" => "Click the middle of the circle, then a point on it: a support at every dot around it, as the model is seen. Esc drops the middle.");
         }
         if root.tool == 7: Note {
             text: @tr("Inspector" => "Paint the faces where supports go; Shift+click takes the connected faces of the same plane, Alt erases. Then place a support on every node of a grid over the paint.");
@@ -2611,6 +2726,17 @@ export component SupportsInspector inherits VerticalLayout {
             value: root.area-brush;
             committed(v) => {
                 root.area-brush-edited(v);
+            }
+        }
+        if root.tool == 7: LabeledRow {
+            label: @tr("Inspector" => "Where");
+            Segmented {
+                width: 190px;
+                options: [@tr("Inspector" => "Grid"), @tr("Inspector" => "Edge only")];
+                current: root.area-mode;
+                picked(i) => {
+                    root.area-mode = i;
+                }
             }
         }
         if root.tool == 7: NumberField {
@@ -2630,7 +2756,7 @@ export component SupportsInspector inherits VerticalLayout {
                 kind: ButtonKind.primary;
                 enabled: !root.running;
                 clicked => {
-                    root.area-fill();
+                    root.area-fill(root.area-mode);
                 }
             }
             ScButton {
@@ -2684,6 +2810,17 @@ export component SupportsInspector inherits VerticalLayout {
             picked(i) => {
                 root.preset-picked(i);
             }
+        }
+        CheckBox {
+            text: @tr("Inspector" => "Pick by each model's height");
+            checked: root.by-height;
+            enabled: !root.running;
+            toggled => {
+                root.by-height-toggled(self.checked);
+            }
+        }
+        if root.by-height: Note {
+            text: @tr("Inspector" => "Generate gives each model the preset its height asks for: up to 65 mm Miniatures, up to 150 mm Figures, taller Statues. Picking a preset turns this off.");
         }
         // One line that is always there: what the options are, and the
         // way back to the preset as it ships. Nothing under it moves when
@@ -3535,6 +3672,10 @@ export component SliceInspector inherits VerticalLayout {
     in property <bool> send-naming-start;
     in-out property <string> send-name;
     in property <string> send-name-preview;
+    // A file already sliced, sent from the disk (#727): its name while it
+    // is being named, empty for the plate's.
+    in property <string> send-disk-file;
+    callback send-from-disk();
     callback send-name-asked(bool);
     callback send-name-edited(string);
     callback send-search(bool);
@@ -3606,6 +3747,8 @@ export component SliceInspector inherits VerticalLayout {
     in-out property <bool> cost-open: true;
     in-out property <string> price-text;
     in-out property <string> price-currency;
+    in property <[string]> price-currencies;
+    in-out property <int> price-currency-index;
     in-out property <string> price-amount;
     in-out property <string> price-losses;
     in-out property <string> price-weighed;
@@ -4019,6 +4162,16 @@ export component SliceInspector inherits VerticalLayout {
                 }
             }
         }
+        if !root.send-busy && !root.send-naming: ScButton {
+            text: @tr("SlicePanel" => "Send from disk…");
+            icon: Icons.folder;
+            kind: ButtonKind.ghost;
+            button-height: 30px;
+            enabled: root.send-index >= 0;
+            clicked => {
+                root.send-from-disk();
+            }
+        }
         // Before each send, the name the file goes onto the printer by.
         if !root.send-busy && root.send-naming: VerticalLayout {
             spacing: 6px;
@@ -4041,7 +4194,41 @@ export component SliceInspector inherits VerticalLayout {
             Note {
                 text: @tr("SlicePanel" => "On the printer: {}", root.send-name-preview);
             }
-            HorizontalLayout {
+            if root.send-disk-file != "": Note {
+                text: @tr("SlicePanel" => "From the disk: {}", root.send-disk-file);
+            }
+            if root.send-disk-file != "": HorizontalLayout {
+                spacing: 8px;
+                ScButton {
+                    horizontal-stretch: 1;
+                    text: @tr("SlicePanel" => "Send to printer");
+                    icon: Icons.file;
+                    kind: ButtonKind.primary;
+                    button-height: 34px;
+                    enabled: root.send-index >= 0;
+                    clicked => {
+                        root.send(false, root.send-name);
+                    }
+                }
+                ScButton {
+                    horizontal-stretch: 1;
+                    text: @tr("SlicePanel" => "Send and start");
+                    icon: Icons.slice;
+                    button-height: 34px;
+                    enabled: root.send-index >= 0;
+                    clicked => {
+                        root.send(true, root.send-name);
+                    }
+                }
+                ScButton {
+                    text: @tr("SlicePanel" => "Back");
+                    button-height: 34px;
+                    clicked => {
+                        root.send-naming = false;
+                    }
+                }
+            }
+            if root.send-disk-file == "": HorizontalLayout {
                 spacing: 8px;
                 ScButton {
                     horizontal-stretch: 1;
@@ -4189,12 +4376,12 @@ export component SliceInspector inherits VerticalLayout {
             }
             Field {
                 label: @tr("Inspector" => "Currency");
-                width: 76px;
-                currency-input := PushedEdit {
-                    pushed: root.price-currency;
-                    placeholder-text: "$";
-                    edited(t) => {
-                        root.price-edited(1, t);
+                width: 104px;
+                currency-combo := ComboBox {
+                    model: root.price-currencies;
+                    current-index <=> root.price-currency-index;
+                    selected(label) => {
+                        root.price-edited(1, label);
                     }
                 }
             }

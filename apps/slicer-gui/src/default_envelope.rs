@@ -278,6 +278,8 @@ mod default_envelope_tests {
             PreferencesChange::LastOpenDir,
             PreferencesChange::StartDialog,
             PreferencesChange::RepairOnImport,
+            PreferencesChange::ReloadOnChange,
+            PreferencesChange::DeadZones,
             PreferencesChange::RecentFiles,
         ] {
             let bus = bus_with_default(None);

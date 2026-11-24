@@ -35,7 +35,7 @@ use bread_support_model::support_kinds::{
     SupportEntityValue, SupportOriginId, SupportTypeId, get_support_type_descriptor,
     near_plate_origin,
 };
-use bread_support_model::tips::ContactCone;
+use bread_support_model::tips::{ContactCone, get_final_socket_position};
 use bread_support_model::types::{Branch, Knot, Segment, SupportEntity, SupportState, Trunk, Vec3};
 
 /// The model as placing reads it.
@@ -458,26 +458,49 @@ pub fn resolve_surface_normal(tip_pos: Vec3, mesh: Option<&PlanMesh<'_>>) -> (Ve
 
 /// Where the supports of `draft` touch the model.
 pub fn collect_contact_positions(draft: &SupportState) -> Vec<Vec3> {
+    contact_positions_where(draft, &|_| true)
+}
+
+/// Where the supports of `draft` of the model `model_id` touch it (#725):
+/// a tip on another model of a run holds nothing of this one.
+pub fn collect_contact_positions_of(draft: &SupportState, model_id: &str) -> Vec<Vec3> {
+    contact_positions_where(draft, &|m| m == model_id)
+}
+
+/// Where the supports of `draft` whose model `keep` takes touch it.
+fn contact_positions_where(draft: &SupportState, keep: &dyn Fn(&str) -> bool) -> Vec<Vec3> {
     let c = &draft.collections;
     let mut out: Vec<Vec3> = Vec::new();
     out.extend(
         c.trunks
             .values()
+            .filter(|t| keep(&t.base.model_id))
             .filter_map(|t| t.contact_cone.as_ref().map(|k| k.pos)),
     );
     out.extend(
         c.branches
             .values()
+            .filter(|b| keep(&b.base.model_id))
             .filter_map(|b| b.contact_cone.as_ref().map(|k| k.pos)),
     );
-    out.extend(c.leaves.values().map(|l| l.contact_cone.pos));
-    for twig in c.twigs.values() {
+    out.extend(
+        c.leaves
+            .values()
+            .filter(|l| keep(&l.base.model_id))
+            .map(|l| l.contact_cone.pos),
+    );
+    for twig in c.twigs.values().filter(|t| keep(&t.base.model_id)) {
         out.extend([twig.contact_disk_a.pos, twig.contact_disk_b.pos]);
     }
-    for stick in c.sticks.values() {
+    for stick in c.sticks.values().filter(|s| keep(&s.base.model_id)) {
         out.extend([stick.contact_cone_a.pos, stick.contact_cone_b.pos]);
     }
-    out.extend(c.stumps.values().map(|s| s.contact_cone.pos));
+    out.extend(
+        c.stumps
+            .values()
+            .filter(|s| keep(&s.base.model_id))
+            .map(|s| s.contact_cone.pos),
+    );
     out
 }
 
@@ -486,7 +509,22 @@ pub fn filter_already_supported(
     candidates: Vec<CandidatePoint>,
     draft: &SupportState,
 ) -> Vec<CandidatePoint> {
-    let touched = collect_contact_positions(draft);
+    filter_touched(candidates, &collect_contact_positions(draft))
+}
+
+/// [`filter_already_supported`] by the supports of `model_id` alone
+/// (#725): in a run of several models, a tip on one leaves the contacts of
+/// its neighbour to be held.
+pub fn filter_already_supported_on(
+    candidates: Vec<CandidatePoint>,
+    draft: &SupportState,
+    model_id: &str,
+) -> Vec<CandidatePoint> {
+    filter_touched(candidates, &collect_contact_positions_of(draft, model_id))
+}
+
+/// The candidates no point of `touched` lies within 3 mm of.
+fn filter_touched(candidates: Vec<CandidatePoint>, touched: &[Vec3]) -> Vec<CandidatePoint> {
     if touched.is_empty() {
         return candidates;
     }
@@ -547,9 +585,28 @@ pub fn contact_cone_collides(
     })
 }
 
-/// Whether `cone` goes into the model before its contact (#500).
+/// Whether `cone` goes into the model before its contact (#500), or comes
+/// within its body's radius of another model the field reads (#725).
 pub fn contact_cone_crosses_model(cone: &ContactCone, mesh: &PlanMesh<'_>) -> bool {
-    tip_cone_crosses_model(cone, mesh.rays())
+    tip_cone_crosses_model(cone, mesh.rays()) || cone_meets_obstacles(cone, mesh)
+}
+
+/// Whether `cone`, from its socket to its contact, comes within its body's
+/// radius of another model of the plate (#725). A field lent out to the
+/// router is not asked.
+pub fn cone_meets_obstacles(cone: &ContactCone, mesh: &PlanMesh<'_>) -> bool {
+    let Ok(field) = mesh.sdf.try_borrow() else {
+        return false;
+    };
+    if field.obstacle_count() == 0 {
+        return false;
+    }
+    let socket = get_final_socket_position(cone);
+    let radius = js_max(
+        cone.profile.body_diameter_mm,
+        cone.profile.contact_diameter_mm,
+    ) / 2.0;
+    field.obstacles_block(socket, cone.pos, radius)
 }
 
 /// The tip cones `entity` touches the model with.
@@ -678,7 +735,13 @@ pub struct MergeHost {
 /// or shaft joint is within 4 mm on the plate, nearest in space (a joint
 /// counts 10 % nearer in square), plus half the longest member it carries
 /// already. A stump never takes one.
-pub fn find_merge_host(tip_pos: Vec3, model_id: &str, draft: &SupportState) -> Option<MergeHost> {
+/// With `share`, a trunk of any model of the run takes it (#725).
+pub fn find_merge_host(
+    tip_pos: Vec3,
+    model_id: &str,
+    draft: &SupportState,
+    share: bool,
+) -> Option<MergeHost> {
     let reach2 = GRIDLESS_MERGE_RADIUS_MM * GRIDLESS_MERGE_RADIUS_MM;
     let mut loads: HashMap<String, f64> = HashMap::new();
     let mut best: Option<MergeHost> = None;
@@ -699,7 +762,7 @@ pub fn find_merge_host(tip_pos: Vec3, model_id: &str, draft: &SupportState) -> O
     };
     let near_plate = near_plate_origin();
     for (id, trunk) in &draft.collections.trunks {
-        if trunk.base.model_id != model_id || trunk.base.origin == Some(near_plate) {
+        if (!share && trunk.base.model_id != model_id) || trunk.base.origin == Some(near_plate) {
             continue;
         }
         if let Some(cone) = &trunk.contact_cone {
@@ -1084,6 +1147,7 @@ pub enum OrphanReason {
 struct Member<'d> {
     kind: SupportTypeId,
     id: &'d str,
+    model_id: &'d str,
     knot_id: &'d str,
     cone: Option<&'d ContactCone>,
     segments: &'d [Segment],
@@ -1097,6 +1161,7 @@ fn members(draft: &SupportState) -> Vec<Member<'_>> {
         .map(|(id, l)| Member {
             kind: SupportTypeId::Leaf,
             id,
+            model_id: &l.base.model_id,
             knot_id: &l.parent_knot_id,
             cone: Some(&l.contact_cone),
             segments: &[],
@@ -1104,6 +1169,7 @@ fn members(draft: &SupportState) -> Vec<Member<'_>> {
         .chain(c.branches.iter().map(|(id, b)| Member {
             kind: SupportTypeId::Branch,
             id,
+            model_id: &b.base.model_id,
             knot_id: &b.parent_knot_id,
             cone: b.contact_cone.as_ref(),
             segments: &b.segments,
@@ -1282,6 +1348,21 @@ pub fn validate_and_cull_orphans(
     mesh: Option<&PlanMesh<'_>>,
     crossing: &HashSet<String>,
 ) -> (SupportState, Vec<OrphanInfo>) {
+    validate_and_cull_orphans_of(draft, mesh, crossing, None)
+}
+
+/// [`validate_and_cull_orphans`], checking only the supports of
+/// `model_id` when given (#725): in a run of several models the others'
+/// were checked on their own model, and `mesh`'s field holds their model as
+/// a neighbour it keeps clear of. A member of another model whose host is
+/// taken still goes.
+pub fn validate_and_cull_orphans_of(
+    draft: &SupportState,
+    mesh: Option<&PlanMesh<'_>>,
+    crossing: &HashSet<String>,
+    model_id: Option<&str>,
+) -> (SupportState, Vec<OrphanInfo>) {
+    let ours = |m: &str| model_id.is_none_or(|id| id == m);
     let mut taken: Vec<OrphanInfo> = Vec::new();
     let report =
         |id: &str, kind, reason, host: Option<String>, knot: Option<String>, detail| OrphanInfo {
@@ -1301,6 +1382,9 @@ pub fn validate_and_cull_orphans(
 
     if let Some(mesh) = mesh {
         for (id, trunk) in &draft.collections.trunks {
+            if !ours(&trunk.base.model_id) {
+                continue;
+            }
             let through = crossing.contains(id)
                 || trunk.segments.iter().any(|seg| {
                     let (Some(a), Some(b)) = (&seg.bottom_joint, &seg.top_joint) else {
@@ -1344,6 +1428,9 @@ pub fn validate_and_cull_orphans(
         }
         // A stick in a cavity may carry members (#632): they go with it.
         for (id, stick) in &draft.collections.sticks {
+            if !ours(&stick.base.model_id) {
+                continue;
+            }
             if let Some(cone) = [&stick.contact_cone_a, &stick.contact_cone_b]
                 .into_iter()
                 .find(|c| contact_cone_crosses_model(c, mesh))
@@ -1361,6 +1448,9 @@ pub fn validate_and_cull_orphans(
             }
         }
         for (id, stump) in &draft.collections.stumps {
+            if !ours(&stump.base.model_id) {
+                continue;
+            }
             if contact_cone_crosses_model(&stump.contact_cone, mesh) {
                 taken.push(report(
                     id,
@@ -1380,7 +1470,7 @@ pub fn validate_and_cull_orphans(
 
     let members = members(draft);
     let mut members_out: HashSet<(SupportTypeId, &str)> = HashSet::new();
-    for member in &members {
+    for member in members.iter().filter(|m| ours(m.model_id)) {
         if let Some((reason, host, knot, detail)) = member_fault(member, draft, mesh, crossing) {
             taken.push(report(member.id, member.kind, reason, host, knot, detail));
             if reason != OrphanReason::Cross {

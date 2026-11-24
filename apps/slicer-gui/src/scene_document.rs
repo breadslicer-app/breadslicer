@@ -318,6 +318,9 @@ pub(crate) struct SceneDocument {
     /// "Save As". Used to derive default export/save filenames and as the
     /// "Save" overwrite target. Cleared in lockstep with `spatial`.
     source_path: RefCell<Option<PathBuf>>,
+    /// The file each model imported into the scene came from (#732), for
+    /// Show in folder. A model not in it came with the scene's own file.
+    model_files: RefCell<HashMap<NodeId, PathBuf>>,
     /// Kind of the file at `source_path`: set on install from whether the file
     /// carried project data, and flipped to `Project` by
     /// [`Self::record_project_save_for`].
@@ -569,6 +572,7 @@ impl SceneDocument {
         Rc::new(Self {
             spatial: RefCell::new(None),
             source_path: RefCell::new(None),
+            model_files: RefCell::new(HashMap::new()),
             origin: Cell::new(DocumentOrigin::PlainMesh),
             print_selection: RefCell::new(PrintSelection::default()),
             embedded_profiles: RefCell::new(Vec::new()),
@@ -697,6 +701,7 @@ impl SceneDocument {
         self.bump_scene_generation();
         *self.spatial.borrow_mut() = Some(spatial);
         *self.source_path.borrow_mut() = Some(source_path);
+        self.model_files.borrow_mut().clear();
         let names = project_payload.as_ref().map_or_else(
             || default_plate_names(1),
             |p| {
@@ -771,6 +776,7 @@ impl SceneDocument {
         self.bump_scene_generation();
         *self.spatial.borrow_mut() = None;
         *self.source_path.borrow_mut() = None;
+        self.model_files.borrow_mut().clear();
         self.origin.set(DocumentOrigin::PlainMesh);
         *self.print_selection.borrow_mut() = PrintSelection::default();
         self.embedded_profiles.borrow_mut().clear();
@@ -3185,6 +3191,69 @@ impl SceneDocument {
         }
     }
 
+    /// Notes the file each of `models`, just imported, came from (#732).
+    pub(crate) fn note_model_files(&self, models: impl IntoIterator<Item = (NodeId, PathBuf)>) {
+        self.model_files.borrow_mut().extend(models);
+    }
+
+    /// The file model `leaf` came from (#732): the one it was imported from,
+    /// else the one the scene opened from or was last saved to.
+    pub(crate) fn model_file(&self, leaf: NodeId) -> Option<PathBuf> {
+        self.model_files
+            .borrow()
+            .get(&leaf)
+            .cloned()
+            .or_else(|| self.source_path.borrow().clone())
+    }
+
+    /// The file model `leaf` can be read again from (#721): the one it was
+    /// imported from, else the model's file the scene opened from. Never a
+    /// project: its models came from no file of their own.
+    pub(crate) fn reloadable_file(&self, leaf: NodeId) -> Option<PathBuf> {
+        if let Some(path) = self.model_files.borrow().get(&leaf) {
+            return Some(path.clone());
+        }
+        if self.is_project() {
+            return None;
+        }
+        let source = self.source_path.borrow().clone()?;
+        let model = self
+            .with_scene(|spatial| {
+                spatial
+                    .leaf(leaf)
+                    .is_some_and(|q| !sc_geom::supports::is_any_support_mesh(q.mesh()))
+            })
+            .unwrap_or(false);
+        model.then_some(source)
+    }
+
+    /// The models that came from `path` (#721), in the scene's order.
+    pub(crate) fn models_from_file(&self, path: &Path) -> Vec<NodeId> {
+        let leaves: Vec<NodeId> = self
+            .with_scene(|spatial| (0..).map_while(|i| spatial.leaf_id_at_index(i)).collect())
+            .unwrap_or_default();
+        leaves
+            .into_iter()
+            .filter(|&leaf| self.reloadable_file(leaf).as_deref() == Some(path))
+            .collect()
+    }
+
+    /// Every file the scene's models can be read again from (#721).
+    pub(crate) fn model_file_paths(&self) -> Vec<PathBuf> {
+        let leaves: Vec<NodeId> = self
+            .with_scene(|spatial| (0..).map_while(|i| spatial.leaf_id_at_index(i)).collect())
+            .unwrap_or_default();
+        let mut paths: Vec<PathBuf> = Vec::new();
+        for leaf in leaves {
+            if let Some(path) = self.reloadable_file(leaf)
+                && !paths.contains(&path)
+            {
+                paths.push(path);
+            }
+        }
+        paths
+    }
+
     /// Returns the path the current scene was loaded from. `None` when no scene
     /// is loaded; cloned out so the caller doesn't extend the borrow.
     #[cfg(test)]
@@ -3202,7 +3271,7 @@ impl SceneDocument {
     /// `widget.stl`), used as the window title. `None` when no scene is loaded
     /// or the path has no final component.
     pub(crate) fn source_file_name(&self) -> Option<String> {
-        self.with_source_path(|p| {
+        self.with_named_source(|p| {
             p.file_name()
                 .and_then(|name| name.to_str())
                 .map(|name| name.to_owned())
@@ -3210,10 +3279,51 @@ impl SceneDocument {
         .flatten()
     }
 
+    /// Whether the scene still stands for the file it came from (#748): a
+    /// project always does; a scene of models read from a file does while it
+    /// holds a model, and one emptied of them stands for no file (Undo brings
+    /// the name back with the models).
+    pub(crate) fn stands_for_its_file(&self) -> bool {
+        self.is_project()
+            || self
+                .with_scene(|spatial| {
+                    (0..)
+                        .map_while(|i| spatial.leaf_id_at_index(i))
+                        .any(|leaf| {
+                            spatial
+                                .leaf(leaf)
+                                .is_some_and(|q| !sc_geom::supports::is_any_support_mesh(q.mesh()))
+                        })
+                })
+                .unwrap_or(false)
+    }
+
+    /// [`Self::with_source_path`] for what names the scene to the person
+    /// (the title, the name an export takes): nothing once the scene no
+    /// longer stands for its file ([`Self::stands_for_its_file`]).
+    pub(crate) fn with_named_source<R>(&self, f: impl FnOnce(&Path) -> R) -> Option<R> {
+        if self.stands_for_its_file() {
+            self.with_source_path(f)
+        } else {
+            None
+        }
+    }
+
     /// Runs `f` against the loaded [`SceneSpatial`], if any. Returns `None`
     /// when no scene is installed. Callers must keep the closure short: the
     /// internal borrow is held for its duration. Use `spatial.graph()` for
     /// read-only navigation and `spatial.leaf(id)` for per-leaf queries.
+    /// The creator's credit the file states for `node`, or for the file
+    /// (#745).
+    pub(crate) fn credit_of(&self, node: Option<NodeId>) -> Option<crate::credit::Credit> {
+        let metadata = self.file_metadata.borrow();
+        if metadata.is_empty() {
+            return None;
+        }
+        self.with_scene(|spatial| crate::credit::Credit::of(&metadata, Some(spatial.graph()), node))
+            .flatten()
+    }
+
     pub(crate) fn with_scene<R>(&self, f: impl FnOnce(&SceneSpatial) -> R) -> Option<R> {
         self.spatial.borrow().as_ref().map(f)
     }
@@ -3487,11 +3597,23 @@ mod scene_document_tests {
     fn source_file_name_is_the_basename_with_extension() {
         let doc = SceneDocument::new();
         assert_eq!(doc.source_file_name(), None);
-        doc.install_graph(empty_graph(), fixture_path());
+        let mut graph = empty_graph();
+        let model = graph
+            .add_leaf(
+                None,
+                Transform3D::Identity,
+                LeafPayload::Mesh(Arc::new(IndexedMesh::new(None, Vec::new(), Vec::new()))),
+            )
+            .expect("a leaf");
+        graph.add_root(model).expect("a root");
+        doc.install_graph(graph, fixture_path());
         assert_eq!(
             doc.source_file_name().as_deref(),
             Some("scene_document_fixture.obj")
         );
+        // A scene of models with none left stands for no file (#748).
+        doc.install_graph(empty_graph(), fixture_path());
+        assert_eq!(doc.source_file_name(), None);
     }
 
     #[test]

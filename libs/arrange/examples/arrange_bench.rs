@@ -139,6 +139,7 @@ fn main() {
         min: [0.0, 0.0],
         max: args.plate,
         floor: 0.0,
+        keep_out: bread_arrange::KeepOut::default(),
     };
     let s = &args.settings;
     let out = arrange(&bodies, &plate, s, &AtomicBool::new(false)).expect("not cancelled");

@@ -31,12 +31,12 @@ tilting_vat = true
 network_protocol = "sdcp"
 
 [[capabilities.output_formats]]
-format = "ctb"
-version = "v5enc"
-
-[[capabilities.output_formats]]
 format = "goo"
 version = "v3.0"
+
+[[capabilities.output_formats]]
+format = "ctb"
+version = "v5enc"
 
 [constraints]
 
