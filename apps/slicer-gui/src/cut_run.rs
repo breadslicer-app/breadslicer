@@ -2545,7 +2545,7 @@ impl CutRun {
         }
         let leaf = target.leaf;
         let sessions = self.document.support_sessions();
-        let Some((name, meta, supports, imported_gone)) = self
+        let Some((name, meta, supports, imported_gone, kept_by)) = self
             .document
             .with_scene(|spatial| {
                 let graph = spatial.graph();
@@ -2581,11 +2581,15 @@ impl CutRun {
                     .filter(|(_, held)| held.is_some() && **held != main)
                     .map(|((body, _), _)| body)
                     .collect();
+                // The piece that keeps the model's imported supports, when it
+                // had any: the others get Breadslicer supports (#763).
+                let kept_by = (!imported.is_empty()).then_some(main).flatten();
                 Some((
                     leaf_name(graph, leaf),
                     graph.node(leaf)?.meta.clone(),
                     sets_of_model(spatial, &sessions, leaf),
                     gone,
+                    kept_by,
                 ))
             })
             .flatten()
@@ -2630,11 +2634,19 @@ impl CutRun {
         match self.document.apply_edit(edit.clone()) {
             Ok(()) => {
                 // Pieces of a model with Breadslicer supports get supports
-                // again, in this Undo step, as a tilt does (#659, #153).
-                if supports.is_empty() {
+                // again, in this Undo step, as a tilt does (#659, #153). Of a
+                // model with imported supports, the piece they still hold
+                // keeps them (#651) and the others get Breadslicer supports
+                // (#763), so no piece is left with none.
+                let pieces: Vec<_> = slots
+                    .iter()
+                    .enumerate()
+                    .filter(|(k, _)| !supports.is_empty() || kept_by.is_some_and(|m| m != *k))
+                    .map(|(_, slot)| slot.0)
+                    .collect();
+                if pieces.is_empty() {
                     self.document.push_edit(edit);
                 } else {
-                    let pieces: Vec<_> = slots.iter().map(|slot| slot.0).collect();
                     self.document.push_edit_wanting(edit, &pieces);
                 }
                 self.document
@@ -2651,6 +2663,12 @@ impl CutRun {
                         notice.push_str(&ctr!(
                             "CutRun",
                             "Supports are being made again for the pieces."
+                        ));
+                    } else if !pieces.is_empty() {
+                        notice.push(' ');
+                        notice.push_str(&ctr!(
+                            "CutRun",
+                            "Supports are being made for the pieces cut off."
                         ));
                     }
                     if !imported_gone.is_empty() {
