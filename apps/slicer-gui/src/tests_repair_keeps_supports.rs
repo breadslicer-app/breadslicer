@@ -837,6 +837,30 @@ fn a_real_mini_through_generate_and_its_islands() {
     });
 }
 
+/// The plate checklist of a project (#740): `BREADSLICER_SHEET_BREAD`
+/// names the project, `BREADSLICER_PLATE_SHEET` the PDF to write.
+#[test]
+#[ignore = "reads a project named by BREADSLICER_SHEET_BREAD"]
+fn a_projects_plate_checklist() {
+    let (Ok(path), Ok(out)) = (
+        std::env::var("BREADSLICER_SHEET_BREAD"),
+        std::env::var("BREADSLICER_PLATE_SHEET"),
+    ) else {
+        return;
+    };
+    on_fresh_slint_thread(move || {
+        let w = window_with_bread(std::path::Path::new(&path));
+        let stem = std::path::Path::new(&path)
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let started = Instant::now();
+        let pdf = crate::plate_sheet::pdf_of(&w.ctrl, &stem);
+        eprintln!("checklist in {:?}, {} bytes", started.elapsed(), pdf.len());
+        std::fs::write(&out, pdf).unwrap();
+    });
+}
+
 /// What a project's leaves are, and what slicing it says (#606): Damian's
 /// "Model inside the raft" after a slice again. `BREADSLICER_RAFT_BREAD`
 /// names the project.

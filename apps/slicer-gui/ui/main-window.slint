@@ -975,6 +975,8 @@ export component MainWindow inherits Window {
     callback export-as-requested();
     // The models picked and their supports, alone (#40).
     callback export-selection-requested();
+    // File > Plate Checklist (#740).
+    callback plate-sheet-requested();
     callback scene-load-finished();
     callback import-notes-requested();
     callback show-about-requested();
@@ -1406,6 +1408,16 @@ export component MainWindow inherits Window {
                 enabled: root.has-scene && !root.loading && !root.saving-in-progress;
                 activated => {
                     root.export-selection-requested();
+                }
+            }
+
+            MenuSeparator { }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Plate Checklist…");
+                enabled: root.has-scene && !root.loading && !root.saving-in-progress;
+                activated => {
+                    root.plate-sheet-requested();
                 }
             }
         }
@@ -3937,6 +3949,16 @@ export component MainWindow inherits Window {
                     enabled: root.has-scene && !root.loading && !root.saving-in-progress;
                     activated => {
                         root.export-selection-requested();
+                    }
+                }
+
+                MenuSeparator { }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Plate Checklist…");
+                    enabled: root.has-scene && !root.loading && !root.saving-in-progress;
+                    activated => {
+                        root.plate-sheet-requested();
                     }
                 }
             }

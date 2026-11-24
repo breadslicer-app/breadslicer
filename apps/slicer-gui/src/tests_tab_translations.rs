@@ -921,6 +921,7 @@ const DIALOG_SOURCES: &[(&str, &str)] = &[
     ("app_state.rs", include_str!("app_state.rs")),
     ("reload_from_disk.rs", include_str!("reload_from_disk.rs")),
     ("dead_zones.rs", include_str!("dead_zones.rs")),
+    ("plate_sheet/mod.rs", include_str!("plate_sheet/mod.rs")),
     ("update_check.rs", include_str!("update_check.rs")),
     ("repair_on_import.rs", include_str!("repair_on_import.rs")),
     ("arrange_run.rs", include_str!("arrange_run.rs")),

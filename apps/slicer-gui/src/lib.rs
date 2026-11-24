@@ -32,6 +32,7 @@ pub(crate) const APP_NAME: &str = if update_check::is_dev_version(VERSION) {
     "Breadslicer"
 };
 mod dead_zones;
+mod plate_sheet;
 mod about_window;
 mod app_settings;
 mod app_state;
