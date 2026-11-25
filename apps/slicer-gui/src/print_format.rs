@@ -152,6 +152,7 @@ fn automatic_label(format: PrinterFileFormat) -> String {
             ctr!("SlicePanel", "Anycubic (automatic)")
         }
         PrinterFileFormat::Sl1(_) => ctr!("SlicePanel", "Prusa (automatic)"),
+        PrinterFileFormat::Other(_) => return format!(".{}", format.extension()),
     }
     .to_string()
 }
@@ -172,11 +173,12 @@ pub(crate) fn format_label(format: PrinterFileFormat) -> String {
         }
         PrinterFileFormat::Cxdlp(CxdlpVersion::V2) => ctr!("SlicePanel", ".cxdlp (v2)"),
         PrinterFileFormat::Cxdlp(CxdlpVersion::V3) => ctr!("SlicePanel", ".cxdlp (v3)"),
-        // Each Anycubic and Prusa variant has an extension of its own, which
-        // says it all.
+        // Each Anycubic and Prusa variant, and each format a printer names by
+        // its extension, has an extension of its own, which says it all.
         PrinterFileFormat::AnycubicZip(_)
         | PrinterFileFormat::AnycubicBinary(_)
-        | PrinterFileFormat::Sl1(_) => {
+        | PrinterFileFormat::Sl1(_)
+        | PrinterFileFormat::Other(_) => {
             return format!(".{}", format.extension());
         }
     }
