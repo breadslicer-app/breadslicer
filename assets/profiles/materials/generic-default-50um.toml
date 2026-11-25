@@ -97,14 +97,12 @@ wait_after_lift_sec = 0.0
 bottom_wait_before_cure_sec = 1.0
 bottom_wait_after_cure_sec = 0.0
 bottom_wait_after_lift_sec = 0.0
-lift_distance_mm = 5.0
+lift_distance_mm = 9.0
 lift_speed_mm_min = 60.0
-retract_speed_mm_min = 240.0
-bottom_lift_distance_mm = 5.0
+retract_speed_mm_min = 60.0
+bottom_lift_distance_mm = 8.0
 bottom_lift_speed_mm_min = 60.0
-bottom_retract_speed_mm_min = 120.0
-second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 180.0, retract_speed_mm_min = 60.0 }
-bottom_second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 120.0, retract_speed_mm_min = 60.0 }
+bottom_retract_speed_mm_min = 60.0
 
 [per_printer.concepts3d-athena-8k]
 normal_exposure_sec = 2.0
@@ -116,14 +114,12 @@ wait_after_lift_sec = 0.0
 bottom_wait_before_cure_sec = 1.0
 bottom_wait_after_cure_sec = 0.0
 bottom_wait_after_lift_sec = 0.0
-lift_distance_mm = 5.0
+lift_distance_mm = 9.0
 lift_speed_mm_min = 60.0
-retract_speed_mm_min = 240.0
-bottom_lift_distance_mm = 5.0
+retract_speed_mm_min = 60.0
+bottom_lift_distance_mm = 8.0
 bottom_lift_speed_mm_min = 60.0
-bottom_retract_speed_mm_min = 120.0
-second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 180.0, retract_speed_mm_min = 60.0 }
-bottom_second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 120.0, retract_speed_mm_min = 60.0 }
+bottom_retract_speed_mm_min = 60.0
 
 [per_printer.creality-ct-133-pro]
 normal_exposure_sec = 3.0
@@ -163,14 +159,12 @@ wait_after_lift_sec = 0.0
 bottom_wait_before_cure_sec = 3.0
 bottom_wait_after_cure_sec = 1.0
 bottom_wait_after_lift_sec = 1.0
-lift_distance_mm = 4.0
+lift_distance_mm = 8.0
 lift_speed_mm_min = 60.0
-retract_speed_mm_min = 180.0
-bottom_lift_distance_mm = 4.0
+retract_speed_mm_min = 60.0
+bottom_lift_distance_mm = 8.0
 bottom_lift_speed_mm_min = 60.0
-bottom_retract_speed_mm_min = 180.0
-second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 180.0, retract_speed_mm_min = 60.0 }
-bottom_second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 180.0, retract_speed_mm_min = 60.0 }
+bottom_retract_speed_mm_min = 60.0
 
 [per_printer.creality-halot-mage-pro]
 normal_exposure_sec = 2.5
@@ -182,14 +176,12 @@ wait_after_lift_sec = 0.0
 bottom_wait_before_cure_sec = 3.0
 bottom_wait_after_cure_sec = 1.0
 bottom_wait_after_lift_sec = 1.0
-lift_distance_mm = 4.0
+lift_distance_mm = 8.0
 lift_speed_mm_min = 60.0
-retract_speed_mm_min = 180.0
-bottom_lift_distance_mm = 4.0
+retract_speed_mm_min = 60.0
+bottom_lift_distance_mm = 8.0
 bottom_lift_speed_mm_min = 60.0
-bottom_retract_speed_mm_min = 180.0
-second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 180.0, retract_speed_mm_min = 60.0 }
-bottom_second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 180.0, retract_speed_mm_min = 60.0 }
+bottom_retract_speed_mm_min = 60.0
 
 [per_printer.creality-halot-mage-s]
 normal_exposure_sec = 2.8
@@ -201,14 +193,12 @@ wait_after_lift_sec = 0.0
 bottom_wait_before_cure_sec = 4.0
 bottom_wait_after_cure_sec = 0.0
 bottom_wait_after_lift_sec = 0.0
-lift_distance_mm = 4.0
+lift_distance_mm = 8.0
 lift_speed_mm_min = 300.0
 retract_speed_mm_min = 300.0
-bottom_lift_distance_mm = 4.0
+bottom_lift_distance_mm = 8.0
 bottom_lift_speed_mm_min = 120.0
-bottom_retract_speed_mm_min = 240.0
-second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 300.0, retract_speed_mm_min = 300.0 }
-bottom_second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 240.0, retract_speed_mm_min = 120.0 }
+bottom_retract_speed_mm_min = 120.0
 
 [per_printer.creality-halot-max]
 normal_exposure_sec = 3.0
@@ -233,14 +223,12 @@ wait_after_lift_sec = 0.0
 bottom_wait_before_cure_sec = 2.0
 bottom_wait_after_cure_sec = 0.0
 bottom_wait_after_lift_sec = 0.0
-lift_distance_mm = 1.0
+lift_distance_mm = 6.0
 lift_speed_mm_min = 60.0
-retract_speed_mm_min = 240.0
-bottom_lift_distance_mm = 4.0
+retract_speed_mm_min = 60.0
+bottom_lift_distance_mm = 8.0
 bottom_lift_speed_mm_min = 60.0
-bottom_retract_speed_mm_min = 180.0
-second_travel = { lift_distance_mm = 5.0, lift_speed_mm_min = 240.0, retract_speed_mm_min = 60.0 }
-bottom_second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 180.0, retract_speed_mm_min = 60.0 }
+bottom_retract_speed_mm_min = 60.0
 
 [per_printer.creality-halot-r6]
 normal_exposure_sec = 3.0
@@ -252,14 +240,12 @@ wait_after_lift_sec = 0.0
 bottom_wait_before_cure_sec = 4.0
 bottom_wait_after_cure_sec = 0.0
 bottom_wait_after_lift_sec = 0.0
-lift_distance_mm = 1.0
+lift_distance_mm = 5.0
 lift_speed_mm_min = 120.0
-retract_speed_mm_min = 240.0
-bottom_lift_distance_mm = 4.0
+retract_speed_mm_min = 120.0
+bottom_lift_distance_mm = 8.0
 bottom_lift_speed_mm_min = 60.0
-bottom_retract_speed_mm_min = 120.0
-second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 240.0, retract_speed_mm_min = 120.0 }
-bottom_second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 120.0, retract_speed_mm_min = 60.0 }
+bottom_retract_speed_mm_min = 60.0
 
 [per_printer.creality-halot-ray]
 normal_exposure_sec = 3.0
@@ -370,14 +356,12 @@ wait_after_lift_sec = 0.0
 bottom_wait_before_cure_sec = 0.0
 bottom_wait_after_cure_sec = 1.0
 bottom_wait_after_lift_sec = 1.0
-lift_distance_mm = 3.0
+lift_distance_mm = 7.0
 lift_speed_mm_min = 65.0
-retract_speed_mm_min = 180.0
-bottom_lift_distance_mm = 4.0
+retract_speed_mm_min = 65.0
+bottom_lift_distance_mm = 7.0
 bottom_lift_speed_mm_min = 65.0
-bottom_retract_speed_mm_min = 180.0
-second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 180.0, retract_speed_mm_min = 65.0 }
-bottom_second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 180.0, retract_speed_mm_min = 65.0 }
+bottom_retract_speed_mm_min = 65.0
 
 [per_printer.emake3d-galaxy-1]
 normal_exposure_sec = 7.0
@@ -405,10 +389,9 @@ bottom_wait_after_lift_sec = 0.0
 lift_distance_mm = 7.0
 lift_speed_mm_min = 65.0
 retract_speed_mm_min = 185.0
-bottom_lift_distance_mm = 7.0
+bottom_lift_distance_mm = 10.0
 bottom_lift_speed_mm_min = 65.0
-bottom_retract_speed_mm_min = 185.0
-bottom_second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 180.0, retract_speed_mm_min = 60.0 }
+bottom_retract_speed_mm_min = 60.0
 
 [per_printer.epax-dx10-pro-5k]
 normal_exposure_sec = 2.5
@@ -437,14 +420,12 @@ wait_after_lift_sec = 0.0
 bottom_wait_before_cure_sec = 1.0
 bottom_wait_after_cure_sec = 0.0
 bottom_wait_after_lift_sec = 0.0
-lift_distance_mm = 4.0
+lift_distance_mm = 7.0
 lift_speed_mm_min = 40.0
 retract_speed_mm_min = 150.0
-bottom_lift_distance_mm = 4.0
+bottom_lift_distance_mm = 7.0
 bottom_lift_speed_mm_min = 40.0
 bottom_retract_speed_mm_min = 150.0
-second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 65.0, retract_speed_mm_min = 150.0 }
-bottom_second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 65.0, retract_speed_mm_min = 150.0 }
 
 [per_printer.epax-e10-5k]
 normal_exposure_sec = 2.5
@@ -473,14 +454,12 @@ wait_after_lift_sec = 0.0
 bottom_wait_before_cure_sec = 1.0
 bottom_wait_after_cure_sec = 0.0
 bottom_wait_after_lift_sec = 0.0
-lift_distance_mm = 4.0
+lift_distance_mm = 7.0
 lift_speed_mm_min = 40.0
 retract_speed_mm_min = 150.0
-bottom_lift_distance_mm = 4.0
+bottom_lift_distance_mm = 7.0
 bottom_lift_speed_mm_min = 40.0
 bottom_retract_speed_mm_min = 150.0
-second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 65.0, retract_speed_mm_min = 150.0 }
-bottom_second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 65.0, retract_speed_mm_min = 150.0 }
 
 [per_printer.epax-e10-mono]
 normal_exposure_sec = 2.0
@@ -540,10 +519,9 @@ bottom_wait_after_lift_sec = 0.0
 lift_distance_mm = 7.0
 lift_speed_mm_min = 65.0
 retract_speed_mm_min = 185.0
-bottom_lift_distance_mm = 7.0
+bottom_lift_distance_mm = 10.0
 bottom_lift_speed_mm_min = 65.0
-bottom_retract_speed_mm_min = 185.0
-bottom_second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 180.0, retract_speed_mm_min = 60.0 }
+bottom_retract_speed_mm_min = 60.0
 
 [per_printer.epax-x10]
 normal_exposure_sec = 8.0
@@ -585,14 +563,12 @@ wait_after_lift_sec = 0.0
 bottom_wait_before_cure_sec = 0.0
 bottom_wait_after_cure_sec = 0.0
 bottom_wait_after_lift_sec = 0.0
-lift_distance_mm = 4.0
+lift_distance_mm = 7.0
 lift_speed_mm_min = 65.0
-retract_speed_mm_min = 185.0
-bottom_lift_distance_mm = 4.0
+retract_speed_mm_min = 60.0
+bottom_lift_distance_mm = 7.0
 bottom_lift_speed_mm_min = 65.0
-bottom_retract_speed_mm_min = 185.0
-second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 180.0, retract_speed_mm_min = 60.0 }
-bottom_second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 180.0, retract_speed_mm_min = 60.0 }
+bottom_retract_speed_mm_min = 60.0
 
 [per_printer.epax-x133-4k-mono]
 normal_exposure_sec = 8.0
@@ -619,14 +595,12 @@ wait_after_lift_sec = 0.0
 bottom_wait_before_cure_sec = 3.0
 bottom_wait_after_cure_sec = 1.0
 bottom_wait_after_lift_sec = 1.0
-lift_distance_mm = 3.0
+lift_distance_mm = 7.0
 lift_speed_mm_min = 65.0
-retract_speed_mm_min = 180.0
-bottom_lift_distance_mm = 3.0
+retract_speed_mm_min = 65.0
+bottom_lift_distance_mm = 7.0
 bottom_lift_speed_mm_min = 60.0
-bottom_retract_speed_mm_min = 180.0
-second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 180.0, retract_speed_mm_min = 65.0 }
-bottom_second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 180.0, retract_speed_mm_min = 60.0 }
+bottom_retract_speed_mm_min = 60.0
 
 [per_printer.epax-x156-4k-color]
 normal_exposure_sec = 8.0
@@ -950,10 +924,9 @@ bottom_wait_after_lift_sec = 1.0
 lift_distance_mm = 5.0
 lift_speed_mm_min = 300.0
 retract_speed_mm_min = 300.0
-bottom_lift_distance_mm = 3.0
+bottom_lift_distance_mm = 6.0
 bottom_lift_speed_mm_min = 60.0
-bottom_retract_speed_mm_min = 240.0
-bottom_second_travel = { lift_distance_mm = 3.0, lift_speed_mm_min = 240.0, retract_speed_mm_min = 60.0 }
+bottom_retract_speed_mm_min = 60.0
 
 [per_printer.peopoly-phenom]
 normal_exposure_sec = 8.0
@@ -1081,14 +1054,12 @@ wait_after_lift_sec = 0.0
 bottom_wait_before_cure_sec = 5.0
 bottom_wait_after_cure_sec = 0.0
 bottom_wait_after_lift_sec = 0.0
-lift_distance_mm = 1.0
+lift_distance_mm = 6.0
 lift_speed_mm_min = 60.0
-retract_speed_mm_min = 240.0
-bottom_lift_distance_mm = 4.0
+retract_speed_mm_min = 60.0
+bottom_lift_distance_mm = 8.0
 bottom_lift_speed_mm_min = 60.0
-bottom_retract_speed_mm_min = 180.0
-second_travel = { lift_distance_mm = 5.0, lift_speed_mm_min = 240.0, retract_speed_mm_min = 60.0 }
-bottom_second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 180.0, retract_speed_mm_min = 60.0 }
+bottom_retract_speed_mm_min = 60.0
 
 [per_printer.phrozen-sonic-mini]
 normal_exposure_sec = 1.8
@@ -1175,14 +1146,12 @@ wait_after_lift_sec = 0.0
 bottom_wait_before_cure_sec = 0.0
 bottom_wait_after_cure_sec = 0.0
 bottom_wait_after_lift_sec = 0.0
-lift_distance_mm = 2.0
+lift_distance_mm = 6.0
 lift_speed_mm_min = 60.0
-retract_speed_mm_min = 240.0
-bottom_lift_distance_mm = 3.0
+retract_speed_mm_min = 60.0
+bottom_lift_distance_mm = 7.0
 bottom_lift_speed_mm_min = 60.0
-bottom_retract_speed_mm_min = 180.0
-second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 240.0, retract_speed_mm_min = 60.0 }
-bottom_second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 180.0, retract_speed_mm_min = 60.0 }
+bottom_retract_speed_mm_min = 60.0
 
 [per_printer.uniformation-gkone]
 normal_exposure_sec = 2.5
@@ -1211,14 +1180,12 @@ wait_after_lift_sec = 0.0
 bottom_wait_before_cure_sec = 1.0
 bottom_wait_after_cure_sec = 0.0
 bottom_wait_after_lift_sec = 0.0
-lift_distance_mm = 1.0
+lift_distance_mm = 6.0
 lift_speed_mm_min = 60.0
-retract_speed_mm_min = 240.0
-bottom_lift_distance_mm = 4.0
+retract_speed_mm_min = 60.0
+bottom_lift_distance_mm = 8.0
 bottom_lift_speed_mm_min = 60.0
-bottom_retract_speed_mm_min = 180.0
-second_travel = { lift_distance_mm = 5.0, lift_speed_mm_min = 240.0, retract_speed_mm_min = 60.0 }
-bottom_second_travel = { lift_distance_mm = 4.0, lift_speed_mm_min = 180.0, retract_speed_mm_min = 60.0 }
+bottom_retract_speed_mm_min = 60.0
 
 [per_printer.uniz-ibee]
 normal_exposure_sec = 2.8
