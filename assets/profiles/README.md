@@ -245,4 +245,12 @@ Halot One exposes with the profile stored on the printer, not the file's
 values, so this profile only writes what known-good Lychee files for it
 carry (6 bottom layers at 30 s, 0.3 s, 1 s wait, 7 mm lifts at 60 mm/min).
 
+`generic-default-50um` ("Generic Default") is not a calibration of any
+resin either: it gives every printer that ships no resin of its own a
+starting point, so none is left with nothing to slice with (a test keeps
+it so). Each block holds the default settings published for that printer
+or, where there are none, for a printer with the same panel (resolution and
+pixel size), else the nearest panel. A test print of the resin in use is
+still the way to its exposure.
+
 Product names are trademarks of their respective owners.

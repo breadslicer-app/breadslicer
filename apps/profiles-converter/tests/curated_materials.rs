@@ -15,7 +15,7 @@ use sc_profiles_converter::source_note::SourceNote;
 
 /// The material profiles we write ourselves, which name no product and
 /// so have no data sheet behind them.
-const GENERIC_PROFILES: [&str; 2] = ["abs-like-405", "standard-405"];
+const GENERIC_PROFILES: [&str; 3] = ["abs-like-405", "generic-default-50um", "standard-405"];
 
 /// Profiles written by hand from the settings of files that print
 /// correctly on their owner's machines, not converted from a vendor's
