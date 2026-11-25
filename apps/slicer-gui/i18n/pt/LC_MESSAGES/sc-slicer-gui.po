@@ -1423,8 +1423,8 @@ msgstr "O dispositivo gráfico recusou a imagem de saída: {}"
 #: src/mesh_render/error.rs:159
 #, rust-format
 msgctxt "ErrorDialog"
-msgid "The graphics device refused the slice cap texture: {}"
-msgstr "O dispositivo gráfico recusou a textura da tampa de corte: {}"
+msgid "The graphics device refused the slice cap: {}"
+msgstr "O dispositivo gráfico recusou a tampa de corte: {}"
 
 #: src/mesh_render/error.rs:164
 #, rust-format

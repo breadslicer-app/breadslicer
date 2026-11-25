@@ -2166,6 +2166,21 @@ impl ViewportController {
         Some(raster)
     }
 
+    /// The cap that closes the 3D cut on layer `layer` of the held slice
+    /// (#776): its polygons as triangles, with the highlighted finding's
+    /// pixels on that layer over them (#409).
+    pub(crate) fn cap_shape(
+        &self,
+        layer: u32,
+        build_volume: &BuildVolume,
+    ) -> Option<crate::slice_cap::CapShape> {
+        let document = self.session.document();
+        document.with_slice_layer(layer, |l| {
+            let rects = self.review_highlight_rects(l.z_mm());
+            crate::slice_cap::build_cap_shape(l, &rects, build_volume)
+        })
+    }
+
     /// The highlighted finding's pixels (#409) on the layer cut at `z_mm`, as
     /// `[x0, y0, x1, y1]` rectangles in printer-frame mm, centred on the
     /// plate.
@@ -7073,7 +7088,7 @@ impl ViewportController {
                 .slice_params()
                 .map_or(0, |params| params.plate),
         );
-        let mut build_cap = || self.cap_raster(selected_layer, &build_volume);
+        let mut build_cap = || self.cap_shape(selected_layer, &build_volume);
         match renderer.update_cap(cap_key, &mut build_cap) {
             Ok(()) | Err(RenderError::DeviceLost) => {}
             Err(err) => self.session.loader().note_render_failure(&err),

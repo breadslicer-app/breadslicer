@@ -200,11 +200,8 @@ fn renderer_calls_return_device_lost_once_the_flag_is_set() {
     let builds = std::cell::Cell::new(0);
     let mut build = || {
         builds.set(builds.get() + 1);
-        Some(CapRaster {
-            coverage: vec![255u8; 16],
-            width: 4,
-            height: 4,
-            highlight: Vec::new(),
+        Some(CapShape {
+            vertices: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0]],
         })
     };
     assert!(matches!(
@@ -661,16 +658,20 @@ fn render_with_a_cap_produces_a_texture() {
     let camera = OrbitCamera::new(center, radius);
 
     let mut build = || {
-        Some(CapRaster {
-            coverage: vec![255u8; 4 * 4],
-            width: 4,
-            height: 4,
-            highlight: Vec::new(),
+        Some(CapShape {
+            vertices: vec![
+                [-10.0, -10.0, 0.0],
+                [10.0, -10.0, 0.0],
+                [10.0, 10.0, 0.0],
+                [-1.0, -1.0, 1.0],
+                [1.0, -1.0, 1.0],
+                [1.0, 1.0, 1.0],
+            ],
         })
     };
     renderer
         .update_cap(Some(1), &mut build)
-        .expect("a 4 x 4 cap texture is not refused");
+        .expect("a two-triangle cap is not refused");
 
     let texture = renderer
         .render(
@@ -1571,54 +1572,6 @@ fn colour_targets_are_refused_typed_on_a_small_texture_device() {
             ..
         }
     ));
-}
-
-#[test]
-fn update_cap_reports_a_refused_texture_and_leaves_the_cap_off() {
-    let Some((device, queue)) = shared_small_texture_test_device() else {
-        eprintln!("skipping: no wgpu adapter available in this environment");
-        return;
-    };
-    let mut renderer = Renderer::new(device, DeviceToken::next(), queue, DeviceLoss::default())
-        .expect("Renderer::new under the small-texture test device");
-    let side = SMALL_TEXTURE_LIMIT * 2;
-    let builds = std::cell::Cell::new(0);
-    let mut build = || {
-        builds.set(builds.get() + 1);
-        Some(CapRaster {
-            coverage: vec![255u8; (side * side) as usize],
-            width: side,
-            height: side,
-            highlight: Vec::new(),
-        })
-    };
-
-    let refusal = renderer
-        .update_cap(Some(1), &mut build)
-        .expect_err("a cap texture over the ceiling is refused");
-    assert!(matches!(
-        refusal,
-        RenderError::DeviceRefused {
-            what: RenderAllocation::CapTexture,
-            ..
-        }
-    ));
-    assert_eq!(builds.get(), 1);
-
-    // The same key is not retried; a new key is.
-    renderer
-        .update_cap(Some(1), &mut build)
-        .expect("a remembered refusal is not an error");
-    assert_eq!(builds.get(), 1);
-    let _ = renderer.update_cap(Some(2), &mut build);
-    assert_eq!(builds.get(), 2);
-
-    let (centre, radius) = TEST_BV.framing(None);
-    let camera = OrbitCamera::new(centre, radius);
-    renderer
-        .render(None, TEST_BV, &camera, 64, 64)
-        .expect("the frame renders without the cap")
-        .expect("a 64 x 64 frame produces a texture");
 }
 
 /// Checks that a render call against a different `BuildVolume` rebuilds the

@@ -29,7 +29,7 @@ use super::{FramePixels, MeshRenderer, RenderError, SceneRender};
 use crate::build_volume::BuildVolume;
 use crate::camera::OrbitCamera;
 use crate::front_label::LabelRaster;
-use crate::slice_cap::CapRaster;
+use crate::slice_cap::CapShape;
 
 /// Recorded arguments of a single [`MockRenderer::render`] call.
 /// Captures only the fields the audit's behavioural tests assert on;
@@ -211,7 +211,7 @@ impl MeshRenderer for MockRenderer {
     fn update_cap(
         &mut self,
         _key: Option<u64>,
-        _build: &mut dyn FnMut() -> Option<CapRaster>,
+        _build: &mut dyn FnMut() -> Option<CapShape>,
     ) -> Result<(), RenderError> {
         // The slice-view cap is a GPU-only concern; the mock holds no
         // texture state, so this is a no-op.

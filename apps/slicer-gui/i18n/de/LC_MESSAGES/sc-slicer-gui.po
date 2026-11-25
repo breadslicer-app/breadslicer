@@ -1424,8 +1424,8 @@ msgstr "Das Grafikgerät hat das Ausgabebild abgelehnt: {}"
 #: src/mesh_render/error.rs:159
 #, rust-format
 msgctxt "ErrorDialog"
-msgid "The graphics device refused the slice cap texture: {}"
-msgstr "Das Grafikgerät hat die Schnittflächentextur abgelehnt: {}"
+msgid "The graphics device refused the slice cap: {}"
+msgstr "Das Grafikgerät hat die Schnittfläche abgelehnt: {}"
 
 #: src/mesh_render/error.rs:164
 #, rust-format

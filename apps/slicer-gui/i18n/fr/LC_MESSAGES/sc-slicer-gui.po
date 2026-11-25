@@ -1424,8 +1424,8 @@ msgstr "Le périphérique graphique a refusé l'image de sortie : {}"
 #: src/mesh_render/error.rs:159
 #, rust-format
 msgctxt "ErrorDialog"
-msgid "The graphics device refused the slice cap texture: {}"
-msgstr "Le périphérique graphique a refusé la texture de coupe de tranche : {}"
+msgid "The graphics device refused the slice cap: {}"
+msgstr "Le périphérique graphique a refusé la face de coupe : {}"
 
 #: src/mesh_render/error.rs:164
 #, rust-format
