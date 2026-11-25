@@ -130,7 +130,7 @@ fn is_halot_x1(name: &str) -> bool {
 /// (by its model, `R009`, or its panels), the CTB codec otherwise and on any
 /// odd-width panel.
 pub fn codec_for(model: &str, resolution: (u32, u32)) -> LayerCodec {
-    if resolution.0 % 2 != 0 {
+    if !resolution.0.is_multiple_of(2) {
         return LayerCodec::Rle7;
     }
     if model.eq_ignore_ascii_case(HALOT_X1)
