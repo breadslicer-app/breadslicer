@@ -183,6 +183,25 @@ fn every_bundled_resin_resolves_on_the_printers_it_is_calibrated_for() {
     }
 }
 
+/// Every bundled printer has a resin to slice with, so the slice panel
+/// never offers an empty list (#780).
+#[test]
+fn every_bundled_printer_has_at_least_one_resin() {
+    let mut calibrated = std::collections::BTreeSet::new();
+    for path in toml_files(&bundled_profiles_dir().join("materials")) {
+        let profile = load_material_profile_from_path(&path).unwrap();
+        for target in profile.per_printer.keys() {
+            calibrated.insert(target.printer_id().as_str().to_owned());
+        }
+    }
+    let without: Vec<String> = bundled_printers()
+        .iter()
+        .map(|printer| printer.identity.id.as_str().to_owned())
+        .filter(|id| !calibrated.contains(id))
+        .collect();
+    assert!(without.is_empty(), "printers with no resin: {without:?}");
+}
+
 /// The slug a machine's own manufacturer and model make, which is what
 /// the converter derives a printer id from.
 fn slug_of(manufacturer: &str, name: &str) -> String {
