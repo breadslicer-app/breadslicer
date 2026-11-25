@@ -56,7 +56,7 @@ pub use preview::{
 };
 pub use print_program::{CreationTime, LayerProgram, MotionStage, PrintProgram};
 pub use printer_file_format::{
-    AnycubicBinaryVariant, AnycubicZipVariant, CtbVariant, CxdlpVersion, GooVersion,
+    AnycubicBinaryVariant, AnycubicZipVariant, CtbVariant, CxdlpVersion, GooVersion, OtherFormat,
     PrinterFileFormat, Sl1Variant, UnresolvedBinding, UnwritableBinding, UnwritableFamily,
     printer_file_family_from_path,
 };

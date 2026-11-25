@@ -24,7 +24,7 @@ use sc_print_profiles::{
     PrinterCapabilities, PrinterConstraints, PrinterHardware, PrinterIdentity, PrinterProfile,
 };
 use sc_sla_formats::{
-    AnycubicBinaryVariant, AnycubicZipVariant, CtbVariant, CxdlpVersion, GooVersion,
+    AnycubicBinaryVariant, AnycubicZipVariant, CtbVariant, CxdlpVersion, GooVersion, OtherFormat,
     PrinterFileFormat, Sl1Variant,
 };
 use semver::Version;
@@ -474,6 +474,7 @@ pub(crate) fn writable_formats() -> Vec<PrinterFileFormat> {
     all.extend(AnycubicZipVariant::ALL.map(PrinterFileFormat::AnycubicZip));
     all.extend(AnycubicBinaryVariant::ALL.map(PrinterFileFormat::AnycubicBinary));
     all.extend(Sl1Variant::ALL.map(PrinterFileFormat::Sl1));
+    all.extend(OtherFormat::ALL.map(PrinterFileFormat::Other));
     all.retain(|format| format.has_writer());
     all
 }

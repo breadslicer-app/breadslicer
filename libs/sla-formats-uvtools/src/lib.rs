@@ -33,6 +33,8 @@
 //! - [`ctb_legacy`]: ChiTuBox CTB versions 2 to 4 (version 5 is written by
 //!   `sc-sla-formats` itself).
 //! - [`sl1`]: Prusa's SL1 archive (`.sl1` for the SL1, `.sl1s` for the SL1S).
+//! - [`cxdlpv4`]: Creality CXDLP version 4 (Halot Mage, Mage S, Play, R6 and
+//!   the Halot X1 family).
 //!
 //! [`read`] decodes them back, for tests and for checking a written file.
 
@@ -40,6 +42,7 @@ pub mod anycubic_binary;
 pub mod anycubic_zip;
 pub mod ctb_legacy;
 pub mod cxdlp;
+pub mod cxdlpv4;
 mod layer_stats;
 mod program;
 mod pw0;
@@ -50,8 +53,8 @@ pub mod sl1;
 
 use sc_sl1cer::contour::ContourStack;
 use sc_sla_formats::{
-    CtbVariant, PreviewSizes, PrintPreviews, PrintProgram, PrinterFileFormat, PrinterFileSink,
-    PrinterFileWriter, RasterSetup, WriteFailure,
+    CtbVariant, OtherFormat, PreviewSizes, PrintPreviews, PrintProgram, PrinterFileFormat,
+    PrinterFileSink, PrinterFileWriter, RasterSetup, WriteFailure,
 };
 
 /// The writer this crate installs.
@@ -69,6 +72,7 @@ impl PrinterFileWriter for UvtoolsWriters {
                 | PrinterFileFormat::AnycubicZip(_)
                 | PrinterFileFormat::AnycubicBinary(_)
                 | PrinterFileFormat::Sl1(_)
+                | PrinterFileFormat::Other(OtherFormat::Cxdlpv4)
         )
     }
 
@@ -81,6 +85,7 @@ impl PrinterFileWriter for UvtoolsWriters {
             PrinterFileFormat::AnycubicZip(_) => Some(anycubic_zip::PREVIEW_SIZES),
             PrinterFileFormat::AnycubicBinary(_) => Some(anycubic_binary::PREVIEW_SIZES),
             PrinterFileFormat::Sl1(_) => Some(sl1::PREVIEW_SIZES),
+            PrinterFileFormat::Other(OtherFormat::Cxdlpv4) => Some(cxdlpv4::PREVIEW_SIZES),
             _ => None,
         }
     }
@@ -96,6 +101,14 @@ impl PrinterFileWriter for UvtoolsWriters {
                     pws::quantise(grey, raster.aa().factor())
                 } else {
                     pw0::stored_grey(grey)
+                }
+            }
+            PrinterFileFormat::Other(OtherFormat::Cxdlpv4) => {
+                let resolution = raster.panel_resolution();
+                if cxdlpv4::is_pixel_pair_panel((resolution.x(), resolution.y())) {
+                    cxdlpv4::pixel_pair_grey(grey)
+                } else {
+                    sc_sla_formats::ctb::rle7::stored_grey(grey)
                 }
             }
             _ => grey,
@@ -125,6 +138,9 @@ impl PrinterFileWriter for UvtoolsWriters {
             }
             PrinterFileFormat::Sl1(variant) => {
                 sl1::write_file(variant, program, previews, stack, out)
+            }
+            PrinterFileFormat::Other(OtherFormat::Cxdlpv4) => {
+                cxdlpv4::write_file(program, previews, stack, out)
             }
             other => Err(WriteFailure::Unencodable(format!(
                 "\"{other}\" is not a format ported from UVtools"
