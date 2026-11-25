@@ -1428,7 +1428,7 @@ msgstr "Il dispositivo grafico ha rifiutato l'immagine di output: {}"
 #: src/mesh_render/error.rs:159
 #, rust-format
 msgctxt "ErrorDialog"
-msgid "The graphics device refused the slice cap texture: {}"
+msgid "The graphics device refused the slice cap: {}"
 msgstr ""
 "Il dispositivo grafico ha rifiutato la texture di riempimento della sezione: "
 "{}"

@@ -15,7 +15,7 @@ use slint::wgpu_30::wgpu;
 use crate::build_volume::BuildVolume;
 use crate::camera::{DEFAULT_DISTANCE_FACTOR, OrbitCamera};
 use crate::front_label::{LabelRaster, MarksRaster};
-use crate::slice_cap::CapRaster;
+use crate::slice_cap::CapShape;
 
 mod device_loss;
 mod device_ops;
@@ -286,13 +286,15 @@ impl Pipelines {
     }
 }
 
-/// State of the slice-view cap texture, keyed by the layer it was last built
-/// for. The bind group keeps the texture and its view alive.
+/// State of the slice-view cap, keyed by the layer it was last built for: its
+/// triangles (none for an empty layer, which still closes no cut with back
+/// faces) and how many vertices they hold.
 enum CapState {
     Off,
     Shown {
         key: u64,
-        bind_group: wgpu::BindGroup,
+        vertices: Option<wgpu::Buffer>,
+        count: u32,
     },
     Refused {
         key: u64,
@@ -760,15 +762,16 @@ impl Renderer {
         Ok(self.pipelines.plate_buffers.insert(buffers).clone())
     }
 
-    /// Refresh the slice-view cap texture. `key` identifies the layer being
-    /// capped; `None` clears the cap. When `key` matches the current cap (shown
-    /// or refused) nothing happens, so a camera orbit (same layer) skips the
-    /// rasterise. Otherwise `build` produces the coverage raster, which is
-    /// uploaded as an R8 texture; a `build` yielding `None` clears the cap.
+    /// Refresh the slice-view cap. `key` identifies the layer being capped;
+    /// `None` clears the cap. When `key` matches the current cap (shown or
+    /// refused) nothing happens, so a camera orbit (same layer) skips the
+    /// triangulation. Otherwise `build` produces the cap's triangles, which
+    /// are uploaded as a vertex buffer; a `build` yielding `None` clears the
+    /// cap.
     pub(crate) fn update_cap(
         &mut self,
         key: Option<u64>,
-        build: &mut dyn FnMut() -> Option<CapRaster>,
+        build: &mut dyn FnMut() -> Option<CapShape>,
     ) -> Result<(), RenderError> {
         let Some(key) = key else {
             self.pipelines.cap_state = CapState::Off;
@@ -780,13 +783,17 @@ impl Renderer {
         if self.core.device_loss.is_lost() {
             return Err(RenderError::DeviceLost);
         }
-        let Some(raster) = build() else {
+        let Some(shape) = build() else {
             self.pipelines.cap_state = CapState::Off;
             return Ok(());
         };
-        match self.upload_cap_texture(&raster) {
-            Ok(bind_group) => {
-                self.pipelines.cap_state = CapState::Shown { key, bind_group };
+        match self.upload_cap_vertices(&shape) {
+            Ok(vertices) => {
+                self.pipelines.cap_state = CapState::Shown {
+                    key,
+                    vertices,
+                    count: shape.len() as u32,
+                };
                 Ok(())
             }
             Err(err) => {
@@ -904,21 +911,23 @@ impl Renderer {
         }
     }
 
-    /// Upload a coverage raster as an RG8 texture (coverage, highlight) and
-    /// build the cap's group-1 bind group.
-    fn upload_cap_texture(&self, raster: &CapRaster) -> Result<wgpu::BindGroup, RenderError> {
-        let bytes = raster.texture_bytes();
+    /// Upload the cap's triangles as a vertex buffer; an empty layer needs
+    /// none.
+    fn upload_cap_vertices(&self, shape: &CapShape) -> Result<Option<wgpu::Buffer>, RenderError> {
+        if shape.is_empty() {
+            return Ok(None);
+        }
         scoped(&self.core.device, || {
-            self.coverage_bind_group(
-                "cap",
-                wgpu::TextureFormat::Rg8Unorm,
-                &bytes,
-                raster.width,
-                raster.height,
-                &self.pipelines.cap.texture_bind_group_layout,
-                &self.pipelines.cap.sampler,
+            wgpu::util::DeviceExt::create_buffer_init(
+                &self.core.device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("mesh-viewer cap vbo"),
+                    contents: bytemuck::cast_slice(&shape.vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                },
             )
         })
+        .map(Some)
         .map_err(|source| RenderError::DeviceRefused {
             what: RenderAllocation::CapTexture,
             source,
@@ -1781,20 +1790,24 @@ impl Renderer {
         );
     }
 
-    /// Slice-view cap: a flat quad at the clip height textured with the current
-    /// layer's coverage, filling the mesh cut so it reads solid. Drawn only
-    /// when a cap texture is set (Slice section with a held slice). The clip
-    /// height and build corners come from the shared uniform buffer, so no
-    /// per-cap vertex data is bound.
+    /// Slice-view cap: the current layer's polygons, flat at the clip height,
+    /// filling the mesh cut so it reads solid (#776). Drawn only when a cap is
+    /// set (Slice section with a held slice). The clip height comes from the
+    /// shared uniform buffer.
     fn record_cap(&self, pass: &mut wgpu::RenderPass<'_>) {
-        let CapState::Shown { bind_group, .. } = &self.pipelines.cap_state else {
+        let CapState::Shown {
+            vertices: Some(vertices),
+            count,
+            ..
+        } = &self.pipelines.cap_state
+        else {
             return;
         };
         pass.set_pipeline(&self.pipelines.cap.pipeline);
         pass.set_bind_group(0, &self.pipelines.cap.uniforms_bind_group, &[]);
-        pass.set_bind_group(1, bind_group, &[]);
+        pass.set_vertex_buffer(0, vertices.slice(..));
         pass.set_stencil_reference(0);
-        pass.draw(0..6, self.cap_plate..self.cap_plate + 1);
+        pass.draw(0..*count, self.cap_plate..self.cap_plate + 1);
     }
 
     /// The plate the held slice was cut for, whose cut the slice view shows

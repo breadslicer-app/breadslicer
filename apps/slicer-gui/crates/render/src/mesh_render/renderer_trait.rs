@@ -19,7 +19,7 @@ use super::{FramePixels, RenderError, Renderer, SceneRender};
 use crate::build_volume::BuildVolume;
 use crate::camera::OrbitCamera;
 use crate::front_label::{LabelRaster, MarksRaster};
-use crate::slice_cap::CapRaster;
+use crate::slice_cap::CapShape;
 
 pub trait MeshRenderer {
     /// UI-thread upload path; rebuilds GPU buffers from the CPU-side
@@ -49,14 +49,14 @@ pub trait MeshRenderer {
     /// reallocates them at the current exact pixel size.
     fn invalidate_sizing(&mut self);
 
-    /// Refresh the slice-view cap texture for the layer identified by
-    /// `key` (`None` clears it). `build` is called to produce the
-    /// coverage raster only when `key` differs from the current cap;
-    /// a refused upload leaves the cap off for that key.
+    /// Refresh the slice-view cap for the layer identified by `key`
+    /// (`None` clears it). `build` is called to produce the cap's
+    /// triangles only when `key` differs from the current cap; a refused
+    /// upload leaves the cap off for that key.
     fn update_cap(
         &mut self,
         key: Option<u64>,
-        build: &mut dyn FnMut() -> Option<CapRaster>,
+        build: &mut dyn FnMut() -> Option<CapShape>,
     ) -> Result<(), RenderError>;
 
     /// Refresh the plate's front label for the word identified by
@@ -220,7 +220,7 @@ impl MeshRenderer for Renderer {
     fn update_cap(
         &mut self,
         key: Option<u64>,
-        build: &mut dyn FnMut() -> Option<CapRaster>,
+        build: &mut dyn FnMut() -> Option<CapShape>,
     ) -> Result<(), RenderError> {
         Renderer::update_cap(self, key, build)
     }

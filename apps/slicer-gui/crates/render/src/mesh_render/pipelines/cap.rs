@@ -3,16 +3,15 @@
  * SPDX-License-Identifier: AGPL-3.0-only
  */
 
-//! Slice-view cap pipeline. Draws a flat quad across the build area at
-//! the clip height, textured with the selected layer's coverage raster,
-//! to fill the opening left by the mesh clip so the cut reads solid.
+//! Slice-view cap pipeline. Draws the selected layer's polygons, as
+//! triangles, flat at the clip height, to fill the opening left by the
+//! mesh clip so the cut reads solid (#776). A review finding's pixels
+//! (#409) come after the layer in the same buffer and draw over it.
 //!
 //! Like the plate pipeline, group 0 reuses the mesh `Uniforms` buffer
-//! (`view_proj`, plus the clip height in `light_dir.w` and the build
-//! corners in `env_min` / `env_max`), so no extra per-frame uniform
-//! write is needed. Group 1 is the per-layer coverage texture, uploaded
-//! by the renderer when the selected layer changes. The quad geometry
-//! is generated from the vertex index, so no vertex buffer is bound.
+//! (`view_proj`, plus the clip height in `light_dir.w`), so no extra
+//! per-frame uniform write is needed. The vertex buffer is uploaded by the
+//! renderer when the selected layer changes.
 
 use std::borrow::Cow;
 use std::num::NonZeroU64;
@@ -29,8 +28,6 @@ const CAP_SHADER_SOURCE: &str = include_str!("../shaders/cap.wgsl");
 pub(in crate::mesh_render) struct CapPipeline {
     pub(in crate::mesh_render) pipeline: wgpu::RenderPipeline,
     pub(in crate::mesh_render) uniforms_bind_group: wgpu::BindGroup,
-    pub(in crate::mesh_render) texture_bind_group_layout: wgpu::BindGroupLayout,
-    pub(in crate::mesh_render) sampler: wgpu::Sampler,
 }
 
 impl CapPipeline {
@@ -65,32 +62,9 @@ impl CapPipeline {
             }],
         });
 
-        // Group 1: the coverage texture plus a filtering sampler.
-        let texture_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("mesh-viewer cap texture bgl"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
-
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("mesh-viewer cap pll"),
-            bind_group_layouts: &[Some(&uniforms_bgl), Some(&texture_bgl)],
+            bind_group_layouts: &[Some(&uniforms_bgl)],
             immediate_size: 0,
         });
 
@@ -101,13 +75,18 @@ impl CapPipeline {
                 module: &shader,
                 entry_point: Some("vs_main"),
                 compilation_options: Default::default(),
-                buffers: &[],
+                // `[x, y, highlight]` per vertex.
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: 12,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3],
+                })],
             },
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
-                // The cap is a single flat quad viewed from either side.
+                // The cap is flat and seen from either side.
                 cull_mode: None,
                 polygon_mode: wgpu::PolygonMode::Fill,
                 unclipped_depth: false,
@@ -116,7 +95,9 @@ impl CapPipeline {
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
                 depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Less),
+                // A finding's pixels lie on the layer, at the same depth,
+                // and are drawn after it.
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
                 // Stencil stays at the default keep, so the cap leaves
                 // the selection-outline stencil untouched.
                 stencil: wgpu::StencilState::default(),
@@ -153,16 +134,6 @@ impl CapPipeline {
         Self {
             pipeline,
             uniforms_bind_group,
-            texture_bind_group_layout: texture_bgl,
-            sampler: device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("mesh-viewer cap sampler"),
-                address_mode_u: wgpu::AddressMode::ClampToEdge,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
-                address_mode_w: wgpu::AddressMode::ClampToEdge,
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                ..Default::default()
-            }),
         }
     }
 }
