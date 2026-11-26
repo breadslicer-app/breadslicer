@@ -1,0 +1,22 @@
+Breadslicer {version} for Linux (x86_64)
+========================================
+
+Run it from this folder, nothing to install:
+
+    ./bin/breadslicer
+
+To add it to your desktop's menu, with its icon and its file types (.bread,
+.stl, .obj, .3mf), for your account only:
+
+    ./install-desktop-entry.sh
+
+(`./install-desktop-entry.sh --remove` takes it out again.)
+
+bin/sc-slicer-cli is the command-line slicer.
+
+Needs a graphics driver with Vulkan (Mesa on AMD and Intel, the NVIDIA
+driver on NVIDIA) and glibc 2.35 or newer.
+
+Breadslicer is free software under the GNU Affero General Public License,
+version 3 (LICENSE.md). NOTICE and NOTICE.bread-format list the work it
+includes and their licenses. Source: https://github.com/breadslicer-app/breadslicer

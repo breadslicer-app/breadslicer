@@ -1,5 +1,9 @@
 # Flatpak
 
+> Inherited from SoulCrafted Slicer and not maintained: it has not been built
+> or checked for Breadslicer, and its vendored cargo sources are likely stale.
+> The maintained Linux packages are built by [`../build.sh`](../README.md).
+
 Flatpak packages of the SoulCrafted Slicer: one for the GUI, one for the
 command-line tool.
 

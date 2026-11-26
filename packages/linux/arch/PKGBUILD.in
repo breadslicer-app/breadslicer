@@ -1,0 +1,40 @@
+# Arch Linux package of Breadslicer, from the portable .tar.gz that
+# packages/linux/ci/package.sh builds; package.sh fills in the version and
+# the checksum. Put this PKGBUILD next to the .tar.gz and run `makepkg -si`.
+
+pkgname=breadslicer-bin
+_ver=@VERSION@
+pkgver=${_ver//-/}
+pkgrel=1
+pkgdesc="Slicer for resin 3D printers"
+arch=('x86_64')
+url="https://github.com/breadslicer-app/breadslicer"
+license=('AGPL-3.0-or-later' 'Apache-2.0')
+depends=('gcc-libs' 'glibc' 'fontconfig' 'freetype2' 'libxkbcommon'
+         'vulkan-icd-loader' 'hicolor-icon-theme')
+optdepends=('vulkan-driver: the 3D view on the GPU (vulkan-radeon, vulkan-intel, nvidia-utils)'
+            'wayland: Wayland sessions'
+            'libx11: X11 sessions'
+            'libxcursor: X11 sessions'
+            'libxrandr: X11 sessions'
+            'libxi: X11 sessions'
+            'xdg-desktop-portal: open and save dialogs')
+provides=('breadslicer')
+conflicts=('breadslicer')
+options=('!strip' '!debug')
+source=("Breadslicer-${_ver}-linux-x86_64.tar.gz")
+sha256sums=('@SHA256@')
+
+package() {
+    cd "Breadslicer-${_ver}-linux-x86_64"
+    install -Dm755 bin/breadslicer "$pkgdir/usr/bin/breadslicer"
+    install -Dm755 bin/sc-slicer-cli "$pkgdir/usr/bin/sc-slicer-cli"
+    install -d "$pkgdir/usr/share"
+    cp -r --no-preserve=ownership share/soulcrafted-slicer share/icons "$pkgdir/usr/share/"
+    install -Dm644 share/applications/it.soulcrafted.slicer.desktop \
+        "$pkgdir/usr/share/applications/it.soulcrafted.slicer.desktop"
+    install -Dm644 share/mime/packages/it.soulcrafted.slicer.xml \
+        "$pkgdir/usr/share/mime/packages/it.soulcrafted.slicer.xml"
+    install -Dm644 -t "$pkgdir/usr/share/licenses/$pkgname" \
+        LICENSE.md NOTICE NOTICE.bread-format
+}
