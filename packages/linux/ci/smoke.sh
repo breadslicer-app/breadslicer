@@ -37,7 +37,7 @@ try_app() {
     local i tree line=""
     for i in $(seq 1 180); do
         tree=$(xwininfo -root -tree 2>/dev/null || true)
-        line=$(printf '%s\n' "$tree" | grep -m1 -E '"([^"]* )?Breadslicer"' || true)
+        line=$(printf '%s\n' "$tree" | grep -m1 -E '"([^"]* )?Breadslicer( Dev)?"' || true)
         if [ -n "$line" ]; then echo "window after $i s"; break; fi
         if ! kill -0 "$app" 2>/dev/null; then echo "!! the app ended"; tail -n 30 "/out/$shot.log"; return 1; fi
         sleep 1
