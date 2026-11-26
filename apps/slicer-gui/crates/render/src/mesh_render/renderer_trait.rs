@@ -101,6 +101,10 @@ pub trait MeshRenderer {
     /// models and hidden behind them (#524); `None` clears them.
     fn set_hint_marks(&mut self, _pieces: Option<&super::Overlay>) {}
 
+    /// Marks lying on the plate's floor (#783), hidden by the models in
+    /// front of them as the floor is.
+    fn set_floor_marks(&mut self, _pieces: Option<&super::Overlay>) {}
+
     /// Shows `layers`, the paint on the models' faces, tinted `tint`, in
     /// place of what was shown. A layer whose paint did not change keeps its
     /// buffer.
@@ -274,6 +278,10 @@ impl MeshRenderer for Renderer {
 
     fn set_hint_marks(&mut self, pieces: Option<&super::Overlay>) {
         Renderer::set_hint_marks(self, pieces);
+    }
+
+    fn set_floor_marks(&mut self, pieces: Option<&super::Overlay>) {
+        Renderer::set_floor_marks(self, pieces);
     }
 
     fn set_surface_paint(&mut self, layers: &[super::PaintLayer], tint: [f32; 4]) {

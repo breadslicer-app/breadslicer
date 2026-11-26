@@ -525,7 +525,7 @@ fn tidy(mut zones: Vec<DeadZone>) -> Vec<DeadZone> {
 pub(crate) type DeadZonesByPrinter = BTreeMap<PrinterId, Vec<DeadZone>>;
 
 /// How high a zone's mark sits over the plate, mm, so it shows on it.
-const MARK_Z: f32 = 0.03;
+const MARK_Z: f32 = 0.05;
 
 /// What the dead zones' tool shows besides the zones (#783): the cells a
 /// drag covers, to mark or to clear, and the cell under the cursor.

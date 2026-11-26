@@ -155,13 +155,6 @@ type ReloadHook = Rc<dyn Fn(Vec<sc_scene::NodeId>)>;
 type ZoneDrawing = (u32, [f64; 2], [f64; 2], bool);
 /// What an edit of the dead zones goes to (#726).
 type DeadZoneHook = Rc<dyn Fn(crate::dead_zones::DeadZoneEdit)>;
-/// The overlay the dead zones were joined to, their marks, and the two
-/// joined (#726).
-type JoinedMarks = (
-    Option<crate::mesh_render::Overlay>,
-    crate::mesh_render::Overlay,
-    crate::mesh_render::Overlay,
-);
 pub(crate) struct ViewportController {
     ui: slint::Weak<MainWindow>,
     session: SessionState,
@@ -302,7 +295,6 @@ pub(crate) struct ViewportController {
     dead_zone_hover: Cell<Option<(u32, [f64; 2])>>,
     on_dead_zone_edit: RefCell<Option<DeadZoneHook>>,
     dead_zone_marks: RefCell<Option<crate::mesh_render::Overlay>>,
-    dead_zone_joined: RefCell<Option<JoinedMarks>>,
     /// The drag tool armed, for tests that run without a window.
     #[cfg(test)]
     drag_tool_for_test: Cell<Option<SupportDragKind>>,
@@ -489,7 +481,6 @@ impl ViewportController {
             dead_zone_hover: Cell::new(None),
             on_dead_zone_edit: RefCell::new(None),
             dead_zone_marks: RefCell::new(None),
-            dead_zone_joined: RefCell::new(None),
             #[cfg(test)]
             drag_tool_for_test: Cell::new(None),
             surface_brush: RefCell::new(None),
@@ -586,7 +577,6 @@ impl ViewportController {
             dead_zone_hover: Cell::new(None),
             on_dead_zone_edit: RefCell::new(None),
             dead_zone_marks: RefCell::new(None),
-            dead_zone_joined: RefCell::new(None),
             #[cfg(test)]
             drag_tool_for_test: Cell::new(None),
             surface_brush: RefCell::new(None),
@@ -3345,29 +3335,6 @@ impl ViewportController {
             on_edit(edit);
         }
         true
-    }
-
-    /// `overlay` with the dead zones' marks (#726).
-    fn with_dead_zones(
-        &self,
-        overlay: Option<crate::mesh_render::Overlay>,
-    ) -> Option<crate::mesh_render::Overlay> {
-        let Some(marks) = self.dead_zone_marks.borrow().clone() else {
-            return overlay;
-        };
-        let Some(base) = overlay else {
-            return Some(marks);
-        };
-        let mut joined = self.dead_zone_joined.borrow_mut();
-        if let Some((b, m, both)) = joined.as_ref()
-            && b.as_ref().is_some_and(|b| Arc::ptr_eq(b, &base))
-            && Arc::ptr_eq(m, &marks)
-        {
-            return Some(both.clone());
-        }
-        let both: crate::mesh_render::Overlay = base.iter().chain(marks.iter()).cloned().collect();
-        *joined = Some((Some(base), marks, both.clone()));
-        Some(both)
     }
 
     /// Sets what reloads models from their files (#721).
@@ -7011,8 +6978,10 @@ impl ViewportController {
             .over(self.overlay.borrow().as_ref(), marks_shown);
         let overlay = self.with_measure(overlay);
         let overlay = self.with_lay_hover(overlay);
-        let overlay = self.with_dead_zones(overlay);
         renderer.set_overlay(overlay.as_ref());
+        // The dead zones lie on the floor (#783): what stands in front hides
+        // them, and what stands on one is painted amber by the shader.
+        renderer.set_floor_marks(self.dead_zone_marks.borrow().as_ref());
         let hints = (self.session.section() == WorkspaceSection::Supports)
             .then(|| self.hint_marks.borrow().clone())
             .flatten();

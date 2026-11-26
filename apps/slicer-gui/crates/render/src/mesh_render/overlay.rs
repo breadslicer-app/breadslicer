@@ -287,4 +287,17 @@ impl Renderer {
             "island paint hidden",
         );
     }
+
+    /// Marks lying on the plate's floor (#783): the screen's dead zones.
+    /// Drawn with the scene's depth, so a model in front of one hides it
+    /// as it hides the floor.
+    pub(crate) fn set_floor_marks(&mut self, pieces: Option<&Overlay>) {
+        self.floor_marks.install(
+            &self.core.device,
+            &self.core.queue,
+            &self.pipelines.mesh.models_bind_group_layout,
+            pieces,
+            "floor marks",
+        );
+    }
 }

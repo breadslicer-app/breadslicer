@@ -413,6 +413,8 @@ pub struct Renderer {
     /// The islands' paint where something stands in front of it (#542):
     /// seen through the models, never laid over what shows.
     island_hidden: overlay::OverlaySlot,
+    /// Marks on the plate's floor (#783), hidden by what stands in front.
+    floor_marks: overlay::OverlaySlot,
     /// The marks last handed to [`Self::set_hint_marks`], split between
     /// `hints` and `island_marks`.
     hint_source: Option<Overlay>,
@@ -540,6 +542,7 @@ impl Renderer {
             cap_plate: 0,
             island_marks: overlay::OverlaySlot::default(),
             island_hidden: overlay::OverlaySlot::default(),
+            floor_marks: overlay::OverlaySlot::default(),
             hint_source: None,
             stress_bands: None,
             stress_marks: overlay::OverlaySlot::default(),
@@ -1733,6 +1736,11 @@ impl Renderer {
                 }
             }
             if contents == FrameContents::Workspace {
+                self.floor_marks.record(
+                    &mut pass,
+                    &self.pipelines.mesh.hint_pipeline,
+                    &self.pipelines.mesh.uniforms_bind_group,
+                );
                 self.hints.record(
                     &mut pass,
                     &self.pipelines.mesh.hint_pipeline,
