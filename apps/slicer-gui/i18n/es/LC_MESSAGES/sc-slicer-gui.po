@@ -11262,8 +11262,8 @@ msgid "Pick your printer first: the dead zones are its own."
 msgstr "Elegí primero tu impresora: las zonas muertas son de ella."
 
 msgctxt "DeadZones"
-msgid "Mark the screen's dead pixels cell by cell: click a cell, or drag over several. A drag that starts on a marked cell clears."
-msgstr "Marcá los píxeles muertos de la pantalla celda por celda: un clic marca una celda, arrastrar marca varias. Si el arrastre empieza en una celda marcada, borra."
+msgid "Mark the screen's dead pixels cell by cell: click a cell, or drag over several. A drag that starts on a marked cell clears. Esc or Done ends."
+msgstr "Marcá los píxeles muertos de la pantalla celda por celda: un clic marca una celda, arrastrar marca varias. Si el arrastre empieza en una celda marcada, borra. Esc o Listo termina."
 
 msgctxt "Inspector"
 msgid "SCREEN"
@@ -11596,3 +11596,15 @@ msgstr "Empezar"
 msgctxt "DeadPixels"
 msgid "Next"
 msgstr "Siguiente"
+
+msgctxt "Inspector"
+msgid "MARKING DEAD PIXELS"
+msgstr "MARCANDO PÍXELES MUERTOS"
+
+msgctxt "Inspector"
+msgid "Click or drag cells · from a marked cell, a drag clears · Esc ends"
+msgstr "Clic o arrastre marca celdas · desde una marcada, borra · Esc termina"
+
+msgctxt "Inspector"
+msgid "Done: leave marking"
+msgstr "Listo: salir del modo"

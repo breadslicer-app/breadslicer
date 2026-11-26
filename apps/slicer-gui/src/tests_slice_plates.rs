@@ -375,6 +375,29 @@ fn a_model_on_a_dead_zone_is_not_sliced() {
     });
 }
 
+/// The dead zones' tool always has a way out (#783, Damian: armed from the
+/// card, nothing put it away): its Done button and closing the tools.
+#[test]
+fn the_dead_zones_tool_is_put_away_by_done_and_by_closing_the_tools() {
+    on_fresh_slint_thread(|| {
+        let w = two_plates();
+        let ctrl = w.ctrl.clone();
+        // As the window wires it.
+        w.window
+            .on_dead_zone_tool_toggled(move |on| ctrl.set_dead_zone_tool(on));
+        w.ctrl.set_dead_zone_tool(true);
+        assert!(w.window.get_dead_zone_tool());
+        // Done.
+        w.window.invoke_dead_zone_tool_toggled(false);
+        assert!(!w.window.get_dead_zone_tool());
+        assert!(w.window.get_status_notice().is_empty());
+        // Closing the tools (a new scene, the models gone).
+        w.ctrl.set_dead_zone_tool(true);
+        w.window.invoke_close_tools();
+        assert!(!w.window.get_dead_zone_tool());
+    });
+}
+
 /// With `BREADSLICER_UI_SHOTS` naming a folder, the Slice tab of a short
 /// window after a slice (#628): the tab scrolls as a whole,
 /// so the review keeps its room; scrolled to the top and to the bottom.

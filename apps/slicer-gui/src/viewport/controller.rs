@@ -3205,7 +3205,7 @@ impl ViewportController {
             ui.set_status_notice(if on {
                 ctr!(
                     "DeadZones",
-                    "Mark the screen's dead pixels cell by cell: click a cell, or drag over several. A drag that starts on a marked cell clears."
+                    "Mark the screen's dead pixels cell by cell: click a cell, or drag over several. A drag that starts on a marked cell clears. Esc or Done ends."
                 )
             } else {
                 Default::default()

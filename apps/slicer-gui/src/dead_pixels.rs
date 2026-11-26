@@ -71,6 +71,8 @@ fn open(ui: &MainWindow, ctrl: &ViewportController, prefs: &PreferencesBus) {
         .collect();
     let has_printer = prefs.snapshot().default_printer.is_some();
     let name = printer_name(ui);
+    // The card over the plate: the cells' tool, if out, goes away.
+    ctrl.set_dead_zone_tool(false);
     let global = ui.global::<DeadPixels>();
     global.set_printer(if has_printer && !name.is_empty() {
         format!("{name} · {} × {} mm", trim(w), trim(d)).into()

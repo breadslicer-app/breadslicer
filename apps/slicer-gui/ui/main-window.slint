@@ -482,6 +482,9 @@ export component MainWindow inherits Window {
             root.lay-face-on = false;
         }
         root.hollow-lasso-tool = false;
+        if root.dead-zone-tool {
+            root.dead-zone-tool-toggled(false);
+        }
         root.hollow-drain-tool = false;
         if root.orient-open {
             root.orient-close-requested();
@@ -2230,6 +2233,11 @@ export component MainWindow inherits Window {
                             if root.support-drag-cancel() {
                                 return true;
                             }
+                            // Esc puts the dead zones' tool away (#783).
+                            if root.dead-zone-tool {
+                                root.dead-zone-tool-toggled(false);
+                                return true;
+                            }
                             if root.measure-on {
                                 root.measure-escape();
                                 return true;
@@ -2850,6 +2858,52 @@ export component MainWindow inherits Window {
                             vertical-alignment: center;
                         }
                     }
+                    // While the dead zones' tool is out (#783): what it does,
+                    // and the button that puts it away, at the bottom right,
+                    // under the layer slider.
+                    if root.dead-zone-tool: Rectangle {
+                        x: parent.width - self.width - 12px;
+                        y: parent.height - self.height - 8px;
+                        width: min(parent.width - 24px, dead-zone-row.preferred-width + 24px);
+                        height: dead-zone-row.preferred-height + 12px;
+                        border-radius: 2px;
+                        background: #171a1d;
+                        border-color: Theme.border-strong;
+                        border-width: 1px;
+
+                        dead-zone-row := HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 6px;
+                            padding-top: 6px;
+                            padding-bottom: 6px;
+                            spacing: 12px;
+
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 2px;
+                                Text {
+                                    text: @tr("Inspector" => "MARKING DEAD PIXELS");
+                                    color: Theme.text;
+                                    font-size: 11px;
+                                    font-family: "Consolas";
+                                }
+                                Text {
+                                    text: @tr("Inspector" => "Click or drag cells · from a marked cell, a drag clears · Esc ends");
+                                    color: #8b959d;
+                                    font-size: 10px;
+                                }
+                            }
+
+                            Button {
+                                primary: true;
+                                text: @tr("Inspector" => "Done: leave marking");
+                                clicked => {
+                                    root.dead-zone-tool-toggled(false);
+                                }
+                            }
+                        }
+                    }
+
                     if root.has-scene && root.measure-on: Rectangle {
                         x: (parent.width - self.width) / 2;
                         y: 12px;
