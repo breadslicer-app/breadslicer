@@ -19,8 +19,8 @@ use super::resolved_field::ResolvedField;
 use super::resolved_print_config::ResolvedPrintConfig;
 use super::resolver::{
     PickedValues, UNCALIBRATED_BOTTOM_LAYER_COUNT, UNCALIBRATED_TRANSITION_LAYER_COUNT,
-    apply_constraints, apply_scene_overrides,
-    pick_and_derive_material, resolve, resolve_layer_height, snap_to_z_step,
+    apply_constraints, apply_scene_overrides, pick_and_derive_material, resolve,
+    resolve_layer_height, snap_to_z_step,
 };
 use super::scene_overrides::SceneOverrides;
 use super::second_travel_stage::SecondTravelStage;
@@ -2031,7 +2031,7 @@ fn resolve_keeps_a_calibrated_bottom_second_stage_apart_from_the_normal_one() {
 }
 
 #[test]
-fn a_printer_that_does_not_split_its_travel_drops_the_second_stage() {
+fn a_printer_that_does_not_split_its_travel_joins_the_second_stage() {
     let printer = printer_without_split_travel();
     let material = material(TWO_STAGE_MATERIAL);
     let overrides = SceneOverrides::default();
@@ -2043,26 +2043,49 @@ fn a_printer_that_does_not_split_its_travel_drops_the_second_stage() {
     assert!(
         resolved
             .warnings
-            .contains(&ResolveWarning::SecondTravelStageUnsupported),
+            .contains(&ResolveWarning::SecondTravelStageJoined),
         "{:?}",
         resolved.warnings,
     );
 }
 
 #[test]
-fn dropping_the_second_stage_leaves_the_first_one_as_calibrated() {
+fn joining_the_stages_rises_as_far_as_both_at_the_slower_speed() {
     let printer = printer_without_split_travel();
     let material = material(TWO_STAGE_MATERIAL);
     let overrides = SceneOverrides::default();
 
     let resolved = resolve(&printer, &material, &overrides).unwrap();
 
-    assert_eq!(resolved.material_resolved.lift_distance_mm.value(), 2.0);
+    // 2 mm at 75 then 3 mm at 230: 5 mm at 75 (#785).
+    assert_eq!(resolved.material_resolved.lift_distance_mm.value(), 5.0);
     assert_eq!(resolved.material_resolved.lift_speed_mm_min.value(), 75.0);
     assert_eq!(
         resolved.material_resolved.retract_speed_mm_min.value(),
         75.0
     );
+}
+
+#[test]
+fn the_bottom_stages_join_apart_from_the_normal_ones() {
+    let toml = format!(
+        "{TWO_STAGE_MATERIAL}bottom_lift_distance_mm = 1.5
+bottom_lift_speed_mm_min = 50.0
+bottom_retract_speed_mm_min = 120.0
+bottom_second_travel = {{ lift_distance_mm = 4.0, lift_speed_mm_min = 40.0, retract_speed_mm_min = 180.0 }}
+"
+    );
+    let printer = printer_without_split_travel();
+    let material = material(&toml);
+    let overrides = SceneOverrides::default();
+
+    let resolved = resolve(&printer, &material, &overrides).unwrap();
+
+    let m = &resolved.material_resolved;
+    assert_eq!(m.bottom_lift_distance_mm.value(), 5.5);
+    assert_eq!(m.bottom_lift_speed_mm_min.value(), 40.0);
+    assert_eq!(m.bottom_retract_speed_mm_min.value(), 120.0);
+    assert_eq!(m.lift_distance_mm.value(), 5.0);
 }
 
 #[test]
@@ -2077,7 +2100,7 @@ fn a_printer_that_splits_its_travel_keeps_the_second_stage_unremarked() {
     assert!(
         !resolved
             .warnings
-            .contains(&ResolveWarning::SecondTravelStageUnsupported),
+            .contains(&ResolveWarning::SecondTravelStageJoined),
     );
 }
 
@@ -2092,7 +2115,7 @@ fn a_resin_that_moves_in_one_stage_draws_no_warning_from_a_single_stage_printer(
     assert!(
         !resolved
             .warnings
-            .contains(&ResolveWarning::SecondTravelStageUnsupported),
+            .contains(&ResolveWarning::SecondTravelStageJoined),
     );
 }
 
