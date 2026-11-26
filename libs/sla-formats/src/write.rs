@@ -22,7 +22,7 @@ use crate::goo::v3_0;
 use crate::options::WriterOptions;
 use crate::preview::PrintPreviews;
 use crate::print_program::PrintProgram;
-use crate::printer_file_format::{CtbVariant, GooVersion, PrinterFileFormat};
+use crate::printer_file_format::{CtbVariant, GooVersion, OtherFormat, PrinterFileFormat};
 use crate::raster_setup::RasterSetup;
 
 /// The grey each rasterised grey reads back as from a printer file of
@@ -32,7 +32,8 @@ pub fn stored_greys(format: PrinterFileFormat, raster: &RasterSetup) -> [u8; 256
     let mut table = [0u8; 256];
     for (grey, stored) in (0..=u8::MAX).zip(table.iter_mut()) {
         *stored = match format {
-            PrinterFileFormat::Goo(GooVersion::V3_0) => grey,
+            PrinterFileFormat::Goo(GooVersion::V3_0)
+            | PrinterFileFormat::Other(OtherFormat::Prz) => grey,
             PrinterFileFormat::Ctb(CtbVariant::PlainV5 | CtbVariant::EncryptedV5) => {
                 crate::ctb::rle7::stored_grey(grey)
             }
@@ -131,6 +132,9 @@ pub fn write_printer_file(
     match format {
         PrinterFileFormat::Goo(GooVersion::V3_0) => {
             v3_0::file::write_file(program, previews, stack, &mut out)?;
+        }
+        PrinterFileFormat::Other(OtherFormat::Prz) => {
+            v3_0::file::write_prz(program, previews, stack, &mut out)?;
         }
         PrinterFileFormat::Ctb(CtbVariant::PlainV5) => {
             ctb_v5::file::write_file(program, previews, stack, &mut out)?;

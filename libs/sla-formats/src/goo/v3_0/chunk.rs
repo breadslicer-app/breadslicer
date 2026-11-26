@@ -41,9 +41,19 @@ pub const MAX_RUN_LENGTH: u32 = 0x0FFF_FFFF;
 #[derive(Debug, Default)]
 pub struct RunEncoder {
     previous: Option<u8>,
+    no_deltas: bool,
 }
 
 impl RunEncoder {
+    /// An encoder that never writes a delta chunk: what a `.prz` holds,
+    /// since the machines that read it do not take them.
+    pub fn without_deltas() -> Self {
+        Self {
+            previous: None,
+            no_deltas: true,
+        }
+    }
+
     /// Append the chunks covering `length` pixels of `value` to
     /// `out`, splitting a run longer than [`MAX_RUN_LENGTH`].
     pub fn push_run(&mut self, value: u8, length: u32, out: &mut Vec<u8>) {
@@ -66,7 +76,7 @@ impl RunEncoder {
     fn shorter_delta(&self, value: u8, length: u32) -> Option<DeltaChunk> {
         // Black and white have chunk types of their own that a delta
         // can never beat, so only a grey run is worth pricing.
-        if !is_grey(value) {
+        if self.no_deltas || !is_grey(value) {
             return None;
         }
         let previous = self.previous?;

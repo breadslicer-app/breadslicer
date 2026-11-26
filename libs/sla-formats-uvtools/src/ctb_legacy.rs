@@ -35,6 +35,9 @@
 //! - 4: a new magic, the 2-stage motion and the waits in their own fields, and
 //!   the vendor's disclaimer with a block of further print parameters.
 //!
+//! `.gktwo.ctb`, what the UniFormation GKtwo reads, is version 4 under a magic
+//! of its own and a disclaimer that names the `jxs` type too ([`write_gktwo`]).
+//!
 //! The layer images are 7-bit greys in the CTB run-length codec, XORed with a
 //! keystream from the file's key and each layer's index, as UVtools writes
 //! them.
@@ -61,6 +64,52 @@ use crate::program::{
 pub(crate) const MAGIC_CTB: u32 = 0x12FD_0086;
 /// The magic from version 4.
 pub(crate) const MAGIC_CTB_V4: u32 = 0x12FD_0106;
+/// The magic of version 4 for the UniFormation GKtwo (`.gktwo.ctb`).
+pub(crate) const MAGIC_CTB_V4_GKTWO: u32 = 0xFF22_0810;
+
+/// The disclaimer of a `.gktwo.ctb`, which names the `jxs` type as well. As
+/// for the CTB one (`sc_sla_formats::ctb::disclaimer`), its claims over the
+/// format bind no one: the format of a data file is not protected expression
+/// (CJEU C-406/10), and terms against interoperability are void under Article
+/// 8 of Directive 2009/24/EC.
+const GKTWO_DISCLAIMER: &str = "Layout and record format for the jxs,ctb and cbddlp file types \
+are the copyrighted programs or codes of CBD Technology (China) Inc.The Customer or User shall \
+not in any manner reproduce, distribute, modify, decompile, disassemble, decrypt, extract, \
+reverse engineer, lease, assign, or sublicense the said programs or codes.";
+
+/// Whose version 4 a file is: the vendor's, or the GKtwo's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Brand {
+    Chitubox,
+    Gktwo,
+}
+
+impl Brand {
+    fn magic(self, version: u32) -> u32 {
+        match self {
+            Self::Gktwo => MAGIC_CTB_V4_GKTWO,
+            Self::Chitubox if version >= 4 => MAGIC_CTB_V4,
+            Self::Chitubox => MAGIC_CTB,
+        }
+    }
+
+    fn disclaimer_len(self) -> u32 {
+        match self {
+            Self::Chitubox => DISCLAIMER_SIZE,
+            Self::Gktwo => GKTWO_DISCLAIMER.len() as u32,
+        }
+    }
+
+    fn write_disclaimer(self, out: &mut Vec<u8>) -> std::io::Result<()> {
+        match self {
+            Self::Chitubox => write_disclaimer(out),
+            Self::Gktwo => {
+                out.extend_from_slice(GKTWO_DISCLAIMER.as_bytes());
+                Ok(())
+            }
+        }
+    }
+}
 
 pub(crate) const HEADER_BYTES: u32 = 112;
 const PREVIEW_RECORD_BYTES: u32 = 32;
@@ -223,6 +272,7 @@ struct Layout {
     slicer_info: u32,
     machine_name: u32,
     disclaimer: u32,
+    disclaimer_len: u32,
     print_parameters_v4: u32,
     layer_table: u32,
     layer_data: u64,
@@ -231,6 +281,7 @@ struct Layout {
 impl Layout {
     fn plan(
         version: u32,
+        disclaimer_len: u32,
         large_blob: u32,
         small_blob: u32,
         machine_name: u32,
@@ -243,7 +294,7 @@ impl Layout {
         let name = slicer_info + SLICER_INFO_BYTES;
         let after_name = name + machine_name;
         let (disclaimer, print_parameters_v4, layer_table) = if version >= 4 {
-            let block = after_name + DISCLAIMER_SIZE;
+            let block = after_name + disclaimer_len;
             (after_name, block, block + PRINT_PARAMETERS_V4_BYTES)
         } else {
             (0, 0, after_name)
@@ -255,6 +306,7 @@ impl Layout {
             slicer_info,
             machine_name: name,
             disclaimer,
+            disclaimer_len,
             print_parameters_v4,
             layer_table,
             layer_data: u64::from(layer_table) + u64::from(TABLE_RECORD_BYTES) * u64::from(layers),
@@ -280,6 +332,7 @@ fn put_f32(out: &mut Vec<u8>, value: f32) {
 
 fn header(
     version: u32,
+    magic: u32,
     program: &PrintProgram,
     layout: &Layout,
     key: NonZeroU32,
@@ -293,14 +346,7 @@ fn header(
         .map_or(0.0, |&(_, top)| round_height(top));
 
     let mut out = Vec::with_capacity(HEADER_BYTES as usize);
-    put_u32(
-        &mut out,
-        if version >= 4 {
-            MAGIC_CTB_V4
-        } else {
-            MAGIC_CTB
-        },
-    );
+    put_u32(&mut out, magic);
     put_u32(&mut out, version);
     put_f32(&mut out, round_display(width_mm as f32));
     put_f32(&mut out, round_display(height_mm as f32));
@@ -444,7 +490,7 @@ fn print_parameters_v4(
     put_u32(&mut out, (program.layers.len() as u32).saturating_sub(1)); // the last layer's index
     out.resize(out.len() + 4 * 4, 0);
     put_u32(&mut out, layout.disclaimer);
-    put_u32(&mut out, DISCLAIMER_SIZE);
+    put_u32(&mut out, layout.disclaimer_len);
     put_u32(&mut out, 0); // the resin block arrives in version 5
     out.resize(out.len() + V4_RESERVED_BYTES, 0);
     debug_assert_eq!(out.len() as u32, PRINT_PARAMETERS_V4_BYTES);
@@ -541,6 +587,32 @@ pub fn write_file(
             "CTB {variant:?} is written by sc-sla-formats, not ported from UVtools"
         ))
     })?;
+    write_branded(version, Brand::Chitubox, program, previews, stack, out)
+}
+
+/// Writes a `.gktwo.ctb` for the UniFormation GKtwo: CTB version 4, as
+/// [`write_file`] writes it, under the GKtwo's magic and disclaimer.
+///
+/// # Errors
+///
+/// As [`write_file`].
+pub fn write_gktwo(
+    program: &PrintProgram,
+    previews: Option<&PrintPreviews>,
+    stack: &ContourStack,
+    out: &mut dyn PrinterFileSink,
+) -> Result<(), WriteFailure> {
+    write_branded(4, Brand::Gktwo, program, previews, stack, out)
+}
+
+fn write_branded(
+    version: u32,
+    brand: Brand,
+    program: &PrintProgram,
+    previews: Option<&PrintPreviews>,
+    stack: &ContourStack,
+    out: &mut dyn PrinterFileSink,
+) -> Result<(), WriteFailure> {
     let (large, small) = match previews {
         Some(previews) => {
             previews.large.check_size(PREVIEW_SIZES.large)?;
@@ -567,6 +639,7 @@ pub fn write_file(
     let layer_count = u32::try_from(program.layers.len()).map_err(|_| unreachable())?;
     let layout = Layout::plan(
         version,
+        brand.disclaimer_len(),
         u32::try_from(large_blob.len()).map_err(|_| unreachable())?,
         u32::try_from(small_blob.len()).map_err(|_| unreachable())?,
         u32::try_from(machine_name.len()).map_err(|_| unreachable())?,
@@ -578,7 +651,14 @@ pub fn write_file(
 
     let key = layer_key(program);
     let (bottom, normal) = summary(program);
-    let mut sections = header(version, program, &layout, key, (&bottom, &normal));
+    let mut sections = header(
+        version,
+        brand.magic(version),
+        program,
+        &layout,
+        key,
+        (&bottom, &normal),
+    );
     write_preview_record(
         &large,
         &large_blob,
@@ -597,7 +677,7 @@ pub fn write_file(
     sections.extend(slicer_info(version, program, &layout, (&bottom, &normal)));
     sections.extend_from_slice(machine_name);
     if version >= 4 {
-        write_disclaimer(&mut sections)?;
+        brand.write_disclaimer(&mut sections)?;
         sections.extend(print_parameters_v4(program, &layout, (&bottom, &normal)));
     }
     debug_assert_eq!(sections.len() as u32, layout.layer_table);

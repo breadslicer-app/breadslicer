@@ -30,7 +30,7 @@ use sc_sla_formats::AnycubicBinaryVariant;
 
 use crate::anycubic_binary::{FILE_MARK, VERSION_516, VERSION_517, VERSION_518, uses_bit_planes};
 use crate::anycubic_zip::{LAYERS_FILE, SCENE_FILE, SCENE_MAGIC, SETTINGS_FILE, layer_entry};
-use crate::ctb_legacy::{MAGIC_CTB, MAGIC_CTB_V4};
+use crate::ctb_legacy::{MAGIC_CTB, MAGIC_CTB_V4, MAGIC_CTB_V4_GKTWO};
 use crate::cxdlp::{LINE_BYTES, MAGIC, PAGE_BREAK, PREVIEW_SIZES, crc32_zero_start};
 use crate::sl1::{CONFIG_FILE, PRUSASLICER_FILE};
 use crate::{pw0, pws};
@@ -1074,7 +1074,7 @@ pub fn read_ctb(bytes: &[u8]) -> Result<CtbFile, ReadError> {
         bottom_light_pwm: 0,
         layer_key: 0,
     };
-    if header.magic != MAGIC_CTB && header.magic != MAGIC_CTB_V4 {
+    if ![MAGIC_CTB, MAGIC_CTB_V4, MAGIC_CTB_V4_GKTWO].contains(&header.magic) {
         return Err(error(format!("0x{:08x} is not a CTB magic", header.magic)));
     }
     let large_preview = cursor.u32_le()?;

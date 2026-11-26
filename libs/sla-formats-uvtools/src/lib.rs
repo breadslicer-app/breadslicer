@@ -31,7 +31,8 @@
 //! - [`anycubic_binary`]: the Anycubic binary family (`.pwmx`, `.pwma`, `.pm3`,
 //!   `.pws` and the rest Photon Workshop wrote before the ZIP).
 //! - [`ctb_legacy`]: ChiTuBox CTB versions 2 to 4 (version 5 is written by
-//!   `sc-sla-formats` itself).
+//!   `sc-sla-formats` itself), and version 4 for the UniFormation GKtwo
+//!   (`.gktwo.ctb`).
 //! - [`sl1`]: Prusa's SL1 archive (`.sl1` for the SL1, `.sl1s` for the SL1S).
 //! - [`cxdlpv4`]: Creality CXDLP version 4 (Halot Mage, Mage S, Play, R6 and
 //!   the Halot X1 family).
@@ -72,13 +73,14 @@ impl PrinterFileWriter for UvtoolsWriters {
                 | PrinterFileFormat::AnycubicZip(_)
                 | PrinterFileFormat::AnycubicBinary(_)
                 | PrinterFileFormat::Sl1(_)
-                | PrinterFileFormat::Other(OtherFormat::Cxdlpv4)
+                | PrinterFileFormat::Other(OtherFormat::Cxdlpv4 | OtherFormat::GktwoCtb)
         )
     }
 
     fn preview_sizes(&self, format: PrinterFileFormat) -> Option<PreviewSizes> {
         match format {
-            PrinterFileFormat::Ctb(CtbVariant::V2 | CtbVariant::V3 | CtbVariant::V4) => {
+            PrinterFileFormat::Ctb(CtbVariant::V2 | CtbVariant::V3 | CtbVariant::V4)
+            | PrinterFileFormat::Other(OtherFormat::GktwoCtb) => {
                 Some(sc_sla_formats::ctb::PREVIEW_SIZES)
             }
             PrinterFileFormat::Cxdlp(_) => Some(cxdlp::PREVIEW_SIZES),
@@ -92,7 +94,8 @@ impl PrinterFileWriter for UvtoolsWriters {
 
     fn stored_grey(&self, format: PrinterFileFormat, raster: &RasterSetup, grey: u8) -> u8 {
         match format {
-            PrinterFileFormat::Ctb(CtbVariant::V2 | CtbVariant::V3 | CtbVariant::V4) => {
+            PrinterFileFormat::Ctb(CtbVariant::V2 | CtbVariant::V3 | CtbVariant::V4)
+            | PrinterFileFormat::Other(OtherFormat::GktwoCtb) => {
                 sc_sla_formats::ctb::rle7::stored_grey(grey)
             }
             PrinterFileFormat::AnycubicZip(_) => pw0::stored_grey(grey),
@@ -141,6 +144,9 @@ impl PrinterFileWriter for UvtoolsWriters {
             }
             PrinterFileFormat::Other(OtherFormat::Cxdlpv4) => {
                 cxdlpv4::write_file(program, previews, stack, out)
+            }
+            PrinterFileFormat::Other(OtherFormat::GktwoCtb) => {
+                ctb_legacy::write_gktwo(program, previews, stack, out)
             }
             other => Err(WriteFailure::Unencodable(format!(
                 "\"{other}\" is not a format ported from UVtools"

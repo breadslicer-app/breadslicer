@@ -417,7 +417,7 @@ fn every_known_format_a_printer_declares_names_a_printer_file() {
 /// The bundled printers that cannot export yet: every format they declare
 /// still waits for its writer (#778). Each format that lands takes its
 /// printers off.
-const PRINTERS_WITHOUT_A_WRITER: [&str; 59] = [
+const PRINTERS_WITHOUT_A_WRITER: [&str; 54] = [
     "anet-n4",
     "anet-n7",
     "anycubic-photon",
@@ -457,15 +457,10 @@ const PRINTERS_WITHOUT_A_WRITER: [&str; 59] = [
     "phrozen-shuffle-xl",
     "phrozen-shuffle-xl-lite",
     "phrozen-sonic",
-    "phrozen-sonic-mega-8k-s",
-    "phrozen-sonic-mega-8k-v2",
-    "phrozen-sonic-mighty-revo-16k",
-    "phrozen-sonic-mighty-revo-16k-max",
     "phrozen-sonic-mini",
     "phrozen-sonic-xl-4k-2022",
     "phrozen-transform",
     "uniformation-gkone",
-    "uniformation-gktwo",
     "uniz-ibee",
     "uniz-ibee-klipper",
     "voxelab-ceres-8-9",
