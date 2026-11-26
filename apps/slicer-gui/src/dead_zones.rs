@@ -232,7 +232,7 @@ pub(crate) fn standing_on(
             continue;
         };
         let world = query.world_transform();
-        let Some(aabb) = query.transformed_aabb(world.clone()) else {
+        let Some(aabb) = query.transformed_aabb(world) else {
             continue;
         };
         let (lo, hi) = (aabb.min().coords(), aabb.max().coords());
