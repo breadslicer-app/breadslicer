@@ -364,14 +364,36 @@ fn a_model_on_a_dead_zone_is_not_sliced() {
         // cell under its corner.
         w.ctrl
             .set_dead_zones(vec![DeadZone::between([-46.0, 3.0], [-41.0, 8.0])], 2);
+        w.window.set_workspace_section(WorkspaceSection::Slice);
+        w.ctrl.set_section(WorkspaceSection::Slice);
         w.window.invoke_slice_requested();
         assert!(!w.window.get_slicing_in_progress(), "nothing sliced");
         assert_eq!(told(), 1);
+        // Its Arrange all takes the window to Prepare, where Arrange works
+        // (Damian: from Slice it only closed the card), and asks for it.
+        let asked = Rc::new(Cell::new(None));
+        w.window.on_arrange_requested({
+            let asked = asked.clone();
+            move |selection| asked.set(Some(selection))
+        });
+        let ctrl = w.ctrl.clone();
+        w.window
+            .on_section_change_requested(move |section| ctrl.set_section(section));
+        w.ctrl
+            .dialogs()
+            .answer(crate::MessageAnswer::Confirm, false);
+        assert_eq!(asked.get(), Some(false), "Arrange all is asked for");
+        assert_eq!(
+            w.window.get_workspace_section(),
+            WorkspaceSection::Transform
+        );
+        assert!(w.ctrl.allows_layout_tools(), "Arrange may run there");
+        let after_answer = told();
         // A zone beside it, not under it.
         w.ctrl
             .set_dead_zones(vec![DeadZone::between([-40.0, 3.0], [-35.0, 8.0])], 2);
         w.press_slice();
-        assert_eq!(told(), 1, "off the zone, it slices");
+        assert_eq!(told(), after_answer, "off the zone, it slices");
     });
 }
 

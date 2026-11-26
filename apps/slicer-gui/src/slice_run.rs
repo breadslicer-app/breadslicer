@@ -679,11 +679,7 @@ impl SliceRun {
                 details: details.as_str().into(),
             },
             || ctr!("SliceDialog", "Arrange all"),
-            move || {
-                if let Some(ui) = ui.upgrade() {
-                    ui.invoke_arrange_requested(false);
-                }
-            },
+            move || arrange_all_from_slice(&ui),
         );
         true
     }
@@ -737,11 +733,7 @@ impl SliceRun {
                 details: details.as_str().into(),
             },
             || ctr!("SliceDialog", "Arrange all"),
-            move || {
-                if let Some(ui) = ui.upgrade() {
-                    ui.invoke_arrange_requested(false);
-                }
-            },
+            move || arrange_all_from_slice(&ui),
         );
         true
     }
@@ -1632,6 +1624,16 @@ fn capture(
         layers,
         repaired: Vec::new(),
     })
+}
+
+/// Arrange all from a card of Slice (#628, #783): Arrange works in Prepare
+/// alone, so the window goes there first, as a click on its tab would.
+fn arrange_all_from_slice(ui: &slint::Weak<MainWindow>) {
+    if let Some(ui) = ui.upgrade() {
+        ui.set_workspace_section(crate::WorkspaceSection::Transform);
+        ui.invoke_section_change_requested(crate::WorkspaceSection::Transform);
+        ui.invoke_arrange_requested(false);
+    }
 }
 
 #[cfg(test)]
