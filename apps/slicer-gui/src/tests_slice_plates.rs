@@ -342,6 +342,39 @@ fn a_model_past_the_plate_is_not_sliced() {
     });
 }
 
+/// A plate whose model stands on a dead zone of the screen is not sliced
+/// (#783): the card names it and offers Arrange all; with the zone off its
+/// feet, it slices.
+#[test]
+fn a_model_on_a_dead_zone_is_not_sliced() {
+    use crate::dead_zones::DeadZone;
+    on_fresh_slint_thread(|| {
+        let w = two_plates();
+        w.document.set_active_plate(0);
+        let heading = "Models on a dead zone";
+        let told = || {
+            w.ctrl
+                .dialogs()
+                .error_headings_for_test()
+                .iter()
+                .filter(|h| h.as_str() == heading)
+                .count()
+        };
+        // The 10 mm cube stands 50 mm left of the first plate's centre: a
+        // cell under its corner.
+        w.ctrl
+            .set_dead_zones(vec![DeadZone::between([-46.0, 3.0], [-41.0, 8.0])], 2);
+        w.window.invoke_slice_requested();
+        assert!(!w.window.get_slicing_in_progress(), "nothing sliced");
+        assert_eq!(told(), 1);
+        // A zone beside it, not under it.
+        w.ctrl
+            .set_dead_zones(vec![DeadZone::between([-40.0, 3.0], [-35.0, 8.0])], 2);
+        w.press_slice();
+        assert_eq!(told(), 1, "off the zone, it slices");
+    });
+}
+
 /// With `BREADSLICER_UI_SHOTS` naming a folder, the Slice tab of a short
 /// window after a slice (#628): the tab scrolls as a whole,
 /// so the review keeps its room; scrolled to the top and to the bottom.

@@ -28,9 +28,11 @@ import { RecentFileRow, StartLayer, StartOpen } from "start-dialog.slint";
 // thread the first time any text is laid out (e.g. opening a menu).
 import "../assets/fonts/NotoSans-Variable.ttf";
 
+import { DeadPixels, DeadPixelsLayer } from "dead-pixels-layer.slint";
 import { SetupLayer, Picker, FormField, FormSection, PickPrinter, PickNav, PickResin, PickLayout } from "setup-layer.slint";
 export { Picker, FormField, FormSection, PickPrinter, PickNav, PickResin, PickLayout }
 export { FrameState } from "kit/framed-window.slint";
+export { DeadPixels }
 import { TimelineMark } from "workspace/layer-timeline.slint";
 import { StressCard } from "workspace/stress-card.slint";
 export { TimelineMark }
@@ -410,6 +412,8 @@ export component MainWindow inherits Window {
     in-out property <bool> dead-zone-tool;
     in property <int> dead-zone-count;
     callback dead-zone-tool-toggled(bool);
+    // Opens Find dead pixels (#783).
+    callback dead-pixels-requested();
     callback support-lines-under-plate-toggled(bool);
     // The Supports tab's IMPORTED SUPPORTS card (#259): the bodies of the
     // selected model's imported supports, 0 for none.
@@ -1495,6 +1499,13 @@ export component MainWindow inherits Window {
                 enabled: root.has-scene && !root.loading && !root.support-gen-in-progress;
                 activated => {
                     root.generate-supports-requested();
+                }
+            }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Find Dead Pixels…");
+                activated => {
+                    root.dead-pixels-requested();
                 }
             }
         }
@@ -2982,8 +2993,15 @@ export component MainWindow inherits Window {
                                         }
                                         Note {
                                             text: root.dead-zone-count > 0
-                                                ? @tr("Inspector" => "{} dead zones on this printer's screen: Arrange keeps away from them, and Slice warns about what lands on one.", root.dead-zone-count)
-                                                : @tr("Inspector" => "Where the screen's pixels are dead, nothing is placed: drag on the plate to mark them, click one to take it away.");
+                                                ? @tr("Inspector" => "{} dead zones on this printer's screen: Arrange keeps away from them, and Slice does not slice what stands on one.", root.dead-zone-count)
+                                                : @tr("Inspector" => "Where the screen's pixels are dead, nothing is placed: mark them on the plate in 5 mm cells.");
+                                        }
+                                        Button {
+                                            text: @tr("Inspector" => "Find dead pixels…");
+                                            icon: Icons.screen-grid;
+                                            clicked => {
+                                                root.dead-pixels-requested();
+                                            }
                                         }
                                     }
                                 }
@@ -4036,6 +4054,13 @@ export component MainWindow inherits Window {
                         root.generate-supports-requested();
                     }
                 }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Find Dead Pixels…");
+                    activated => {
+                        root.dead-pixels-requested();
+                    }
+                }
             }
 
             Menu {
@@ -4393,6 +4418,12 @@ export component MainWindow inherits Window {
     // Printer & resin and the first run (#151, #608), over the start
     // dialog; a message that opens while it shows sits over it.
     SetupLayer {
+        width: 100%;
+        height: 100%;
+    }
+
+    // Find dead pixels (#783), a card like Calibrate resin.
+    DeadPixelsLayer {
         width: 100%;
         height: 100%;
     }

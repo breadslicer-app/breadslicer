@@ -391,6 +391,8 @@ pub struct Renderer {
     hints: overlay::OverlaySlot,
     /// The scene's plates (#545): every plate piece is drawn once for each.
     plates: crate::plates::Plates,
+    /// The dead zones of the printer's screen (#783), mm from a plate's middle.
+    dead_zones: Vec<[f32; 4]>,
     /// Out of focus dims even with nothing in focus ([`Self::set_dim_all`]).
     dim_all: bool,
     /// The active plate's tools (#545): shown or not, and the one under the
@@ -530,6 +532,7 @@ impl Renderer {
             overlay: overlay::OverlaySlot::default(),
             hints: overlay::OverlaySlot::default(),
             plates: crate::plates::Plates::one(),
+            dead_zones: Vec::new(),
             dim_all: false,
             plate_tools: None,
             plate_names: (Vec::new(), None),
@@ -1129,6 +1132,16 @@ impl Renderer {
         self.plates = plates;
     }
 
+    /// The dead zones of the printer's screen (#783), each its front left
+    /// and back right corners, mm from its plate's middle: what stands over
+    /// one is painted like what is off the plate. Past
+    /// [`frame::MAX_DEAD_ZONES`] they are not painted.
+    pub fn set_dead_zones(&mut self, zones: &[[f32; 4]]) {
+        if self.dead_zones.as_slice() != zones {
+            self.dead_zones = zones.to_vec();
+        }
+    }
+
     /// Whether what is not in focus dims even when nothing is (#545): with
     /// several plates and nothing selected, every object off the active
     /// plate dims, and with the active plate empty, every object.
@@ -1579,6 +1592,14 @@ impl Renderer {
             stress: match (&self.stress_bands, stress) {
                 (Some(bands), true) => bands.packed(),
                 _ => [[0.0; 4]; STRESS_BANDS / 4],
+            },
+            dead_zone_count: [self.dead_zones.len().min(frame::MAX_DEAD_ZONES) as f32, 0.0, 0.0, 0.0],
+            dead_zones: {
+                let mut zones = [[0.0; 4]; frame::MAX_DEAD_ZONES];
+                for (slot, zone) in zones.iter_mut().zip(&self.dead_zones) {
+                    *slot = *zone;
+                }
+                zones
             },
         };
         self.core.queue.write_buffer(

@@ -150,7 +150,9 @@ type SliceClick = Rc<dyn Fn(f32, f32)>;
 /// What reloads models from their files (#721).
 type ReloadHook = Rc<dyn Fn(Vec<sc_scene::NodeId>)>;
 /// Where a dead zone being drawn started and is now, on its plate (#726).
-type ZoneDrawing = (u32, [f64; 2], [f64; 2]);
+/// A drag of the dead zones' tool (#783): its plate, where it started and
+/// where it is, and whether it clears.
+type ZoneDrawing = (u32, [f64; 2], [f64; 2], bool);
 /// What an edit of the dead zones goes to (#726).
 type DeadZoneHook = Rc<dyn Fn(crate::dead_zones::DeadZoneEdit)>;
 /// The overlay the dead zones were joined to, their marks, and the two
@@ -296,6 +298,8 @@ pub(crate) struct ViewportController {
     dead_zones: RefCell<(Vec<crate::dead_zones::DeadZone>, u32)>,
     dead_zone_tool: Cell<bool>,
     dead_zone_drawing: Cell<Option<ZoneDrawing>>,
+    /// The plate and the point under the cursor with the tool armed (#783).
+    dead_zone_hover: Cell<Option<(u32, [f64; 2])>>,
     on_dead_zone_edit: RefCell<Option<DeadZoneHook>>,
     dead_zone_marks: RefCell<Option<crate::mesh_render::Overlay>>,
     dead_zone_joined: RefCell<Option<JoinedMarks>>,
@@ -482,6 +486,7 @@ impl ViewportController {
             dead_zones: RefCell::new((Vec::new(), 1)),
             dead_zone_tool: Cell::new(false),
             dead_zone_drawing: Cell::new(None),
+            dead_zone_hover: Cell::new(None),
             on_dead_zone_edit: RefCell::new(None),
             dead_zone_marks: RefCell::new(None),
             dead_zone_joined: RefCell::new(None),
@@ -578,6 +583,7 @@ impl ViewportController {
             dead_zones: RefCell::new((Vec::new(), 1)),
             dead_zone_tool: Cell::new(false),
             dead_zone_drawing: Cell::new(None),
+            dead_zone_hover: Cell::new(None),
             on_dead_zone_edit: RefCell::new(None),
             dead_zone_marks: RefCell::new(None),
             dead_zone_joined: RefCell::new(None),
@@ -3178,6 +3184,11 @@ impl ViewportController {
         self.redraw_dead_zones();
     }
 
+    /// The dead zones of the printer in use (#726), as this window shows them.
+    pub(crate) fn dead_zones(&self) -> Vec<crate::dead_zones::DeadZone> {
+        self.dead_zones.borrow().0.clone()
+    }
+
     /// Sets what a drawing of a dead zone goes to (#726).
     pub(crate) fn set_on_dead_zone_edit(&self, edit: Rc<dyn Fn(crate::dead_zones::DeadZoneEdit)>) {
         *self.on_dead_zone_edit.borrow_mut() = Some(edit);
@@ -3187,13 +3198,14 @@ impl ViewportController {
     pub(crate) fn set_dead_zone_tool(&self, on: bool) {
         self.dead_zone_tool.set(on);
         self.dead_zone_drawing.set(None);
+        self.dead_zone_hover.set(None);
         self.redraw_dead_zones();
         if let Some(ui) = self.ui.upgrade() {
             ui.set_dead_zone_tool(on);
             ui.set_status_notice(if on {
                 ctr!(
                     "DeadZones",
-                    "Drag on the plate where the screen's pixels are dead; click a zone to take it away."
+                    "Mark the screen's dead pixels cell by cell: click a cell, or drag over several. A drag that starts on a marked cell clears."
                 )
             } else {
                 Default::default()
@@ -3203,14 +3215,64 @@ impl ViewportController {
 
     fn redraw_dead_zones(&self) {
         let (zones, plates) = self.dead_zones.borrow().clone();
+        let volume = self.session.build_volume();
+        let grid = crate::dead_zones::CellGrid::of(&volume);
         let drawing = self
             .dead_zone_drawing
             .get()
-            .map(|(plate, a, b)| (plate, crate::dead_zones::DeadZone::between(a, b)));
-        let volume = self.session.build_volume();
+            .map(|(plate, a, b, clears)| (plate, grid.span(a, b), clears));
+        let hover = self
+            .dead_zone_hover
+            .get()
+            .and_then(|(plate, p)| Some((plate, grid.cell_at(p)?)))
+            .map(|(plate, (col, row))| (plate, grid.cell(col, row)));
+        let tool = crate::dead_zones::ZoneTool { drawing, hover };
         *self.dead_zone_marks.borrow_mut() =
-            crate::dead_zones::overlay(&volume, plates, &zones, drawing);
+            crate::dead_zones::overlay(&volume, plates, &zones, tool);
         self.mark_dirty();
+    }
+
+    /// The dead zones in use, as the scene shader paints them (#783).
+    fn dead_zone_rects(&self) -> Vec<[f32; 4]> {
+        self.dead_zones
+            .borrow()
+            .0
+            .iter()
+            .map(|z| {
+                [
+                    z.min[0] as f32,
+                    z.min[1] as f32,
+                    z.max[0] as f32,
+                    z.max[1] as f32,
+                ]
+            })
+            .collect()
+    }
+
+    /// Says in the status bar which cell is under the cursor (#783).
+    fn tell_dead_zone_cell(&self, p: Option<[f64; 2]>) {
+        let grid = crate::dead_zones::CellGrid::of(&self.session.build_volume());
+        let text = match p.and_then(|p| grid.cell_at(p)) {
+            Some((col, row)) => {
+                let cell = grid.cell(col, row);
+                let x0 = cell.min[0] + grid.width / 2.0;
+                let y0 = cell.min[1] + grid.depth / 2.0;
+                let name = crate::dead_zones::cell_name(col, row);
+                format!(
+                    "{} · X {}–{} mm, Y {}–{} mm",
+                    ctr!("DeadZones", "Cell {}", name),
+                    x0.round(),
+                    (x0 + crate::dead_zones::CELL_MM).min(grid.width).round(),
+                    y0.round(),
+                    (y0 + crate::dead_zones::CELL_MM).min(grid.depth).round()
+                )
+                .into()
+            }
+            None => Default::default(),
+        };
+        if let Some(ui) = self.ui.upgrade() {
+            ui.set_status_notice(text);
+        }
     }
 
     /// Where `cursor` meets the plate's floor: the plate, and the point
@@ -3238,19 +3300,28 @@ impl ViewportController {
             return false;
         }
         if let Some((plate, p)) = self.floor_under(cursor) {
-            self.dead_zone_drawing.set(Some((plate, p, p)));
+            let clears = self.dead_zones.borrow().0.iter().any(|z| z.holds(p));
+            self.dead_zone_drawing.set(Some((plate, p, p, clears)));
+            self.redraw_dead_zones();
         }
         true
     }
 
     fn dead_zone_move(&self, cursor: ScreenPoint) -> bool {
-        let Some((plate, a, _)) = self.dead_zone_drawing.get() else {
+        if !self.dead_zone_tool.get() {
+            return false;
+        }
+        let under = self.floor_under(cursor);
+        self.dead_zone_hover.set(under);
+        self.tell_dead_zone_cell(under.map(|(_, p)| p));
+        let Some((plate, a, _, clears)) = self.dead_zone_drawing.get() else {
+            self.redraw_dead_zones();
             return false;
         };
-        if let Some((_, b)) = self.floor_under(cursor) {
-            self.dead_zone_drawing.set(Some((plate, a, b)));
-            self.redraw_dead_zones();
+        if let Some((_, b)) = under {
+            self.dead_zone_drawing.set(Some((plate, a, b, clears)));
         }
+        self.redraw_dead_zones();
         true
     }
 
@@ -3258,23 +3329,19 @@ impl ViewportController {
         if !self.dead_zone_tool.get() {
             return false;
         }
-        let Some((_, a, b)) = self.dead_zone_drawing.take() else {
+        let Some((_, a, b, clears)) = self.dead_zone_drawing.take() else {
             return true;
         };
-        let zone = crate::dead_zones::DeadZone::between(a, b);
-        let edit = if zone.max[0] - zone.min[0] < 0.3 && zone.max[1] - zone.min[1] < 0.3 {
-            // A click: the zone under it goes.
-            let zones = self.dead_zones.borrow().0.clone();
-            zones
-                .iter()
-                .position(|z| z.holds(a))
-                .map(crate::dead_zones::DeadZoneEdit::Remove)
+        let grid = crate::dead_zones::CellGrid::of(&self.session.build_volume());
+        let cells = grid.span(a, b);
+        let edit = if clears {
+            crate::dead_zones::DeadZoneEdit::Clear(cells)
         } else {
-            Some(crate::dead_zones::DeadZoneEdit::Add(zone))
+            crate::dead_zones::DeadZoneEdit::Add(cells)
         };
         self.redraw_dead_zones();
         let on_edit = self.on_dead_zone_edit.borrow().clone();
-        if let (Some(edit), Some(on_edit)) = (edit, on_edit) {
+        if let Some(on_edit) = on_edit {
             on_edit(edit);
         }
         true
@@ -6969,6 +7036,7 @@ impl ViewportController {
         renderer.set_support_view_fade(self.support_view_fade());
         renderer.set_hidden_nodes(&self.leaves_hidden_in_view());
         renderer.set_plates(self.session.document().plates());
+        renderer.set_dead_zones(&self.dead_zone_rects());
         renderer.set_dim_all(self.dims_off_plate());
         renderer.set_plate_tools(
             self.plate_tools_shown()

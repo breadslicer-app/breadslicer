@@ -54,7 +54,16 @@ pub(super) struct Uniforms {
     pub(super) stress_range: [f32; 4],
     /// Its bands, four to a lane ([`super::StressBands::packed`]).
     pub(super) stress: [[f32; 4]; super::stress_paint::STRESS_BANDS / 4],
+    /// The dead zones of the printer's screen (#783): `x` how many of
+    /// [`Uniforms::dead_zones`] count.
+    pub(super) dead_zone_count: [f32; 4],
+    /// Each zone's front left and back right corners, mm from its plate's
+    /// middle: what stands over one is painted like what is off the plate.
+    pub(super) dead_zones: [[f32; 4]; MAX_DEAD_ZONES],
 }
+
+/// How many dead zones the scene shader paints (#783).
+pub(super) const MAX_DEAD_ZONES: usize = 64;
 
 /// World-space directional light. The fourth component carries the
 /// slice clip height (see [`pack_light_dir`]); the mesh shader reads

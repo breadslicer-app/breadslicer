@@ -1,0 +1,324 @@
+/*
+ * SPDX-FileCopyrightText: 2026 SynrgStudio
+ * SPDX-License-Identifier: AGPL-3.0-only
+ */
+
+// Find the dead pixels of the printer's screen (#783): a card over the
+// window that walks through printing the screen at its real size, laying it
+// on the lit screen and marking the dark cells on the plate, a picture per
+// step.
+
+import { Theme } from "kit/theme.slint";
+import { ScrollView } from "std-widgets.slint";
+import { ScButton as Button } from "kit/controls.slint";
+import { Icons } from "kit/icons.slint";
+import { DialogHead, DialogRule } from "kit/dialog.slint";
+
+export global DeadPixels {
+    in-out property <bool> open;
+    // 0 what it is, 1 print the sheet, 2 cut it, 3 lay it on the screen,
+    // 4 light it, 5 mark the cells.
+    in-out property <int> page;
+    // The printer, and its screen's size.
+    in property <string> printer;
+    // Whether a printer is chosen: the sheet is its screen.
+    in property <bool> has-printer;
+    // The picture of each step.
+    in property <[image]> pictures;
+    // How many zones are marked on this printer.
+    in property <int> zones;
+    // What came of saving the sheet: empty until then.
+    in property <string> sheet-note;
+
+    callback save-sheet();
+    callback mark-cells();
+}
+
+component Prose inherits Text {
+    wrap: word-wrap;
+    color: Theme.text-soft;
+    font-size: Theme.font;
+}
+
+component Heading inherits Text {
+    wrap: word-wrap;
+    color: Theme.text;
+    font-size: Theme.font-lg;
+    font-weight: 600;
+}
+
+export component DeadPixelsLayer inherits Rectangle {
+    visible: DeadPixels.open;
+    background: #0000008c;
+
+    property <int> last: 5;
+
+    changed visible => {
+        if (self.visible) {
+            fs.focus();
+        }
+    }
+
+    fs := FocusScope {
+        width: 100%;
+        height: 100%;
+        enabled: DeadPixels.open;
+
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                DeadPixels.open = false;
+            }
+            return accept;
+        }
+
+        // The dimmed window around the card holds the clicks.
+        TouchArea {
+            scroll-event(event) => {
+                return accept;
+            }
+        }
+
+        card := Rectangle {
+            width: Math.min(parent.width - 48px, 1000px);
+            height: Math.min(parent.height - 48px, 600px);
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Theme.card;
+            border-color: Theme.border;
+            border-width: 1px;
+            border-radius: Theme.radius-lg;
+            drop-shadow-blur: 24px;
+            drop-shadow-color: #00000066;
+            clip: true;
+
+            TouchArea {
+                scroll-event(event) => {
+                    return accept;
+                }
+            }
+
+            VerticalLayout {
+                DialogHead {
+                    icon: Icons.screen-grid;
+                    title: @tr("DeadPixels" => "Find dead pixels");
+                    subtitle: DeadPixels.printer;
+                    close-label: @tr("DeadPixels" => "Close");
+                    close => {
+                        DeadPixels.open = false;
+                    }
+                }
+
+                DialogRule { }
+
+                HorizontalLayout {
+                    vertical-stretch: 1;
+                    padding: 20px;
+                    spacing: 24px;
+
+                    Rectangle {
+                        horizontal-stretch: 3;
+                        background: Theme.ground;
+                        border-radius: Theme.radius;
+                        Image {
+                            x: 12px;
+                            y: 12px;
+                            width: parent.width - 24px;
+                            height: parent.height - 24px;
+                            source: DeadPixels.pictures[DeadPixels.page];
+                            image-fit: contain;
+                        }
+                    }
+
+                    ScrollView {
+                        horizontal-stretch: 2;
+                        VerticalLayout {
+                            spacing: 12px;
+                            alignment: start;
+
+                            if DeadPixels.page >= 1: Text {
+                                text: @tr("DeadPixels" => "Step {} of {}", DeadPixels.page, root.last);
+                                color: Theme.text-faint;
+                                font-size: Theme.font-sm;
+                            }
+
+                            if DeadPixels.page == 0: VerticalLayout {
+                                spacing: 12px;
+                                Heading {
+                                    text: @tr("DeadPixels" => "A sheet of paper finds them");
+                                }
+
+                                Prose {
+                                    text: @tr("DeadPixels" => "A screen with a few dead pixels still prints for years, as long as nothing stands on them. Breadslicer prints your screen at its real size with the plate's grid; you lay it on the screen, light the screen, and mark on the plate the cells that stay dark.");
+                                }
+
+                                Prose {
+                                    text: @tr("DeadPixels" => "From then on Arrange and Fill bed keep away from them, what stands on one is painted like what is off the plate, and Slice does not slice it.");
+                                }
+
+                                Prose {
+                                    text: @tr("DeadPixels" => "You need: a paper printer, scissors and a pencil.");
+                                }
+
+                                if !DeadPixels.has-printer: Prose {
+                                    color: Theme.warning;
+                                    text: @tr("DeadPixels" => "Pick your printer first: the sheet is its screen.");
+                                }
+
+                                if DeadPixels.zones > 0: Prose {
+                                    color: Theme.text-muted;
+                                    text: @tr("DeadPixels" => "{} zones are marked on this printer already; the sheet shows them.", DeadPixels.zones);
+                                }
+                            }
+
+                            if DeadPixels.page == 1: VerticalLayout {
+                                spacing: 12px;
+                                Heading {
+                                    text: @tr("DeadPixels" => "Print the sheet");
+                                }
+
+                                Prose {
+                                    text: @tr("DeadPixels" => "Save it and print it at actual size: 100 %, with no fit to page. The screen may take more than one page.");
+                                }
+
+                                Prose {
+                                    text: @tr("DeadPixels" => "Check it with a ruler: the one at the top of the sheet measures 50 mm. If it does not, print it again at actual size.");
+                                }
+
+                                HorizontalLayout {
+                                    alignment: start;
+                                    Button {
+                                        primary: true;
+                                        enabled: DeadPixels.has-printer;
+                                        icon: Icons.screen-grid;
+                                        text: @tr("DeadPixels" => "Save the sheet (PDF)…");
+                                        clicked => {
+                                            DeadPixels.save-sheet();
+                                        }
+                                    }
+                                }
+
+                                if DeadPixels.sheet-note != "": Prose {
+                                    color: Theme.text-muted;
+                                    text: DeadPixels.sheet-note;
+                                }
+                            }
+
+                            if DeadPixels.page == 2: VerticalLayout {
+                                spacing: 12px;
+                                Heading {
+                                    text: @tr("DeadPixels" => "Cut it out");
+                                }
+
+                                Prose {
+                                    text: @tr("DeadPixels" => "Cut along the dashed line. The thick line inside it is the edge of the screen; the band with the letters and numbers stays, it rests on the frame round the screen.");
+                                }
+
+                                Prose {
+                                    text: @tr("DeadPixels" => "On more than one page, cut the edges with no band right on their line and butt them together, the names of the cells lined up.");
+                                }
+                            }
+
+                            if DeadPixels.page == 3: VerticalLayout {
+                                spacing: 12px;
+                                Heading {
+                                    text: @tr("DeadPixels" => "Lay it on the screen");
+                                }
+
+                                Prose {
+                                    text: @tr("DeadPixels" => "Take the vat out and wipe the screen clean. Lay the sheet on it with FRONT toward the front of the printer.");
+                                }
+
+                                Prose {
+                                    text: @tr("DeadPixels" => "Do not press on the screen. A strip of tape on the band holds the sheet still.");
+                                }
+                            }
+
+                            if DeadPixels.page == 4: VerticalLayout {
+                                spacing: 12px;
+                                Heading {
+                                    text: @tr("DeadPixels" => "Light the screen");
+                                }
+
+                                Prose {
+                                    text: @tr("DeadPixels" => "Run the printer's cleaning or exposure test: the whole screen lights up behind the paper. Slide the sheet until its thick edge meets the edge of the light.");
+                                }
+
+                                Prose {
+                                    text: @tr("DeadPixels" => "Where it stays dark, the pixels are dead: circle them lightly with the pencil. Do not look at the light for long, and turn the test off when you are done.");
+                                }
+                            }
+
+                            if DeadPixels.page == 5: VerticalLayout {
+                                spacing: 12px;
+                                Heading {
+                                    text: @tr("DeadPixels" => "Mark the same cells on the plate");
+                                }
+
+                                Prose {
+                                    text: @tr("DeadPixels" => "Click a cell to mark it, or drag over several. The status bar names the cell under the cursor as the sheet does: C7 is the third column from the left, the seventh row from the front.");
+                                }
+
+                                Prose {
+                                    text: @tr("DeadPixels" => "A drag that starts on a marked cell clears the cells it covers. The zones are this printer's own; Mark dead zones, in Scene settings, puts the tool away.");
+                                }
+
+                                HorizontalLayout {
+                                    alignment: start;
+                                    Button {
+                                        primary: true;
+                                        enabled: DeadPixels.has-printer;
+                                        text: @tr("DeadPixels" => "Mark them on the plate");
+                                        clicked => {
+                                            DeadPixels.mark-cells();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 52px;
+                    background: Theme.chrome;
+                    Rectangle {
+                        y: 0;
+                        height: 1px;
+                        background: Theme.border;
+                    }
+
+                    HorizontalLayout {
+                        padding-left: 20px;
+                        padding-right: 20px;
+                        padding-top: 12px;
+                        padding-bottom: 12px;
+                        spacing: 8px;
+                        alignment: end;
+
+                        if DeadPixels.page > 0: Button {
+                            text: @tr("DeadPixels" => "Back");
+                            clicked => {
+                                DeadPixels.page = DeadPixels.page - 1;
+                            }
+                        }
+
+                        if DeadPixels.page < root.last: Button {
+                            primary: DeadPixels.page != 1;
+                            text: DeadPixels.page == 0 ? @tr("DeadPixels" => "Start") : @tr("DeadPixels" => "Next");
+                            clicked => {
+                                DeadPixels.page = DeadPixels.page + 1;
+                            }
+                        }
+
+                        if DeadPixels.page == root.last: Button {
+                            text: @tr("DeadPixels" => "Close");
+                            clicked => {
+                                DeadPixels.open = false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

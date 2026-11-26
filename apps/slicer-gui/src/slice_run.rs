@@ -574,7 +574,8 @@ impl SliceRun {
         // What sticks out of the plate would not print whole: no slice of it
         // to export, and Arrange all puts it back (#628).
         if matches!(trigger, SliceTrigger::Button | SliceTrigger::EveryPlate)
-            && self.tell_parts_past_plate(current.plate)
+            && (self.tell_parts_past_plate(current.plate)
+                || self.tell_parts_on_dead_zones(current.plate))
         {
             return false;
         }
@@ -673,6 +674,64 @@ impl SliceRun {
                 message: ctr!(
                     "SliceDialog",
                     "{} model(s) or their supports reach past the plate and would not print whole. Press Arrange all to put everything on the plate, then slice.",
+                    count
+                ),
+                details: details.as_str().into(),
+            },
+            || ctr!("SliceDialog", "Arrange all"),
+            move || {
+                if let Some(ui) = ui.upgrade() {
+                    ui.invoke_arrange_requested(false);
+                }
+            },
+        );
+        true
+    }
+
+    /// Whether something on plate `plate` stands over a dead zone of the
+    /// printer's screen (#783), and when it does, the card that names it
+    /// and offers Arrange all, which keeps away from the zones.
+    fn tell_parts_on_dead_zones(&self, plate: u32) -> bool {
+        let zones = self.ctrl.dead_zones();
+        if zones.is_empty() {
+            return false;
+        }
+        let volume = self.ctrl.build_volume();
+        let plates = self.document.plates();
+        let sessions = self.document.support_sessions();
+        let hidden = self.document.hidden_leaves();
+        let on = self
+            .document
+            .with_scene(|spatial| {
+                let on = crate::dead_zones::standing_on(
+                    spatial,
+                    &volume,
+                    plates,
+                    &|leaf| support_persist::model_of(&sessions, leaf),
+                    plate,
+                    &zones,
+                );
+                let names = object_names_by_leaf(spatial.graph());
+                on.iter()
+                    .filter(|id| !hidden.contains(id))
+                    .map(|id| names.get(id).cloned().unwrap_or_default())
+                    .collect::<Vec<String>>()
+            })
+            .unwrap_or_default();
+        if on.is_empty() {
+            return false;
+        }
+        crate::breadcrumbs::note(&format!("slice: {} on a dead zone, refused", on.len()));
+        let count = on.len();
+        let details = on.join("\n");
+        let ui = self.ui.clone();
+        self.dialogs.show_error_with_action(
+            move || ErrorTexts {
+                heading: ctr!("SliceDialog", "Models on a dead zone"),
+                context: None,
+                message: ctr!(
+                    "SliceDialog",
+                    "{} model(s), their supports or rafts stand on a dead zone of the screen, where nothing cures. Press Arrange all to move them off, then slice.",
                     count
                 ),
                 details: details.as_str().into(),

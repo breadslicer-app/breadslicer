@@ -866,6 +866,7 @@ impl AppState {
             slice_run.clone(),
         );
         crate::plate_sheet::wire(ui, ctrl.clone(), self.prefs.clone());
+        crate::dead_pixels::wire(ui, ctrl.clone(), self.prefs.clone());
         let split_bodies = SplitBodies::install(ui, ctrl.document(), ctrl.dialogs(), ctrl.clone());
         let presupported_import = crate::presupported_import::PresupportedImport::install(
             ui,
