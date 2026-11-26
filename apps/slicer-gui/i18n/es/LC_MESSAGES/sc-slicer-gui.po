@@ -11608,3 +11608,11 @@ msgstr "Clic o arrastre marca celdas · desde una marcada, borra · Esc termina"
 msgctxt "Inspector"
 msgid "Done: leave marking"
 msgstr "Listo: salir del modo"
+
+msgctxt "MenuBar"
+msgid "Edit Dead Zones"
+msgstr "Editar zonas muertas"
+
+msgctxt "DeadPixels"
+msgid "I have the sheet: go to marking"
+msgstr "Ya tengo la hoja: ir a marcar"

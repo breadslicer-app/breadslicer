@@ -168,6 +168,19 @@ export component DeadPixelsLayer inherits Rectangle {
                                     color: Theme.text-muted;
                                     text: @tr("DeadPixels" => "{} zones are marked on this printer already; the sheet shows them.", DeadPixels.zones);
                                 }
+
+                                // Straight to the cells, for a sheet already
+                                // printed or zones to change (Damian).
+                                HorizontalLayout {
+                                    alignment: start;
+                                    Button {
+                                        enabled: DeadPixels.has-printer;
+                                        text: @tr("DeadPixels" => "I have the sheet: go to marking");
+                                        clicked => {
+                                            DeadPixels.mark-cells();
+                                        }
+                                    }
+                                }
                             }
 
                             if DeadPixels.page == 1: VerticalLayout {

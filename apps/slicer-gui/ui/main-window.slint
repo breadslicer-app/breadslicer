@@ -1511,6 +1511,13 @@ export component MainWindow inherits Window {
                     root.dead-pixels-requested();
                 }
             }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Edit Dead Zones");
+                activated => {
+                    root.dead-zone-tool-toggled(true);
+                }
+            }
         }
 
         Menu {
@@ -4113,6 +4120,13 @@ export component MainWindow inherits Window {
                     title: @tr("MenuBar" => "Find Dead Pixels…");
                     activated => {
                         root.dead-pixels-requested();
+                    }
+                }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Edit Dead Zones");
+                    activated => {
+                        root.dead-zone-tool-toggled(true);
                     }
                 }
             }
