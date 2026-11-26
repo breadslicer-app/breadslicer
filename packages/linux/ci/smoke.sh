@@ -8,7 +8,7 @@
 # then does the same with the AppImage. Screenshots and logs go to /out.
 set -euo pipefail
 
-version=$(sed -n 's/^version = "\(.*\)"/\1/p' /src/apps/slicer-gui/Cargo.toml | head -n1)
+version="${BREADSLICER_VERSION:-$(sed -n 's/^version = "\(.*\)"/\1/p' /src/apps/slicer-gui/Cargo.toml | head -n1)}"
 models=/src/libs/mesh-formats/tests/fixtures/official/burkardt-stla
 
 echo "== makepkg"
