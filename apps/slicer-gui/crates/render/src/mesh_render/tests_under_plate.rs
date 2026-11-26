@@ -1087,6 +1087,72 @@ fn an_island_ring_shows_through_the_model_and_a_hint_ring_does_not() {
     );
 }
 
+/// A mark on the floor (#783, Damian: the dead zone's red lay over the
+/// model) stays behind the model in front of it, and shows round it.
+#[test]
+fn a_floor_mark_hides_behind_the_model_over_it() {
+    let Some(mut renderer) = renderer() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let target = Vec3::new(0.0, 0.0, 30.0);
+    let graph = scene_of(vec![square(16.0, 30.0)]);
+    let mut frame = |marked: bool| {
+        let overlay: Option<Overlay> = marked.then(|| {
+            let h = 50.0;
+            vec![Arc::new(OverlayMesh {
+                positions: vec![[-h, -h, 0.05], [h, -h, 0.05], [h, h, 0.05], [-h, h, 0.05]],
+                indices: vec![0, 1, 2, 0, 2, 3],
+                tint: OverlayTint::Invalid,
+            })]
+            .into()
+        });
+        renderer.set_floor_marks(overlay.as_ref());
+        let mut camera = OrbitCamera::new(target, 50.0);
+        camera.target = target;
+        camera.distance = 60.0;
+        camera.pitch = 0.85f32.asin();
+        camera.yaw = 0.3;
+        renderer.upload_scene(&graph).expect("upload the scene");
+        renderer
+            .workspace_pixels_for_test(
+                SceneRender {
+                    graph: &graph,
+                    selection: &[],
+                    gizmo: None,
+                    clip_z: None,
+                },
+                BV,
+                &camera,
+                SIZE,
+                SIZE,
+            )
+            .expect("the frame is not refused")
+            .expect("a sized frame")
+            .rgba
+    };
+    let bare = frame(false);
+    let marked = frame(true);
+    let centre = |rgba: &[u8]| {
+        let i = ((SIZE / 2) * SIZE + SIZE / 2) as usize * 4;
+        [rgba[i], rgba[i + 1], rgba[i + 2]]
+    };
+    assert_eq!(
+        centre(&marked),
+        centre(&bare),
+        "the model in front hides the mark"
+    );
+    let differs = bare
+        .chunks(4)
+        .zip(marked.chunks(4))
+        .filter(|(p, q)| (0..3).any(|k| p[k].abs_diff(q[k]) > 2))
+        .count();
+    assert!(
+        differs > 100,
+        "round the model the mark shows: {differs} pixels"
+    );
+}
+
 /// Every plate draws where it stands (#545): with two plates, the floor of
 /// the second fills a view of where it is, which shows only the ground with
 /// one; and a model on the second plate is no longer out of the volume.

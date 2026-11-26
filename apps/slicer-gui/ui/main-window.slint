@@ -28,9 +28,11 @@ import { RecentFileRow, StartLayer, StartOpen } from "start-dialog.slint";
 // thread the first time any text is laid out (e.g. opening a menu).
 import "../assets/fonts/NotoSans-Variable.ttf";
 
+import { DeadPixels, DeadPixelsLayer } from "dead-pixels-layer.slint";
 import { SetupLayer, Picker, FormField, FormSection, PickPrinter, PickNav, PickResin, PickLayout } from "setup-layer.slint";
 export { Picker, FormField, FormSection, PickPrinter, PickNav, PickResin, PickLayout }
 export { FrameState } from "kit/framed-window.slint";
+export { DeadPixels }
 import { TimelineMark } from "workspace/layer-timeline.slint";
 import { StressCard } from "workspace/stress-card.slint";
 export { TimelineMark }
@@ -410,6 +412,8 @@ export component MainWindow inherits Window {
     in-out property <bool> dead-zone-tool;
     in property <int> dead-zone-count;
     callback dead-zone-tool-toggled(bool);
+    // Opens Find dead pixels (#783).
+    callback dead-pixels-requested();
     callback support-lines-under-plate-toggled(bool);
     // The Supports tab's IMPORTED SUPPORTS card (#259): the bodies of the
     // selected model's imported supports, 0 for none.
@@ -478,6 +482,9 @@ export component MainWindow inherits Window {
             root.lay-face-on = false;
         }
         root.hollow-lasso-tool = false;
+        if root.dead-zone-tool {
+            root.dead-zone-tool-toggled(false);
+        }
         root.hollow-drain-tool = false;
         if root.orient-open {
             root.orient-close-requested();
@@ -1497,6 +1504,20 @@ export component MainWindow inherits Window {
                     root.generate-supports-requested();
                 }
             }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Find Dead Pixels…");
+                activated => {
+                    root.dead-pixels-requested();
+                }
+            }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Edit Dead Zones");
+                activated => {
+                    root.dead-zone-tool-toggled(true);
+                }
+            }
         }
 
         Menu {
@@ -2219,6 +2240,11 @@ export component MainWindow inherits Window {
                             if root.support-drag-cancel() {
                                 return true;
                             }
+                            // Esc puts the dead zones' tool away (#783).
+                            if root.dead-zone-tool {
+                                root.dead-zone-tool-toggled(false);
+                                return true;
+                            }
                             if root.measure-on {
                                 root.measure-escape();
                                 return true;
@@ -2839,6 +2865,52 @@ export component MainWindow inherits Window {
                             vertical-alignment: center;
                         }
                     }
+                    // While the dead zones' tool is out (#783): what it does,
+                    // and the button that puts it away, at the bottom right,
+                    // under the layer slider.
+                    if root.dead-zone-tool: Rectangle {
+                        x: parent.width - self.width - 12px;
+                        y: parent.height - self.height - 8px;
+                        width: min(parent.width - 24px, dead-zone-row.preferred-width + 24px);
+                        height: dead-zone-row.preferred-height + 12px;
+                        border-radius: 2px;
+                        background: #171a1d;
+                        border-color: Theme.border-strong;
+                        border-width: 1px;
+
+                        dead-zone-row := HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 6px;
+                            padding-top: 6px;
+                            padding-bottom: 6px;
+                            spacing: 12px;
+
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 2px;
+                                Text {
+                                    text: @tr("Inspector" => "MARKING DEAD PIXELS");
+                                    color: Theme.text;
+                                    font-size: 11px;
+                                    font-family: "Consolas";
+                                }
+                                Text {
+                                    text: @tr("Inspector" => "Click or drag cells · from a marked cell, a drag clears · Esc ends");
+                                    color: #8b959d;
+                                    font-size: 10px;
+                                }
+                            }
+
+                            Button {
+                                primary: true;
+                                text: @tr("Inspector" => "Done: leave marking");
+                                clicked => {
+                                    root.dead-zone-tool-toggled(false);
+                                }
+                            }
+                        }
+                    }
+
                     if root.has-scene && root.measure-on: Rectangle {
                         x: (parent.width - self.width) / 2;
                         y: 12px;
@@ -2982,8 +3054,15 @@ export component MainWindow inherits Window {
                                         }
                                         Note {
                                             text: root.dead-zone-count > 0
-                                                ? @tr("Inspector" => "{} dead zones on this printer's screen: Arrange keeps away from them, and Slice warns about what lands on one.", root.dead-zone-count)
-                                                : @tr("Inspector" => "Where the screen's pixels are dead, nothing is placed: drag on the plate to mark them, click one to take it away.");
+                                                ? @tr("Inspector" => "{} dead zones on this printer's screen: Arrange keeps away from them, and Slice does not slice what stands on one.", root.dead-zone-count)
+                                                : @tr("Inspector" => "Where the screen's pixels are dead, nothing is placed: mark them on the plate in 5 mm cells.");
+                                        }
+                                        Button {
+                                            text: @tr("Inspector" => "Find dead pixels…");
+                                            icon: Icons.screen-grid;
+                                            clicked => {
+                                                root.dead-pixels-requested();
+                                            }
                                         }
                                     }
                                 }
@@ -4036,6 +4115,20 @@ export component MainWindow inherits Window {
                         root.generate-supports-requested();
                     }
                 }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Find Dead Pixels…");
+                    activated => {
+                        root.dead-pixels-requested();
+                    }
+                }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Edit Dead Zones");
+                    activated => {
+                        root.dead-zone-tool-toggled(true);
+                    }
+                }
             }
 
             Menu {
@@ -4393,6 +4486,12 @@ export component MainWindow inherits Window {
     // Printer & resin and the first run (#151, #608), over the start
     // dialog; a message that opens while it shows sits over it.
     SetupLayer {
+        width: 100%;
+        height: 100%;
+    }
+
+    // Find dead pixels (#783), a card like Calibrate resin.
+    DeadPixelsLayer {
         width: 100%;
         height: 100%;
     }

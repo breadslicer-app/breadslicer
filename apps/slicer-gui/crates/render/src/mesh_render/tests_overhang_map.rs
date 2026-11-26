@@ -408,6 +408,35 @@ fn a_face_past_the_build_volume_stays_amber_under_the_map() {
     assert_eq!(centre_pixel(&mapped), [r, g, b]);
 }
 
+/// What stands over a dead zone of the screen is painted like what is off
+/// the plate (#783), and only while the zone is there.
+#[test]
+fn a_face_over_a_dead_zone_is_amber() {
+    let Some(mut renderer) = renderer() else {
+        eprintln!("skipping: no wgpu adapter available in this environment");
+        return;
+    };
+    let mesh = down_facing_quad();
+    let pose = AffineTransform3D::from_translation([20.0, 10.0, 30.0]);
+    let (graph, _) = scene_of(vec![(mesh, pose)]);
+    renderer.upload_scene(&graph).expect("upload the quad");
+    let target = Vec3::new(20.0, 10.0, 30.0);
+    let mut camera = OrbitCamera::new(target, 30.0);
+    camera.target = target;
+    camera.distance = 25.0;
+    camera.pitch = -1.5;
+
+    let plain = draw(&mut renderer, &graph, &[], &camera, None);
+    renderer.set_dead_zones(&[[15.0, 5.0, 25.0, 15.0]]);
+    let dead = draw(&mut renderer, &graph, &[], &camera, None);
+    renderer.set_dead_zones(&[[-25.0, -15.0, -15.0, -5.0]]);
+    let elsewhere = draw(&mut renderer, &graph, &[], &camera, None);
+    let [r, g, b] = centre_pixel(&dead);
+    assert!(r > g && g > b, "the warning's amber: {r}, {g}, {b}");
+    assert_ne!(centre_pixel(&plain), [r, g, b]);
+    assert_eq!(centre_pixel(&elsewhere), centre_pixel(&plain));
+}
+
 fn red_pixels(frame: &FramePixels) -> usize {
     frame
         .rgba

@@ -342,6 +342,84 @@ fn a_model_past_the_plate_is_not_sliced() {
     });
 }
 
+/// A plate whose model stands on a dead zone of the screen is not sliced
+/// (#783): the card names it and offers Arrange all; with the zone off its
+/// feet, it slices.
+#[test]
+fn a_model_on_a_dead_zone_is_not_sliced() {
+    use crate::dead_zones::DeadZone;
+    on_fresh_slint_thread(|| {
+        let w = two_plates();
+        w.document.set_active_plate(0);
+        let heading = "Models on a dead zone";
+        let told = || {
+            w.ctrl
+                .dialogs()
+                .error_headings_for_test()
+                .iter()
+                .filter(|h| h.as_str() == heading)
+                .count()
+        };
+        // The 10 mm cube stands 50 mm left of the first plate's centre: a
+        // cell under its corner.
+        w.ctrl
+            .set_dead_zones(vec![DeadZone::between([-46.0, 3.0], [-41.0, 8.0])], 2);
+        w.window.set_workspace_section(WorkspaceSection::Slice);
+        w.ctrl.set_section(WorkspaceSection::Slice);
+        w.window.invoke_slice_requested();
+        assert!(!w.window.get_slicing_in_progress(), "nothing sliced");
+        assert_eq!(told(), 1);
+        // Its Arrange all takes the window to Prepare, where Arrange works
+        // (Damian: from Slice it only closed the card), and asks for it.
+        let asked = Rc::new(Cell::new(None));
+        w.window.on_arrange_requested({
+            let asked = asked.clone();
+            move |selection| asked.set(Some(selection))
+        });
+        let ctrl = w.ctrl.clone();
+        w.window
+            .on_section_change_requested(move |section| ctrl.set_section(section));
+        w.ctrl
+            .dialogs()
+            .answer(crate::MessageAnswer::Confirm, false);
+        assert_eq!(asked.get(), Some(false), "Arrange all is asked for");
+        assert_eq!(
+            w.window.get_workspace_section(),
+            WorkspaceSection::Transform
+        );
+        assert!(w.ctrl.allows_layout_tools(), "Arrange may run there");
+        let after_answer = told();
+        // A zone beside it, not under it.
+        w.ctrl
+            .set_dead_zones(vec![DeadZone::between([-40.0, 3.0], [-35.0, 8.0])], 2);
+        w.press_slice();
+        assert_eq!(told(), after_answer, "off the zone, it slices");
+    });
+}
+
+/// The dead zones' tool always has a way out (#783, Damian: armed from the
+/// card, nothing put it away): its Done button and closing the tools.
+#[test]
+fn the_dead_zones_tool_is_put_away_by_done_and_by_closing_the_tools() {
+    on_fresh_slint_thread(|| {
+        let w = two_plates();
+        let ctrl = w.ctrl.clone();
+        // As the window wires it.
+        w.window
+            .on_dead_zone_tool_toggled(move |on| ctrl.set_dead_zone_tool(on));
+        w.ctrl.set_dead_zone_tool(true);
+        assert!(w.window.get_dead_zone_tool());
+        // Done.
+        w.window.invoke_dead_zone_tool_toggled(false);
+        assert!(!w.window.get_dead_zone_tool());
+        assert!(w.window.get_status_notice().is_empty());
+        // Closing the tools (a new scene, the models gone).
+        w.ctrl.set_dead_zone_tool(true);
+        w.window.invoke_close_tools();
+        assert!(!w.window.get_dead_zone_tool());
+    });
+}
+
 /// With `BREADSLICER_UI_SHOTS` naming a folder, the Slice tab of a short
 /// window after a slice (#628): the tab scrolls as a whole,
 /// so the review keeps its room; scrolled to the top and to the bottom.

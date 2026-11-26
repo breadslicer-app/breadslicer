@@ -45,30 +45,30 @@ const PLAN_TOP: f32 = 9.0;
 const PLAN_UNDER: f32 = 6.0;
 
 /// A point, mm.
-const PT: f32 = 25.4 / 72.0;
+pub(super) const PT: f32 = 25.4 / 72.0;
 
-type Rgb = (u8, u8, u8);
-const INK: Rgb = (0x1c, 0x1f, 0x23);
-const INK_SOFT: Rgb = (0x4b, 0x50, 0x57);
-const MUTED: Rgb = (0x8b, 0x90, 0x96);
-const HAIR: Rgb = (0xd8, 0xd4, 0xce);
-const PAPER: Rgb = (0xff, 0xff, 0xff);
-const PLATE: Rgb = (0xf6, 0xf3, 0xef);
-const GRID: Rgb = (0xe8, 0xe3, 0xdc);
-const GRID_MAJOR: Rgb = (0xd6, 0xcf, 0xc5);
-const AMBER: Rgb = (0xe0, 0x8a, 0x3c);
-const SAND: Rgb = (0xec, 0xdc, 0xc5);
-const SAND_EDGE: Rgb = (0xb0, 0x95, 0x72);
-const SHARED: Rgb = (0xf1, 0xea, 0xe0);
+pub(super) type Rgb = (u8, u8, u8);
+pub(super) const INK: Rgb = (0x1c, 0x1f, 0x23);
+pub(super) const INK_SOFT: Rgb = (0x4b, 0x50, 0x57);
+pub(super) const MUTED: Rgb = (0x8b, 0x90, 0x96);
+pub(super) const HAIR: Rgb = (0xd8, 0xd4, 0xce);
+pub(super) const PAPER: Rgb = (0xff, 0xff, 0xff);
+pub(super) const PLATE: Rgb = (0xf6, 0xf3, 0xef);
+pub(super) const GRID: Rgb = (0xe8, 0xe3, 0xdc);
+pub(super) const GRID_MAJOR: Rgb = (0xd6, 0xcf, 0xc5);
+pub(super) const AMBER: Rgb = (0xe0, 0x8a, 0x3c);
+pub(super) const SAND: Rgb = (0xec, 0xdc, 0xc5);
+pub(super) const SAND_EDGE: Rgb = (0xb0, 0x95, 0x72);
+pub(super) const SHARED: Rgb = (0xf1, 0xea, 0xe0);
 
 /// A weight and width of the typeface, to draw and to measure with.
-struct Face {
+pub(super) struct Face {
     font: Font,
     coords: Vec<i16>,
 }
 
 impl Face {
-    fn new(weight: f32, width: f32) -> Self {
+    pub(super) fn new(weight: f32, width: f32) -> Self {
         let font = Font::new_variable(
             Data::from(NOTO_SANS),
             0,
@@ -86,7 +86,7 @@ impl Face {
     }
 
     /// How wide `text` runs at `size` (mm).
-    fn width(&self, text: &str, size: f32) -> f32 {
+    pub(super) fn width(&self, text: &str, size: f32) -> f32 {
         let Some(font) = swash::FontRef::from_index(NOTO_SANS, 0) else {
             return text.chars().count() as f32 * size * 0.55;
         };
@@ -98,17 +98,17 @@ impl Face {
     }
 }
 
-struct Faces {
-    regular: Face,
-    medium: Face,
-    semibold: Face,
-    bold: Face,
+pub(super) struct Faces {
+    pub(super) regular: Face,
+    pub(super) medium: Face,
+    pub(super) semibold: Face,
+    pub(super) bold: Face,
     /// Heavy and narrow, for the title and the plates' numbers.
-    display: Face,
+    pub(super) display: Face,
 }
 
 impl Faces {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             regular: Face::new(400.0, 100.0),
             medium: Face::new(500.0, 100.0),
@@ -123,7 +123,7 @@ fn color((r, g, b): Rgb) -> krilla::paint::Paint {
     rgb::Color::new(r, g, b).into()
 }
 
-fn fill(c: Rgb) -> Fill {
+pub(super) fn fill(c: Rgb) -> Fill {
     Fill {
         paint: color(c),
         opacity: NormalizedF32::ONE,
@@ -131,7 +131,7 @@ fn fill(c: Rgb) -> Fill {
     }
 }
 
-fn stroke(c: Rgb, width: f32) -> Stroke {
+pub(super) fn stroke(c: Rgb, width: f32) -> Stroke {
     Stroke {
         paint: color(c),
         width,
@@ -142,13 +142,13 @@ fn stroke(c: Rgb, width: f32) -> Stroke {
 }
 
 /// A page being drawn: its surface, in millimetres.
-struct Pen<'a, 'b> {
-    s: &'a mut Surface<'b>,
-    faces: &'a Faces,
+pub(super) struct Pen<'a, 'b> {
+    pub(super) s: &'a mut Surface<'b>,
+    pub(super) faces: &'a Faces,
 }
 
 impl Pen<'_, '_> {
-    fn path(
+    pub(super) fn path(
         &mut self,
         build: impl FnOnce(&mut PathBuilder),
         fill_with: Option<Fill>,
@@ -165,7 +165,7 @@ impl Pen<'_, '_> {
         self.s.set_stroke(None);
     }
 
-    fn line(&mut self, a: [f32; 2], b: [f32; 2], with: Stroke) {
+    pub(super) fn line(&mut self, a: [f32; 2], b: [f32; 2], with: Stroke) {
         self.path(
             |pb| {
                 pb.move_to(a[0], a[1]);
@@ -176,21 +176,35 @@ impl Pen<'_, '_> {
         );
     }
 
-    fn rect(&mut self, x: f32, y: f32, w: f32, h: f32, f: Option<Fill>, st: Option<Stroke>) {
+    pub(super) fn rect(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        f: Option<Fill>,
+        st: Option<Stroke>,
+    ) {
         self.path(|pb| rounded(pb, x, y, w, h, 0.0), f, st);
     }
 
     /// The box `[x, y, w, h]` with its corners rounded `r`.
-    fn rounded(&mut self, [x, y, w, h]: [f32; 4], r: f32, f: Option<Fill>, st: Option<Stroke>) {
+    pub(super) fn rounded(
+        &mut self,
+        [x, y, w, h]: [f32; 4],
+        r: f32,
+        f: Option<Fill>,
+        st: Option<Stroke>,
+    ) {
         self.path(|pb| rounded(pb, x, y, w, h, r), f, st);
     }
 
-    fn circle(&mut self, c: [f32; 2], r: f32, f: Option<Fill>, st: Option<Stroke>) {
+    pub(super) fn circle(&mut self, c: [f32; 2], r: f32, f: Option<Fill>, st: Option<Stroke>) {
         self.path(|pb| circle(pb, c, r), f, st);
     }
 
     /// `text` with its baseline's start at `x, y`.
-    fn text(&mut self, face: &Face, size: f32, x: f32, y: f32, text: &str, c: Rgb) {
+    pub(super) fn text(&mut self, face: &Face, size: f32, x: f32, y: f32, text: &str, c: Rgb) {
         if text.is_empty() {
             return;
         }
@@ -205,18 +219,34 @@ impl Pen<'_, '_> {
         );
     }
 
-    fn text_right(&mut self, face: &Face, size: f32, right: f32, y: f32, text: &str, c: Rgb) {
+    pub(super) fn text_right(
+        &mut self,
+        face: &Face,
+        size: f32,
+        right: f32,
+        y: f32,
+        text: &str,
+        c: Rgb,
+    ) {
         let w = face.width(text, size);
         self.text(face, size, right - w, y, text, c);
     }
 
-    fn text_centre(&mut self, face: &Face, size: f32, centre: f32, y: f32, text: &str, c: Rgb) {
+    pub(super) fn text_centre(
+        &mut self,
+        face: &Face,
+        size: f32,
+        centre: f32,
+        y: f32,
+        text: &str,
+        c: Rgb,
+    ) {
         let w = face.width(text, size);
         self.text(face, size, centre - w / 2.0, y, text, c);
     }
 
     /// `text` with `tracking` mm between its letters; returns how wide.
-    fn spaced(
+    pub(super) fn spaced(
         &mut self,
         face: &Face,
         size: f32,
@@ -235,13 +265,13 @@ impl Pen<'_, '_> {
     }
 }
 
-fn spaced_width(face: &Face, size: f32, text: &str, tracking: f32) -> f32 {
+pub(super) fn spaced_width(face: &Face, size: f32, text: &str, tracking: f32) -> f32 {
     let n = text.chars().count();
     face.width(text, size) + tracking * n.saturating_sub(1) as f32
 }
 
 /// `text` cut with an ellipsis to fit `max` mm at `size`.
-fn fit(face: &Face, size: f32, text: &str, max: f32) -> String {
+pub(super) fn fit(face: &Face, size: f32, text: &str, max: f32) -> String {
     if face.width(text, size) <= max {
         return text.to_owned();
     }

@@ -101,6 +101,10 @@ pub trait MeshRenderer {
     /// models and hidden behind them (#524); `None` clears them.
     fn set_hint_marks(&mut self, _pieces: Option<&super::Overlay>) {}
 
+    /// Marks lying on the plate's floor (#783), hidden by the models in
+    /// front of them as the floor is.
+    fn set_floor_marks(&mut self, _pieces: Option<&super::Overlay>) {}
+
     /// Shows `layers`, the paint on the models' faces, tinted `tint`, in
     /// place of what was shown. A layer whose paint did not change keeps its
     /// buffer.
@@ -148,6 +152,11 @@ pub trait MeshRenderer {
     /// The scene's plates (#545): each drawn where it stands, the active one
     /// marked.
     fn set_plates(&mut self, _plates: crate::plates::Plates) {}
+
+    /// The dead zones of the printer's screen (#783), each its front left
+    /// and back right corners, mm from its plate's middle: what stands over
+    /// one is painted like what is off the plate.
+    fn set_dead_zones(&mut self, _zones: &[[f32; 4]]) {}
 
     /// Whether out of focus dims with nothing in focus too (#545).
     fn set_dim_all(&mut self, _on: bool) {}
@@ -271,6 +280,10 @@ impl MeshRenderer for Renderer {
         Renderer::set_hint_marks(self, pieces);
     }
 
+    fn set_floor_marks(&mut self, pieces: Option<&super::Overlay>) {
+        Renderer::set_floor_marks(self, pieces);
+    }
+
     fn set_surface_paint(&mut self, layers: &[super::PaintLayer], tint: [f32; 4]) {
         Renderer::set_surface_paint(self, layers, tint);
     }
@@ -317,6 +330,10 @@ impl MeshRenderer for Renderer {
 
     fn set_plates(&mut self, plates: crate::plates::Plates) {
         Renderer::set_plates(self, plates);
+    }
+
+    fn set_dead_zones(&mut self, zones: &[[f32; 4]]) {
+        Renderer::set_dead_zones(self, zones);
     }
 
     fn set_dim_all(&mut self, on: bool) {
