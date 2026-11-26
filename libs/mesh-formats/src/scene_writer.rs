@@ -643,6 +643,15 @@ mod write_scene_atomicity_tests {
         let readonly = dir.path().join("readonly");
         std::fs::create_dir(&readonly).unwrap();
         std::fs::set_permissions(&readonly, std::fs::Permissions::from_mode(0o555)).unwrap();
+        // Root (the Linux CI container) writes past a read-only mode: nothing
+        // to test there.
+        let probe = readonly.join("probe");
+        if std::fs::write(&probe, b"").is_ok() {
+            std::fs::remove_file(&probe).unwrap();
+            std::fs::set_permissions(&readonly, std::fs::Permissions::from_mode(0o755)).unwrap();
+            eprintln!("skipped: read-only modes are not enforced for this user");
+            return;
+        }
         let target = readonly.join("output.obj");
 
         let graph = valid_graph();

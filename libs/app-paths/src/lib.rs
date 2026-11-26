@@ -116,8 +116,8 @@ pub fn home_dir() -> Option<PathBuf> {
 }
 
 /// Every read-only data root a build can ship, highest precedence first:
-/// the installed roots (each existing `<base>/<application>` across the system
-/// data directories on Linux, the bundle's `Contents/Resources` or an
+/// the installed roots (each existing `<base>/<application>` beside the
+/// executable and across the system data directories on Linux, the bundle's `Contents/Resources` or an
 /// executable-relative directory on macOS, executable-relative on Windows)
 /// followed by the source-tree `assets/` root when cargo started the run (see
 /// [`dev_assets_dir`]).
@@ -137,12 +137,37 @@ fn bundled_data_dirs_from(mut roots: Vec<PathBuf>, dev: Option<PathBuf>) -> Vec<
     roots
 }
 
-/// Linux: every existing `<base>/<application>` across the system XDG
-/// data directories (`XDG_DATA_DIRS`).
+/// Linux: every existing `<base>/<application>`, first beside the running
+/// executable (see [`linux_bases`]), then across the system XDG data
+/// directories (`XDG_DATA_DIRS`).
 #[cfg(target_os = "linux")]
 fn installed_data_dirs() -> Vec<PathBuf> {
-    let bases = data_search_bases(std::env::var_os("XDG_DATA_DIRS"));
+    let exe = std::env::current_exe().ok();
+    let exe_dir = exe.as_deref().and_then(Path::parent);
+    let bases = linux_bases(
+        exe_dir,
+        data_search_bases(std::env::var_os("XDG_DATA_DIRS")),
+    );
     all_app_dirs(&bases, APPLICATION)
+}
+
+/// The Linux data bases, highest precedence first: the `share` folder beside
+/// the executable's `bin` folder, so an unpacked archive or an AppImage
+/// (`<prefix>/bin/breadslicer` with `<prefix>/share/<application>`) reads its
+/// own data before any installed copy; then `xdg_bases`. A base that appears
+/// twice (a binary installed in `/usr/bin`) is kept once, at its first place.
+#[cfg(target_os = "linux")]
+fn linux_bases(exe_dir: Option<&Path>, xdg_bases: Vec<PathBuf>) -> Vec<PathBuf> {
+    let beside = exe_dir
+        .and_then(Path::parent)
+        .map(|prefix| prefix.join("share"));
+    let mut bases: Vec<PathBuf> = Vec::with_capacity(xdg_bases.len() + 1);
+    for base in beside.into_iter().chain(xdg_bases) {
+        if !bases.contains(&base) {
+            bases.push(base);
+        }
+    }
+    bases
 }
 
 /// macOS / Windows: every existing data directory relative to the

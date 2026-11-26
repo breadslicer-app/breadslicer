@@ -17,7 +17,7 @@ use super::{
 };
 
 #[cfg(target_os = "linux")]
-use super::data_search_bases;
+use super::{data_search_bases, linux_bases};
 
 #[cfg(not(target_os = "linux"))]
 use super::exe_relative_bases;
@@ -207,6 +207,31 @@ fn data_search_bases_default_to_the_spec_dirs_when_xdg_data_dirs_is_empty() {
         data_search_bases(Some("".into())),
         [Path::new("/usr/local/share"), Path::new("/usr/share")],
     );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_bases_put_the_share_beside_the_binary_first() {
+    let xdg = vec![
+        PathBuf::from("/usr/local/share"),
+        PathBuf::from("/usr/share"),
+    ];
+    assert_eq!(
+        linux_bases(Some(Path::new("/opt/breadslicer/bin")), xdg.clone()),
+        [
+            Path::new("/opt/breadslicer/share"),
+            Path::new("/usr/local/share"),
+            Path::new("/usr/share"),
+        ],
+    );
+    // Installed in `/usr/bin`: `/usr/share` once, ahead of `/usr/local/share`.
+    assert_eq!(
+        linux_bases(Some(Path::new("/usr/bin")), xdg.clone()),
+        [Path::new("/usr/share"), Path::new("/usr/local/share")],
+    );
+    // No executable (or one at the root): only the system bases.
+    assert_eq!(linux_bases(None, xdg.clone()), xdg);
+    assert_eq!(linux_bases(Some(Path::new("/")), xdg.clone()), xdg);
 }
 
 #[cfg(target_os = "macos")]

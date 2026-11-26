@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The .bread project file, for the desktop's file associations. STL, OBJ
+     and 3MF are already known to shared-mime-info. -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-breadslicer-project">
+    <comment>Breadslicer project</comment>
+    <comment xml:lang="es">Proyecto de Breadslicer</comment>
+    <glob pattern="*.bread"/>
+  </mime-type>
+</mime-info>

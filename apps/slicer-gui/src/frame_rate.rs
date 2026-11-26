@@ -185,7 +185,42 @@ mod platform {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+mod platform {
+    use std::path::Path;
+
+    pub(super) fn on_battery() -> bool {
+        on_battery_in(Path::new("/sys/class/power_supply"))
+    }
+
+    /// On battery, from the kernel's power supplies under `root`: a system
+    /// battery discharging and no mains supply online. A battery of a
+    /// device (a mouse, a headset) does not count.
+    pub(super) fn on_battery_in(root: &Path) -> bool {
+        let Ok(entries) = std::fs::read_dir(root) else {
+            return false;
+        };
+        let (mut mains_online, mut discharging) = (false, false);
+        for entry in entries.flatten() {
+            let dir = entry.path();
+            let read = |name: &str| {
+                std::fs::read_to_string(dir.join(name))
+                    .map(|text| text.trim().to_owned())
+                    .unwrap_or_default()
+            };
+            match read("type").as_str() {
+                "Mains" => mains_online |= read("online") == "1",
+                "Battery" if read("scope") != "Device" => {
+                    discharging |= read("status") == "Discharging";
+                }
+                _ => {}
+            }
+        }
+        discharging && !mains_online
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 mod platform {
     pub(super) fn on_battery() -> bool {
         false
@@ -195,6 +230,38 @@ mod platform {
 #[cfg(test)]
 mod frame_rate_tests {
     use super::*;
+
+    /// A laptop's power supplies as the kernel lists them: unplugged and
+    /// discharging is on battery; plugged in, or a desktop with only a
+    /// wireless mouse's battery, is not.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_power_supplies_say_when_the_computer_runs_on_battery() {
+        let root = tempfile::tempdir().unwrap();
+        let supply = |name: &str, files: &[(&str, &str)]| {
+            let dir = root.path().join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            for (file, text) in files {
+                std::fs::write(dir.join(file), format!("{text}\n")).unwrap();
+            }
+        };
+        assert!(!platform::on_battery_in(root.path()));
+        supply(
+            "hidpp_battery_0",
+            &[
+                ("type", "Battery"),
+                ("scope", "Device"),
+                ("status", "Discharging"),
+            ],
+        );
+        assert!(!platform::on_battery_in(root.path()));
+        supply("BAT0", &[("type", "Battery"), ("status", "Discharging")]);
+        supply("AC", &[("type", "Mains"), ("online", "0")]);
+        assert!(platform::on_battery_in(root.path()));
+        supply("AC", &[("type", "Mains"), ("online", "1")]);
+        assert!(!platform::on_battery_in(root.path()));
+        assert!(!platform::on_battery_in(&root.path().join("missing")));
+    }
 
     const ALL: [FrameRateCap; 4] = [
         FrameRateCap::Automatic,

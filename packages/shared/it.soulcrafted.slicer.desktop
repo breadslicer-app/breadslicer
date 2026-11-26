@@ -7,5 +7,6 @@ Exec=breadslicer %F
 Icon=it.soulcrafted.slicer
 Terminal=false
 Categories=Graphics;3DGraphics;
-MimeType=model/stl;model/obj;model/3mf;
+MimeType=application/x-breadslicer-project;model/stl;application/sla;model/obj;model/3mf;
 StartupNotify=true
+StartupWMClass=it.soulcrafted.slicer
