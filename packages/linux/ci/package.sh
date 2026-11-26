@@ -16,7 +16,8 @@ OUT=/out
 HERE="$SRC/packages/linux"
 TARGET="${CARGO_TARGET_DIR:-$SRC/target}"
 
-version=$(sed -n 's/^version = "\(.*\)"/\1/p' "$SRC/apps/slicer-gui/Cargo.toml" | head -n1)
+# The version the build was given (BREADSLICER_VERSION), else the crate's.
+version="${BREADSLICER_VERSION:-$(sed -n 's/^version = "\(.*\)"/\1/p' "$SRC/apps/slicer-gui/Cargo.toml" | head -n1)}"
 name="Breadslicer-$version-linux-x86_64"
 echo "== release build, version $version"
 

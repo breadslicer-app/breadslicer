@@ -15,6 +15,10 @@
 #            starts the app under Xvfb with a model and takes a screenshot.
 #   all      the three, in that order (the default).
 #
+# BREADSLICER_VERSION and BREADSLICER_COMMIT, when set, go into the build as
+# on Windows: the version the app and the packages carry, and the commit
+# Export diagnostics names.
+#
 # The packages and the logs land in out-dir (default target/linux-packages).
 # The source is copied into a Docker volume (the working tree as it is,
 # uncommitted changes included, LF line endings); the target folders and the
@@ -60,7 +64,7 @@ run_in() {
         -v "$target":/target \
         -v breadslicer-linux-cargo:/cargo-home \
         -v "$out_mount":/out \
-        -e CARGO_HOME=/cargo-home -e CARGO_TARGET_DIR=/target -e CARGO_INCREMENTAL=0 \
+        -e CARGO_HOME=/cargo-home -e CARGO_TARGET_DIR=/target -e CARGO_INCREMENTAL=0         -e BREADSLICER_VERSION -e BREADSLICER_COMMIT \
         "$img" "$@"
 }
 
