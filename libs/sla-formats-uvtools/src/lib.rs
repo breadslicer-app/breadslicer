@@ -51,6 +51,7 @@
 //! - [`zcodex`]: Z-Suite's ZCodex (Zortrax Inkspire).
 //! - [`anet`]: Anet's `.n4` and `.n7`.
 //! - [`qdt`]: Emake3D's QDT (Galaxy 1).
+//! - [`nanodlp`]: NanoDLP's plate export (Concepts3D Athena 8K and 12K).
 //!
 //! [`read`] decodes them back, for tests and for checking a written file.
 
@@ -68,6 +69,7 @@ pub mod jxs;
 pub mod klipper_zip;
 mod layer_stats;
 pub mod lgs;
+pub mod nanodlp;
 mod program;
 mod pw0;
 mod pws;
@@ -120,6 +122,7 @@ impl PrinterFileWriter for UvtoolsWriters {
                         | OtherFormat::AnetN7
                         | OtherFormat::Qdt
                         | OtherFormat::Phz
+                        | OtherFormat::NanoDlp
                 )
         )
     }
@@ -145,6 +148,7 @@ impl PrinterFileWriter for UvtoolsWriters {
                 Some(fdg::PREVIEW_SIZES)
             }
             PrinterFileFormat::Other(OtherFormat::Zcodex) => Some(zcodex::PREVIEW_SIZES),
+            PrinterFileFormat::Other(OtherFormat::NanoDlp) => Some(nanodlp::PREVIEW_SIZES),
             PrinterFileFormat::Other(OtherFormat::AnetN4 | OtherFormat::AnetN7) => {
                 Some(anet::PREVIEW_SIZES)
             }
@@ -259,6 +263,9 @@ impl PrinterFileWriter for UvtoolsWriters {
                 anet::write_file(other, program, previews, stack, out)
             }
             PrinterFileFormat::Other(OtherFormat::Qdt) => qdt::write_file(program, stack, out),
+            PrinterFileFormat::Other(OtherFormat::NanoDlp) => {
+                nanodlp::write_file(program, previews, stack, out)
+            }
             other => Err(WriteFailure::Unencodable(format!(
                 "\"{other}\" is not a format ported from UVtools"
             ))),
