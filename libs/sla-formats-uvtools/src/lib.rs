@@ -36,14 +36,23 @@
 //! - [`sl1`]: Prusa's SL1 archive (`.sl1` for the SL1, `.sl1s` for the SL1S).
 //! - [`cxdlpv4`]: Creality CXDLP version 4 (Halot Mage, Mage S, Play, R6 and
 //!   the Halot X1 family).
+//! - [`chitubox_zip`]: ChiTuBox's ZIP of layer images and G-code (Phrozen
+//!   Sonic and Shuffle, Wanhao CGR and D8, Kelant S400), and its Klipper
+//!   layout ([`klipper_zip`], UnizMaker IBEE).
+//! - [`cws`]: Creation Workshop's CWS, `.cws` and `.rgb.cws` for NovaMaker
+//!   (Nova3D) and `.xml.cws` for the Wanhao D7.
 //!
 //! [`read`] decodes them back, for tests and for checking a written file.
 
 pub mod anycubic_binary;
 pub mod anycubic_zip;
+pub mod chitubox_zip;
 pub mod ctb_legacy;
+pub mod cws;
 pub mod cxdlp;
 pub mod cxdlpv4;
+mod gcode;
+pub mod klipper_zip;
 mod layer_stats;
 mod program;
 mod pw0;
@@ -73,7 +82,15 @@ impl PrinterFileWriter for UvtoolsWriters {
                 | PrinterFileFormat::AnycubicZip(_)
                 | PrinterFileFormat::AnycubicBinary(_)
                 | PrinterFileFormat::Sl1(_)
-                | PrinterFileFormat::Other(OtherFormat::Cxdlpv4 | OtherFormat::GktwoCtb)
+                | PrinterFileFormat::Other(
+                    OtherFormat::Cxdlpv4
+                        | OtherFormat::GktwoCtb
+                        | OtherFormat::ChituboxZip
+                        | OtherFormat::KlipperZip
+                        | OtherFormat::Cws
+                        | OtherFormat::RgbCws
+                        | OtherFormat::XmlCws
+                )
         )
     }
 
@@ -88,6 +105,8 @@ impl PrinterFileWriter for UvtoolsWriters {
             PrinterFileFormat::AnycubicBinary(_) => Some(anycubic_binary::PREVIEW_SIZES),
             PrinterFileFormat::Sl1(_) => Some(sl1::PREVIEW_SIZES),
             PrinterFileFormat::Other(OtherFormat::Cxdlpv4) => Some(cxdlpv4::PREVIEW_SIZES),
+            PrinterFileFormat::Other(OtherFormat::ChituboxZip) => Some(chitubox_zip::PREVIEW_SIZES),
+            PrinterFileFormat::Other(OtherFormat::KlipperZip) => Some(klipper_zip::PREVIEW_SIZES),
             _ => None,
         }
     }
@@ -147,6 +166,21 @@ impl PrinterFileWriter for UvtoolsWriters {
             }
             PrinterFileFormat::Other(OtherFormat::GktwoCtb) => {
                 ctb_legacy::write_gktwo(program, previews, stack, out)
+            }
+            PrinterFileFormat::Other(OtherFormat::ChituboxZip) => {
+                chitubox_zip::write_file(program, previews, stack, out)
+            }
+            PrinterFileFormat::Other(OtherFormat::KlipperZip) => {
+                klipper_zip::write_file(program, previews, stack, out)
+            }
+            PrinterFileFormat::Other(OtherFormat::Cws) => {
+                cws::write_file(cws::CwsVariant::Cws, program, stack, out)
+            }
+            PrinterFileFormat::Other(OtherFormat::RgbCws) => {
+                cws::write_file(cws::CwsVariant::Rgb, program, stack, out)
+            }
+            PrinterFileFormat::Other(OtherFormat::XmlCws) => {
+                cws::write_file(cws::CwsVariant::Xml, program, stack, out)
             }
             other => Err(WriteFailure::Unencodable(format!(
                 "\"{other}\" is not a format ported from UVtools"

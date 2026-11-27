@@ -1247,3 +1247,66 @@ pub fn read_ctb(bytes: &[u8]) -> Result<CtbFile, ReadError> {
         layers,
     })
 }
+
+/// An archive of layer images and text files: every entry by name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImageArchive {
+    /// The entries, in the order they were written.
+    pub entries: Vec<String>,
+    files: Vec<(String, Vec<u8>)>,
+}
+
+impl ImageArchive {
+    /// The bytes of entry `name`.
+    pub fn bytes(&self, name: &str) -> Option<&[u8]> {
+        self.files
+            .iter()
+            .find(|(entry, _)| entry == name)
+            .map(|(_, bytes)| bytes.as_slice())
+    }
+
+    /// Entry `name` as text.
+    pub fn text(&self, name: &str) -> Option<&str> {
+        self.bytes(name)
+            .and_then(|bytes| std::str::from_utf8(bytes).ok())
+    }
+
+    /// Entry `name` decoded as an 8-bit grey PNG: its size and pixels.
+    ///
+    /// # Errors
+    ///
+    /// [`ReadError`] when there is no such entry or it is no grey PNG.
+    pub fn grey(&self, name: &str) -> Result<((u32, u32), Vec<u8>), ReadError> {
+        let bytes = self
+            .bytes(name)
+            .ok_or_else(|| error(format!("no entry {name}")))?;
+        grey_png(bytes, name)
+    }
+}
+
+/// Reads every entry of a ZIP archive.
+///
+/// # Errors
+///
+/// [`ReadError`] when it is not a ZIP archive.
+pub fn read_image_archive(reader: impl Read + Seek) -> Result<ImageArchive, ReadError> {
+    let mut archive =
+        zip::ZipArchive::new(reader).map_err(|err| error(format!("not a ZIP archive: {err}")))?;
+    let mut entries = Vec::new();
+    let mut files = Vec::new();
+    for index in 0..archive.len() {
+        let mut file = archive
+            .by_index(index)
+            .map_err(|err| error(format!("entry {index} is unreadable: {err}")))?;
+        let name = file
+            .name()
+            .map_err(|err| error(format!("entry {index} is unreadable: {err}")))?
+            .into_owned();
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)
+            .map_err(|err| error(format!("{name} does not decompress: {err}")))?;
+        entries.push(name.clone());
+        files.push((name, bytes));
+    }
+    Ok(ImageArchive { entries, files })
+}
