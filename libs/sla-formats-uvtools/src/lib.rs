@@ -44,6 +44,7 @@
 //! - [`svgx`]: FlashForge's SVGX, layers as vector outlines (FlashForge Foto,
 //!   Focus, Hunter, Explorer Max; Voxelab Proxima 6).
 //! - [`lgs`]: Longer's LGS (Orange 10, 30, 120 and 4K).
+//! - [`fdg`]: Voxelab's FDG (Ceres 8.9, Polaris 5.5, Proxima 6).
 //!
 //! [`read`] decodes them back, for tests and for checking a written file.
 
@@ -54,6 +55,7 @@ pub mod ctb_legacy;
 pub mod cws;
 pub mod cxdlp;
 pub mod cxdlpv4;
+pub mod fdg;
 mod gcode;
 pub mod klipper_zip;
 mod layer_stats;
@@ -100,6 +102,7 @@ impl PrinterFileWriter for UvtoolsWriters {
                         | OtherFormat::Lgs30
                         | OtherFormat::Lgs120
                         | OtherFormat::Lgs4k
+                        | OtherFormat::Fdg
                 )
         )
     }
@@ -121,6 +124,7 @@ impl PrinterFileWriter for UvtoolsWriters {
             PrinterFileFormat::Other(
                 OtherFormat::Lgs | OtherFormat::Lgs30 | OtherFormat::Lgs120 | OtherFormat::Lgs4k,
             ) => Some(lgs::PREVIEW_SIZES),
+            PrinterFileFormat::Other(OtherFormat::Fdg) => Some(fdg::PREVIEW_SIZES),
             _ => None,
         }
     }
@@ -150,6 +154,7 @@ impl PrinterFileWriter for UvtoolsWriters {
             PrinterFileFormat::Other(
                 OtherFormat::Lgs | OtherFormat::Lgs30 | OtherFormat::Lgs120 | OtherFormat::Lgs4k,
             ) => lgs::stored_grey(grey),
+            PrinterFileFormat::Other(OtherFormat::Fdg) => fdg::stored_grey(grey),
             _ => grey,
         }
     }
@@ -208,6 +213,9 @@ impl PrinterFileWriter for UvtoolsWriters {
                 | OtherFormat::Lgs120
                 | OtherFormat::Lgs4k),
             ) => lgs::write_file(other, program, previews, stack, out),
+            PrinterFileFormat::Other(OtherFormat::Fdg) => {
+                fdg::write_file(program, previews, stack, out)
+            }
             other => Err(WriteFailure::Unencodable(format!(
                 "\"{other}\" is not a format ported from UVtools"
             ))),
