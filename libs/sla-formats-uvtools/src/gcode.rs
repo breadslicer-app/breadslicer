@@ -39,14 +39,11 @@ pub(crate) enum Positioning {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TimeUnit {
     Milliseconds,
-    Seconds,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SpeedUnit {
     MillimetersPerMinute,
-    MillimetersPerSecond,
-    CentimetersPerMinute,
 }
 
 /// How a layer's image is named in the show-image command.
@@ -58,8 +55,6 @@ pub(crate) enum ShowImage {
     FilenamePng1,
     /// `0`, `1`, ...
     Index0,
-    /// `1`, `2`, ...
-    Index1,
 }
 
 /// Where in a layer's block its image is shown.
@@ -278,14 +273,12 @@ impl Dialect {
 
     fn from_seconds(&self, seconds: f32) -> f32 {
         match self.time_unit {
-            TimeUnit::Seconds => seconds,
             TimeUnit::Milliseconds => round_away(seconds * 1000.0, 2),
         }
     }
 
     fn to_seconds(&self, time: f32) -> f32 {
         match self.time_unit {
-            TimeUnit::Seconds => time,
             TimeUnit::Milliseconds => round_away(time / 1000.0, 3),
         }
     }
@@ -293,8 +286,6 @@ impl Dialect {
     fn from_mm_per_min(&self, mm_min: f32) -> f32 {
         match self.speed_unit {
             SpeedUnit::MillimetersPerMinute => mm_min,
-            SpeedUnit::MillimetersPerSecond => round_away(mm_min / 60.0, 2),
-            SpeedUnit::CentimetersPerMinute => round_away(mm_min / 10.0, 2),
         }
     }
 
@@ -304,7 +295,6 @@ impl Dialect {
             ShowImage::FilenamePng0 => format!("{index}.png"),
             ShowImage::FilenamePng1 => format!("{}.png", index + 1),
             ShowImage::Index0 => index.to_string(),
-            ShowImage::Index1 => (index + 1).to_string(),
         }
     }
 }
