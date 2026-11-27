@@ -5,7 +5,8 @@
  * SoulCrafted Slicer - An open source slicer for resin 3d printers
  */
 
-//! One running app per person and per program file, on Windows (#418).
+//! One running app per person and per program file, on Windows and Linux
+//! (#418).
 //!
 //! A launch that names files first offers them to the app already running:
 //! if it takes them, they join its most recently focused window (as Import
@@ -26,9 +27,12 @@
 //! answer in time, it is told to drop them, and the launch opens them
 //! itself, as a new app; so the files open once, either way.
 //!
-//! Elsewhere (Linux, macOS) every launch is its own app, as before; the
-//! Finder hands its files to the running app on its own
-//! (`macos_open_documents`).
+//! On Linux the app listens on a Unix socket instead, in the person's own
+//! runtime folder (`XDG_RUNTIME_DIR`, which only they can open), named for
+//! the program file ([`socket_path`]); the handover is the same.
+//!
+//! On macOS every launch is its own app, as before; the Finder hands its
+//! files to the running app on its own (`macos_open_documents`).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -38,13 +42,13 @@ use std::time::{Duration, Instant};
 
 /// How long the running app's pipe thread waits for its window's thread to
 /// take the files. Long enough for an app still starting up.
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 const UI_TAKES_WITHIN: Duration = Duration::from_secs(5);
 
 /// How long a launch waits for the running app's answer before it opens
 /// its files itself. Longer than [`UI_TAKES_WITHIN`], so an app that takes
 /// them always says so in time.
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 const ANSWER_WITHIN: Duration = Duration::from_secs(8);
 
 /// The start of every request, then the format's version.
@@ -157,6 +161,15 @@ pub(crate) fn pipe_name(account: &str, exe: &std::path::Path) -> String {
     )
 }
 
+/// The socket of the app run from the program file `exe`, in the runtime
+/// folder `runtime` (which is the person's own). Linux compares paths with
+/// case, so the name does too; and it holds a hash, never the path itself.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn socket_path(runtime: &std::path::Path, exe: &std::path::Path) -> PathBuf {
+    let exe = exe.as_os_str().as_encoded_bytes();
+    runtime.join(format!("breadslicer-{:016x}.sock", fnv1a(exe)))
+}
+
 /// FNV-1a, 64 bits: the same on every build, unlike `std`'s hasher.
 fn fnv1a(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, &b| {
@@ -250,12 +263,29 @@ pub(crate) enum Start {
     },
 }
 
+/// What offering files to the running app came to.
+#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
+pub(crate) enum HandOver {
+    /// The app took them.
+    Taken,
+    /// No app listens (or one this account cannot write to).
+    NoApp,
+    /// An app listens but did not take them in time, or the talk broke.
+    NotTaken,
+}
+
+#[cfg(windows)]
+use pipe as channel;
+#[cfg(target_os = "linux")]
+use socket as channel;
+
 /// Hands `paths` to the running app, or else starts listening for later
 /// launches' files, which `receive` gets on the window's thread. A launch
 /// without files never hands over: it opens a new app, as before.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 pub(crate) fn start(paths: &[PathBuf], receive: fn(Vec<PathBuf>) -> bool) -> Start {
-    let Some(name) = this_pipe() else {
+    let Some(name) = this_channel() else {
         return Start::Running {
             listening: false,
             not_taken: false,
@@ -263,13 +293,13 @@ pub(crate) fn start(paths: &[PathBuf], receive: fn(Vec<PathBuf>) -> bool) -> Sta
     };
     let mut not_taken = false;
     if !paths.is_empty() {
-        match pipe::hand_over(&name, paths, ANSWER_WITHIN) {
-            pipe::HandOver::Taken => return Start::HandedOver,
-            pipe::HandOver::NoApp => {}
-            pipe::HandOver::NotTaken => not_taken = true,
+        match channel::hand_over(&name, paths, ANSWER_WITHIN) {
+            HandOver::Taken => return Start::HandedOver,
+            HandOver::NoApp => {}
+            HandOver::NotTaken => not_taken = true,
         }
     }
-    let listening = pipe::listen(&name, move |paths| {
+    let listening = channel::listen(&name, move |paths| {
         post_to_event_loop(paths, receive, UI_TAKES_WITHIN)
     });
     Start::Running {
@@ -278,8 +308,8 @@ pub(crate) fn start(paths: &[PathBuf], receive: fn(Vec<PathBuf>) -> bool) -> Sta
     }
 }
 
-/// See the Windows version: elsewhere every launch is its own app.
-#[cfg(not(windows))]
+/// See the Windows version: on macOS every launch is its own app.
+#[cfg(not(any(windows, target_os = "linux")))]
 pub(crate) fn start(_paths: &[PathBuf], _receive: fn(Vec<PathBuf>) -> bool) -> Start {
     Start::Running {
         listening: false,
@@ -289,7 +319,7 @@ pub(crate) fn start(_paths: &[PathBuf], _receive: fn(Vec<PathBuf>) -> bool) -> S
 
 /// This process's pipe: its account and its program file.
 #[cfg(windows)]
-fn this_pipe() -> Option<String> {
+fn this_channel() -> Option<String> {
     let exe = std::env::current_exe().ok()?;
     let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
     let account = format!(
@@ -298,6 +328,124 @@ fn this_pipe() -> Option<String> {
         std::env::var("USERNAME").unwrap_or_default()
     );
     Some(pipe_name(&account, &exe))
+}
+
+/// This process's socket: in the person's runtime folder, named for its
+/// program file. An AppImage runs from a new mount on every launch, so its
+/// program file is the AppImage itself (`APPIMAGE`), not the binary inside.
+/// `None` without a runtime folder: then every launch is its own app.
+#[cfg(target_os = "linux")]
+fn this_channel() -> Option<PathBuf> {
+    let runtime = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR")?);
+    if !runtime.is_absolute() || !runtime.is_dir() {
+        return None;
+    }
+    let exe = match std::env::var_os("APPIMAGE") {
+        Some(image) if !image.is_empty() => PathBuf::from(image),
+        _ => std::env::current_exe().ok()?,
+    };
+    let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
+    Some(socket_path(&runtime, &exe))
+}
+
+/// The handover over a Unix socket, in safe code only. The socket is the
+/// file [`socket_path`] names; a lock file beside it (`.lock`), held for
+/// the life of the app, says which app owns it, so a socket left behind by
+/// an app that ended without removing it is taken over, never shared.
+#[cfg(target_os = "linux")]
+pub(crate) mod socket {
+    use std::io::{self, Read, Write};
+    use std::os::unix::net::{UnixListener, UnixStream};
+    use std::path::{Path, PathBuf};
+    use std::time::Duration;
+
+    use super::{DECLINED, HandOver, MAX_REQUEST, TAKEN, decode_request, encode_request};
+
+    /// How long the app waits for a launch to send its files once it has
+    /// connected: a launch that stalls cannot hold the app's listener.
+    const SEND_WITHIN: Duration = Duration::from_secs(3);
+
+    /// Offers `paths` to the app listening on socket `path`, and waits at
+    /// most `within` for its answer.
+    pub(crate) fn hand_over(path: &Path, paths: &[PathBuf], within: Duration) -> HandOver {
+        // A missing socket, or one no app listens on any more, is no app.
+        let Ok(mut stream) = UnixStream::connect(path) else {
+            return HandOver::NoApp;
+        };
+        match talk(&mut stream, &encode_request(paths), within) {
+            Ok(true) => HandOver::Taken,
+            _ => HandOver::NotTaken,
+        }
+    }
+
+    /// Sends `request` and reads the answer: whether the app took the files.
+    fn talk(stream: &mut UnixStream, request: &[u8], within: Duration) -> io::Result<bool> {
+        stream.set_write_timeout(Some(within))?;
+        stream.set_read_timeout(Some(within))?;
+        stream.write_all(&(request.len() as u32).to_le_bytes())?;
+        stream.write_all(request)?;
+        let mut answer = [0u8; 1];
+        stream.read_exact(&mut answer)?;
+        Ok(answer[0] == TAKEN)
+    }
+
+    /// Makes socket `path` and serves it on a thread of its own, for the life
+    /// of the process: `deliver` gets each launch's files and says whether
+    /// the app took them. Returns `false` when another app owns the socket,
+    /// or it cannot be made.
+    pub(crate) fn listen(
+        path: &Path,
+        deliver: impl Fn(Vec<PathBuf>) -> bool + Send + 'static,
+    ) -> bool {
+        let Ok(lock) = std::fs::File::options()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(path.with_extension("lock"))
+        else {
+            return false;
+        };
+        if lock.try_lock().is_err() {
+            return false;
+        }
+        // This app owns the socket now: one an ended app left behind goes.
+        match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(_) => return false,
+        }
+        let Ok(listener) = UnixListener::bind(path) else {
+            return false;
+        };
+        std::thread::Builder::new()
+            .name("launch-files".into())
+            .spawn(move || {
+                // Held, unread, for as long as the app listens.
+                let _lock = lock;
+                for mut stream in listener.incoming().flatten() {
+                    serve_one(&mut stream, &deliver);
+                }
+            })
+            .is_ok()
+    }
+
+    fn serve_one(stream: &mut UnixStream, deliver: &impl Fn(Vec<PathBuf>) -> bool) {
+        if stream.set_read_timeout(Some(SEND_WITHIN)).is_err() {
+            return;
+        }
+        let mut len = [0u8; 4];
+        if stream.read_exact(&mut len).is_err() {
+            return;
+        }
+        let len = u32::from_le_bytes(len) as usize;
+        let took = if len <= MAX_REQUEST {
+            let mut request = vec![0u8; len];
+            stream.read_exact(&mut request).is_ok() && decode_request(&request).is_some_and(deliver)
+        } else {
+            false
+        };
+        let _ = stream.write_all(&[if took { TAKEN } else { DECLINED }]);
+    }
 }
 
 /// The named pipe, over the Win32 calls (`windows-sys`): the only unsafe
@@ -323,7 +471,7 @@ pub(crate) mod pipe {
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow;
 
-    use super::{DECLINED, MAX_REQUEST, TAKEN, decode_request, encode_request};
+    use super::{DECLINED, HandOver, MAX_REQUEST, TAKEN, decode_request, encode_request};
 
     /// How long a launch waits for a pipe the app is busy with (another
     /// launch's files) to free up.
@@ -395,17 +543,6 @@ pub(crate) mod pipe {
             filled += read as usize;
         }
         Ok(())
-    }
-
-    /// What offering files to the running app came to.
-    #[derive(Debug, PartialEq, Eq)]
-    pub(crate) enum HandOver {
-        /// The app took them.
-        Taken,
-        /// No app listens (or one this account cannot write to).
-        NoApp,
-        /// An app listens but did not take them in time, or the talk broke.
-        NotTaken,
     }
 
     /// Offers `paths` to the app listening on pipe `name`, and waits at most
@@ -663,24 +800,109 @@ mod tests {
         let started = Instant::now();
         assert_eq!(
             pipe::hand_over(&name, &paths, ANSWER_WITHIN),
-            pipe::HandOver::Taken
+            HandOver::Taken
         );
         assert!(started.elapsed() < Duration::from_secs(2));
         // A second launch right after is served too.
         let more = vec![PathBuf::from(r"D:\MZ\d.stl")];
         assert_eq!(
             pipe::hand_over(&name, &more, ANSWER_WITHIN),
-            pipe::HandOver::Taken
+            HandOver::Taken
         );
         assert_eq!(*got.lock().unwrap(), vec![paths, more]);
 
         assert_eq!(
             pipe::hand_over(&name, &[PathBuf::from(r"D:\refused.stl")], ANSWER_WITHIN),
-            pipe::HandOver::NotTaken
+            HandOver::NotTaken
         );
         assert_eq!(
             pipe::hand_over(&format!("{name}-none"), &odd_paths(), ANSWER_WITHIN),
-            pipe::HandOver::NoApp
+            HandOver::NoApp
+        );
+    }
+
+    #[test]
+    fn the_socket_belongs_to_one_program_file() {
+        let runtime = Path::new("/run/user/1000");
+        let exe = Path::new("/opt/breadslicer-20261122a/bin/breadslicer");
+        let path = socket_path(runtime, exe);
+        assert_eq!(path.parent(), Some(runtime));
+        assert_eq!(path, socket_path(runtime, exe));
+        // Another build folder is another app; Linux paths keep their case.
+        assert_ne!(
+            path,
+            socket_path(
+                runtime,
+                Path::new("/opt/breadslicer-20261122b/bin/breadslicer")
+            )
+        );
+        assert_ne!(
+            path,
+            socket_path(
+                runtime,
+                Path::new("/opt/Breadslicer-20261122a/bin/breadslicer")
+            )
+        );
+        // The name carries no part of the path, and fits a socket address.
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(name.starts_with("breadslicer-") && !name.contains("opt"));
+        assert!(path.as_os_str().len() < 100);
+    }
+
+    /// The handover end to end, over a real socket of this test's own, with
+    /// a `deliver` that stands for the window: the files arrive as sent, a
+    /// launch that finds no app says so, an app that does not take the files
+    /// lets the launch open them, and a socket an ended app left behind is
+    /// taken over.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn files_cross_the_socket_to_the_listening_app() {
+        use std::sync::Mutex;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("breadslicer-test.sock");
+        // A socket left behind: a file nobody listens on.
+        drop(std::os::unix::net::UnixListener::bind(&path).unwrap());
+        assert!(path.exists());
+        assert_eq!(
+            socket::hand_over(&path, &odd_paths(), ANSWER_WITHIN),
+            HandOver::NoApp
+        );
+
+        let got: Arc<Mutex<Vec<Vec<PathBuf>>>> = Arc::default();
+        let sink = got.clone();
+        assert!(socket::listen(&path, move |paths| {
+            let take = !paths.iter().any(|p| p.ends_with("refused.stl"));
+            if take {
+                sink.lock().unwrap().push(paths);
+            }
+            take
+        }));
+        // The socket is owned: nothing else listens on it too.
+        assert!(!socket::listen(&path, |_| true));
+
+        let paths = odd_paths();
+        let started = Instant::now();
+        assert_eq!(
+            socket::hand_over(&path, &paths, ANSWER_WITHIN),
+            HandOver::Taken
+        );
+        assert!(started.elapsed() < Duration::from_secs(2));
+        // A second launch right after is served too.
+        let more = vec![PathBuf::from("/MZ/d.stl")];
+        assert_eq!(
+            socket::hand_over(&path, &more, ANSWER_WITHIN),
+            HandOver::Taken
+        );
+        assert_eq!(*got.lock().unwrap(), vec![paths, more]);
+
+        assert_eq!(
+            socket::hand_over(&path, &[PathBuf::from("/refused.stl")], ANSWER_WITHIN),
+            HandOver::NotTaken
+        );
+        assert_eq!(
+            socket::hand_over(&dir.path().join("none.sock"), &odd_paths(), ANSWER_WITHIN),
+            HandOver::NoApp
         );
     }
 

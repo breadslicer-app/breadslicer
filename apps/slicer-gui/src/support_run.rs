@@ -17615,26 +17615,20 @@ mod hand_edit_tests {
     }
 
     // The card of supports out of date (#408), with the helpers above.
-    #[path = "../../tests_stale_supports.rs"]
     mod stale_supports;
 
     // Braces laid by hand (#3), through the viewport.
-    #[path = "../../tests_hand_braces.rs"]
     mod hand_braces;
 
     // The support test plate (#464), written on request.
-    #[path = "../../tests_support_test_plate.rs"]
     mod support_test_plate;
 
     // A new raft redraws the sets already made (#519).
-    #[path = "../../tests_raft_follows.rs"]
     mod raft_follows;
 
     // Where supports are recommended while placed by hand (#524).
-    #[path = "../../tests_support_hints.rs"]
     mod support_hints;
 
     // What editing needs is held in the Supports tab alone (#269).
-    #[path = "../../tests_support_caches.rs"]
     mod support_caches;
 }
