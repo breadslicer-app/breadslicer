@@ -32,7 +32,8 @@
 //!   `.pws` and the rest Photon Workshop wrote before the ZIP).
 //! - [`ctb_legacy`]: ChiTuBox CTB versions 2 to 4 (version 5 is written by
 //!   `sc-sla-formats` itself), and version 4 for the UniFormation GKtwo
-//!   (`.gktwo.ctb`).
+//!   (`.gktwo.ctb`), and the layout before it for the Anycubic Photon
+//!   (`.photon`).
 //! - [`sl1`]: Prusa's SL1 archive (`.sl1` for the SL1, `.sl1s` for the SL1S).
 //! - [`cxdlpv4`]: Creality CXDLP version 4 (Halot Mage, Mage S, Play, R6 and
 //!   the Halot X1 family).
@@ -103,6 +104,7 @@ impl PrinterFileWriter for UvtoolsWriters {
                         | OtherFormat::Lgs120
                         | OtherFormat::Lgs4k
                         | OtherFormat::Fdg
+                        | OtherFormat::Photon
                 )
         )
     }
@@ -110,7 +112,7 @@ impl PrinterFileWriter for UvtoolsWriters {
     fn preview_sizes(&self, format: PrinterFileFormat) -> Option<PreviewSizes> {
         match format {
             PrinterFileFormat::Ctb(CtbVariant::V2 | CtbVariant::V3 | CtbVariant::V4)
-            | PrinterFileFormat::Other(OtherFormat::GktwoCtb) => {
+            | PrinterFileFormat::Other(OtherFormat::GktwoCtb | OtherFormat::Photon) => {
                 Some(sc_sla_formats::ctb::PREVIEW_SIZES)
             }
             PrinterFileFormat::Cxdlp(_) => Some(cxdlp::PREVIEW_SIZES),
@@ -155,6 +157,9 @@ impl PrinterFileWriter for UvtoolsWriters {
                 OtherFormat::Lgs | OtherFormat::Lgs30 | OtherFormat::Lgs120 | OtherFormat::Lgs4k,
             ) => lgs::stored_grey(grey),
             PrinterFileFormat::Other(OtherFormat::Fdg) => fdg::stored_grey(grey),
+            PrinterFileFormat::Other(OtherFormat::Photon) => {
+                ctb_legacy::cbddlp_stored_grey(u32::from(raster.aa().factor()), grey)
+            }
             _ => grey,
         }
     }
@@ -215,6 +220,9 @@ impl PrinterFileWriter for UvtoolsWriters {
             ) => lgs::write_file(other, program, previews, stack, out),
             PrinterFileFormat::Other(OtherFormat::Fdg) => {
                 fdg::write_file(program, previews, stack, out)
+            }
+            PrinterFileFormat::Other(OtherFormat::Photon) => {
+                ctb_legacy::write_photon(program, previews, stack, out)
             }
             other => Err(WriteFailure::Unencodable(format!(
                 "\"{other}\" is not a format ported from UVtools"

@@ -277,3 +277,53 @@ fn a_layer_without_contours_is_written_with_one_placeholder_pixel() {
         assert_no_dark_layer(&file.layers, seven_bit(PLACEHOLDER_GREY));
     }
 }
+
+#[test]
+fn a_photon_stores_one_bit_plane_per_level_and_reads_back_at_those_greys() {
+    use sc_print_primitives::{AaLevel, Mirror};
+
+    use crate::test_fixture::{expected_images, program, raster, stack};
+
+    let u32_at =
+        |bytes: &[u8], at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+    for aa in [AaLevel::Off, AaLevel::X4] {
+        let raster = raster(aa, Mirror { x: true, y: false });
+        let planes = u32::from(aa.factor());
+        let program = program("Photon", raster.clone(), 4);
+        let stack = stack(4);
+        let mut out = Cursor::new(Vec::new());
+        write_photon(&program, None, &stack, &mut out).unwrap();
+        let bytes = out.into_inner();
+        assert_eq!(u32_at(&bytes, 0), MAGIC_CBDDLP);
+        assert_eq!(u32_at(&bytes, 4), 2);
+        let table = u32_at(&bytes, 64) as usize;
+        assert_eq!(u32_at(&bytes, 92), planes, "the header counts the planes");
+        for (index, image) in expected_images(&stack, &raster).iter().enumerate() {
+            let mut counts = vec![0_u32; image.len()];
+            for plane in 0..planes as usize {
+                let record = table + (plane * 4 + index) * 36;
+                let (at, size) = (
+                    u32_at(&bytes, record + 12) as usize,
+                    u32_at(&bytes, record + 16) as usize,
+                );
+                let mut pixel = 0;
+                for &code in &bytes[at..at + size] {
+                    let reps = usize::from(code & 0x7f);
+                    if code & 0x80 != 0 {
+                        for count in &mut counts[pixel..pixel + reps] {
+                            *count += 1;
+                        }
+                    }
+                    pixel += reps;
+                }
+                assert_eq!(pixel, image.len());
+            }
+            let read: Vec<u8> = counts.iter().map(|&c| (c * 255 / planes) as u8).collect();
+            let expected: Vec<u8> = image
+                .iter()
+                .map(|&g| cbddlp_stored_grey(planes, g))
+                .collect();
+            assert_eq!(read, expected, "{aa:?} layer {index}");
+        }
+    }
+}

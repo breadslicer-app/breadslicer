@@ -42,10 +42,12 @@
 //! keystream from the file's key and each layer's index, as UVtools writes
 //! them.
 
+use std::collections::HashMap;
 use std::io::SeekFrom;
 use std::num::NonZeroU32;
 
 use sc_sl1cer::contour::ContourStack;
+use sc_sl1cer::raster::rle::RleRun;
 use sc_sla_formats::ctb::disclaimer::{DISCLAIMER_SIZE, write_disclaimer};
 use sc_sla_formats::ctb::v5::preview_record::write_preview_record;
 use sc_sla_formats::ctb::{PREVIEW_SIZES, layer_xor, rle7, rle15};
@@ -66,6 +68,11 @@ pub(crate) const MAGIC_CTB: u32 = 0x12FD_0086;
 pub(crate) const MAGIC_CTB_V4: u32 = 0x12FD_0106;
 /// The magic of version 4 for the UniFormation GKtwo (`.gktwo.ctb`).
 pub(crate) const MAGIC_CTB_V4_GKTWO: u32 = 0xFF22_0810;
+/// The magic of the older layout, `.cbddlp` and `.photon`: no XOR key, and
+/// one bit plane per anti-aliasing level for each layer.
+pub(crate) const MAGIC_CBDDLP: u32 = 0x12FD_0019;
+/// The longest run a bit-plane byte holds.
+const BIT_PLANE_RUN: u32 = 0x7d;
 
 /// The disclaimer of a `.gktwo.ctb`, which names the `jxs` type as well. As
 /// for the CTB one (`sc_sla_formats::ctb::disclaimer`), its claims over the
@@ -82,12 +89,15 @@ reverse engineer, lease, assign, or sublicense the said programs or codes.";
 enum Brand {
     Chitubox,
     Gktwo,
+    /// `.photon`: the layout before CTB, version 2.
+    Cbddlp,
 }
 
 impl Brand {
     fn magic(self, version: u32) -> u32 {
         match self {
             Self::Gktwo => MAGIC_CTB_V4_GKTWO,
+            Self::Cbddlp => MAGIC_CBDDLP,
             Self::Chitubox if version >= 4 => MAGIC_CTB_V4,
             Self::Chitubox => MAGIC_CTB,
         }
@@ -95,14 +105,14 @@ impl Brand {
 
     fn disclaimer_len(self) -> u32 {
         match self {
-            Self::Chitubox => DISCLAIMER_SIZE,
+            Self::Chitubox | Self::Cbddlp => DISCLAIMER_SIZE,
             Self::Gktwo => GKTWO_DISCLAIMER.len() as u32,
         }
     }
 
     fn write_disclaimer(self, out: &mut Vec<u8>) -> std::io::Result<()> {
         match self {
-            Self::Chitubox => write_disclaimer(out),
+            Self::Chitubox | Self::Cbddlp => write_disclaimer(out),
             Self::Gktwo => {
                 out.extend_from_slice(GKTWO_DISCLAIMER.as_bytes());
                 Ok(())
@@ -263,6 +273,83 @@ pub(crate) fn layer_key(program: &PrintProgram) -> NonZeroU32 {
     NonZeroU32::new(LOWEST + mixed % SPAN).expect("the key is at least 255")
 }
 
+/// How many bit planes a layer is stored as: one per anti-aliasing level in
+/// the older layout, one image of greys in CTB.
+fn bit_planes(brand: Brand, program: &PrintProgram) -> u32 {
+    if brand == Brand::Cbddlp {
+        u32::from(program.raster.aa().factor()).max(1)
+    } else {
+        1
+    }
+}
+
+/// The grey a pixel must reach to light bit plane `bit` of `planes`: 127
+/// without anti-aliasing, else 255 for the first plane and `256 / planes *
+/// bit - 1` for the others, as UVtools sets them.
+pub(crate) fn plane_threshold(planes: u32, bit: u32) -> u8 {
+    if planes <= 1 {
+        127
+    } else {
+        (256 / planes * bit).wrapping_sub(1) as u8
+    }
+}
+
+/// Encodes one bit plane: runs of pixels at `threshold` or above (the top bit
+/// set) and below it, at most 125 a byte.
+pub(crate) fn encode_bit_plane(runs: &[RleRun], threshold: u8) -> Vec<u8> {
+    fn emit(out: &mut Vec<u8>, mut length: u32, on: bool) {
+        let flag = if on { 0x80 } else { 0 };
+        while length > 0 {
+            let take = length.min(BIT_PLANE_RUN);
+            out.push(take as u8 | flag);
+            length -= take;
+        }
+    }
+    let mut out = Vec::new();
+    let mut state: Option<(bool, u32)> = None;
+    for run in runs {
+        if run.length == 0 {
+            continue;
+        }
+        let on = run.value >= threshold;
+        state = match state {
+            Some((current, length)) if current == on => Some((on, length + run.length)),
+            Some((current, length)) => {
+                emit(&mut out, length, current);
+                Some((on, run.length))
+            }
+            None => Some((on, run.length)),
+        };
+    }
+    if let Some((on, length)) = state {
+        emit(&mut out, length, on);
+    }
+    out
+}
+
+/// The grey a pixel reads back as from the older layout's bit planes.
+pub(crate) fn cbddlp_stored_grey(planes: u32, grey: u8) -> u8 {
+    let lit = (0..planes.max(1))
+        .filter(|&bit| grey >= plane_threshold(planes.max(1), bit))
+        .count() as u32;
+    (lit * 255 / planes.max(1)) as u8
+}
+
+/// Writes a `.photon` for the Anycubic Photon: the layout before CTB, version
+/// 2, its layers as bit planes.
+///
+/// # Errors
+///
+/// As [`write_file`].
+pub fn write_photon(
+    program: &PrintProgram,
+    previews: Option<&PrintPreviews>,
+    stack: &ContourStack,
+    out: &mut dyn PrinterFileSink,
+) -> Result<(), WriteFailure> {
+    write_branded(2, Brand::Cbddlp, program, previews, stack, out)
+}
+
 /// Where each section lands, from the sizes of the variable ones.
 #[derive(Clone, Copy, Debug)]
 struct Layout {
@@ -335,7 +422,8 @@ fn header(
     magic: u32,
     program: &PrintProgram,
     layout: &Layout,
-    key: NonZeroU32,
+    key: u32,
+    planes: u32,
     (bottom, normal): (&Motion, &Motion),
 ) -> Vec<u8> {
     let raster = &program.raster;
@@ -372,10 +460,11 @@ fn header(
     put_u32(&mut out, u32::from(raster.mirror().x)); // the projector is mirrored
     put_u32(&mut out, layout.print_parameters);
     put_u32(&mut out, PRINT_PARAMETERS_BYTES);
-    put_u32(&mut out, 1); // CTB stores its greys once, not one pass per level
+    // CTB stores its greys once; the older layout one bit plane per level.
+    put_u32(&mut out, planes);
     put_u16(&mut out, u16::from(normal.pwm));
     put_u16(&mut out, u16::from(bottom.pwm));
-    put_u32(&mut out, key.get());
+    put_u32(&mut out, key);
     put_u32(&mut out, layout.slicer_info);
     put_u32(&mut out, SLICER_INFO_BYTES);
     debug_assert_eq!(out.len() as u32, HEADER_BYTES);
@@ -384,6 +473,7 @@ fn header(
 
 fn print_parameters(
     version: u32,
+    brand: Brand,
     program: &PrintProgram,
     (bottom, normal): (&Motion, &Motion),
 ) -> Vec<u8> {
@@ -405,7 +495,8 @@ fn print_parameters(
     put_u32(&mut out, 0);
     put_u32(&mut out, 0);
     put_u32(&mut out, 0);
-    put_u32(&mut out, if version <= 2 { V2_PADDING_MARK } else { 0 });
+    let mark = version <= 2 && brand != Brand::Cbddlp;
+    put_u32(&mut out, if mark { V2_PADDING_MARK } else { 0 });
     debug_assert_eq!(out.len() as u32, PRINT_PARAMETERS_BYTES);
     out
 }
@@ -636,7 +727,11 @@ fn write_branded(
         ))
     };
     let machine_name = program.machine_name.as_str().as_bytes();
-    let layer_count = u32::try_from(program.layers.len()).map_err(|_| unreachable())?;
+    let planes = bit_planes(brand, program);
+    let layer_count = u32::try_from(program.layers.len())
+        .ok()
+        .and_then(|count| count.checked_mul(planes))
+        .ok_or_else(unreachable)?;
     let layout = Layout::plan(
         version,
         brand.disclaimer_len(),
@@ -650,13 +745,16 @@ fn write_branded(
     }
 
     let key = layer_key(program);
+    // The older layout stores its layers as they are.
+    let stated_key = if brand == Brand::Cbddlp { 0 } else { key.get() };
     let (bottom, normal) = summary(program);
     let mut sections = header(
         version,
         brand.magic(version),
         program,
         &layout,
-        key,
+        stated_key,
+        planes,
         (&bottom, &normal),
     );
     write_preview_record(
@@ -673,7 +771,12 @@ fn write_branded(
         &mut sections,
     )?;
     sections.extend_from_slice(&small_blob);
-    sections.extend(print_parameters(version, program, (&bottom, &normal)));
+    sections.extend(print_parameters(
+        version,
+        brand,
+        program,
+        (&bottom, &normal),
+    ));
     sections.extend(slicer_info(version, program, &layout, (&bottom, &normal)));
     sections.extend_from_slice(machine_name);
     if version >= 4 {
@@ -685,44 +788,71 @@ fn write_branded(
     let start = out.stream_position()?;
     out.write_all(&sections)?;
 
-    // The layer table is filled once the images are placed.
-    let table_bytes = TABLE_RECORD_BYTES as usize * program.layers.len();
+    // The layer table is filled once the images are placed: one table per
+    // bit plane, each with every layer.
+    let table_bytes = TABLE_RECORD_BYTES as usize * layer_count as usize;
     out.write_all(&vec![0; table_bytes])?;
-    let mut table = Vec::with_capacity(table_bytes);
+    let mut tables = vec![Vec::new(); planes as usize];
+    // The older layout lets layers share an image, as UVtools writes it: a
+    // plane met before points at the first copy.
+    let mut shared: HashMap<Vec<u8>, ImageLocation> = HashMap::new();
     let tops = slabs(program);
     let mut next = layout.layer_data;
+    let dimmest = if brand == Brand::Cbddlp {
+        plane_threshold(planes, if planes > 1 { 1 } else { 0 })
+    } else {
+        rle7::DIMMEST_STORED
+    };
     write_layer_images(
         stack,
         &program.raster,
-        rle7::DIMMEST_STORED,
+        dimmest,
         |index, runs| {
-            let mut image = Vec::new();
-            rle7::encode_layer(runs, &mut image);
-            layer_xor::apply(key, index as u32, &mut image);
-            image
+            if brand == Brand::Cbddlp {
+                (0..planes)
+                    .map(|bit| encode_bit_plane(runs, plane_threshold(planes, bit)))
+                    .collect()
+            } else {
+                let mut image = Vec::new();
+                rle7::encode_layer(runs, &mut image);
+                layer_xor::apply(key, index as u32, &mut image);
+                vec![image]
+            }
         },
-        |index, image: Vec<u8>| -> Result<(), WriteFailure> {
+        |index, images: Vec<Vec<u8>>| -> Result<(), WriteFailure> {
             let motion = Motion::of(program.layers.get(index));
             let top = tops.get(index).map_or(0.0, |&(_, top)| top);
-            let length = u32::try_from(image.len()).map_err(|_| unreachable())?;
-            if version >= 3 {
+            for (plane, image) in images.into_iter().enumerate() {
+                if brand == Brand::Cbddlp
+                    && let Some(&image_at) = shared.get(&image)
+                {
+                    table_record(version, top, &motion, image_at, &mut tables[plane]);
+                    continue;
+                }
+                let length = u32::try_from(image.len()).map_err(|_| unreachable())?;
+                if version >= 3 {
+                    let image_at = ImageLocation {
+                        address: next + u64::from(LAYER_RECORD_BYTES),
+                        length,
+                    };
+                    out.write_all(&layer_record(version, top, &motion, image_at))?;
+                    next += u64::from(LAYER_RECORD_BYTES);
+                }
                 let image_at = ImageLocation {
-                    address: next + u64::from(LAYER_RECORD_BYTES),
+                    address: next,
                     length,
                 };
-                out.write_all(&layer_record(version, top, &motion, image_at))?;
-                next += u64::from(LAYER_RECORD_BYTES);
+                table_record(version, top, &motion, image_at, &mut tables[plane]);
+                out.write_all(&image)?;
+                next += u64::from(length);
+                if brand == Brand::Cbddlp {
+                    shared.insert(image, image_at);
+                }
             }
-            let image_at = ImageLocation {
-                address: next,
-                length,
-            };
-            table_record(version, top, &motion, image_at, &mut table);
-            out.write_all(&image)?;
-            next += u64::from(length);
             Ok(())
         },
     )?;
+    let table = tables.concat();
 
     let end = out.stream_position()?;
     out.seek(SeekFrom::Start(start + u64::from(layout.layer_table)))?;
