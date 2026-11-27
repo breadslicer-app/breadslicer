@@ -417,7 +417,7 @@ fn every_known_format_a_printer_declares_names_a_printer_file() {
 /// The bundled printers that cannot export yet: every format they declare
 /// still waits for its writer (#778). Each format that lands takes its
 /// printers off.
-const PRINTERS_WITHOUT_A_WRITER: [&str; 13] = [
+const PRINTERS_WITHOUT_A_WRITER: [&str; 12] = [
     "anet-n4",
     "anet-n7",
     "concepts3d-athena-12k",
@@ -428,7 +428,6 @@ const PRINTERS_WITHOUT_A_WRITER: [&str; 13] = [
     "peopoly-phenom-forge",
     "peopoly-phenom-xxl-v2",
     "phrozen-sonic-mini",
-    "uniformation-gkone",
     "uniz-ibee",
     "zortrax-inkspire",
 ];

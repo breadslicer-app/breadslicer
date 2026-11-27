@@ -46,6 +46,7 @@
 //!   Focus, Hunter, Explorer Max; Voxelab Proxima 6).
 //! - [`lgs`]: Longer's LGS (Orange 10, 30, 120 and 4K).
 //! - [`fdg`]: Voxelab's FDG (Ceres 8.9, Polaris 5.5, Proxima 6).
+//! - [`jxs`]: UniFormation's JXS (GKone).
 //!
 //! [`read`] decodes them back, for tests and for checking a written file.
 
@@ -58,6 +59,7 @@ pub mod cxdlp;
 pub mod cxdlpv4;
 pub mod fdg;
 mod gcode;
+pub mod jxs;
 pub mod klipper_zip;
 mod layer_stats;
 pub mod lgs;
@@ -105,6 +107,7 @@ impl PrinterFileWriter for UvtoolsWriters {
                         | OtherFormat::Lgs4k
                         | OtherFormat::Fdg
                         | OtherFormat::Photon
+                        | OtherFormat::Jxs
                 )
         )
     }
@@ -224,6 +227,7 @@ impl PrinterFileWriter for UvtoolsWriters {
             PrinterFileFormat::Other(OtherFormat::Photon) => {
                 ctb_legacy::write_photon(program, previews, stack, out)
             }
+            PrinterFileFormat::Other(OtherFormat::Jxs) => jxs::write_file(program, stack, out),
             other => Err(WriteFailure::Unencodable(format!(
                 "\"{other}\" is not a format ported from UVtools"
             ))),
