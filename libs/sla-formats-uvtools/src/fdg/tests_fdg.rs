@@ -38,7 +38,7 @@ fn every_layer_reads_back_at_7_bit_greys_from_where_its_record_says() {
     let program = program("Proxima 6", raster.clone(), 6);
     let stack = stack(6);
     let mut out = Cursor::new(Vec::new());
-    write_file(&program, None, &stack, &mut out).unwrap();
+    write_file(Variant::Fdg, &program, None, &stack, &mut out).unwrap();
     let bytes = out.into_inner();
     assert_eq!(u32_at(&bytes, 0), MAGIC);
     assert_eq!(u32_at(&bytes, 8), 6);
@@ -62,4 +62,26 @@ fn a_run_breaks_at_the_middle_of_its_row_and_every_125_pixels() {
     }];
     // One 300-pixel row: 150 then 150, each a grey byte and its extra 149.
     assert_eq!(encode_layer(&runs, 300), [0xfc, 125, 24, 0xfc, 125, 24]);
+}
+
+#[test]
+fn a_phz_states_its_magic_and_finds_its_layers_where_the_fdg_does() {
+    let raster = raster(AaLevel::Off, Mirror { x: true, y: false });
+    let program = program("Sonic Mini", raster.clone(), 3);
+    let stack = stack(3);
+    let mut out = Cursor::new(Vec::new());
+    write_file(Variant::Phz, &program, None, &stack, &mut out).unwrap();
+    let bytes = out.into_inner();
+    assert_eq!(u32_at(&bytes, 0), MAGIC_PHZ);
+    assert_eq!(u32_at(&bytes, 40), 3, "the layer count");
+    let records = u32_at(&bytes, 36) as usize;
+    for (index, image) in expected_images(&stack, &raster).iter().enumerate() {
+        let record = records + index * 36;
+        let (at, size) = (
+            u32_at(&bytes, record + 12) as usize,
+            u32_at(&bytes, record + 16) as usize,
+        );
+        let quantised: Vec<u8> = image.iter().map(|&g| stored_grey(g)).collect();
+        assert_eq!(decode(&bytes[at..at + size]), quantised, "layer {index}");
+    }
 }

@@ -3,8 +3,8 @@
  * SPDX-FileCopyrightText: 2026 SynrgStudio
  * SPDX-License-Identifier: AGPL-3.0-or-later
  *
- * Ported to Rust from UVtools UVtools.Core/FileFormats/FDGFile.cs (with the
- * preview codec of UVtools.Core/FileFormats/ChituboxFile.cs), UVtools v7.1.1,
+ * Ported to Rust from UVtools UVtools.Core/FileFormats/FDGFile.cs and
+ * PHZFile.cs (with the preview codec of UVtools.Core/FileFormats/ChituboxFile.cs), UVtools v7.1.1,
  * commit 8b5c91fd41b60bd6265ba1c1f2b2b64636b873e8, modified for Breadslicer:
  * the layers are encoded from the slicer's run-length rows, the header states
  * the normal light power where UVtools overwrites the bottom one with it, and
@@ -17,7 +17,9 @@
  * GNU Affero General Public License (LICENSE.md) for details.
  */
 
-//! Voxelab's FDG: `.fdg` for the Ceres 8.9, Polaris 5.5 and Proxima 6 (#778).
+//! Voxelab's FDG: `.fdg` for the Ceres 8.9, Polaris 5.5 and Proxima 6, and
+//! ChiTuBox's PHZ, the same layout with its header in another order: `.phz` for
+//! the Phrozen Sonic Mini (#778).
 //!
 //! A ChiTuBox-like binary: a 216-byte header, the 2 previews in ChiTuBox's
 //! 15-bit run-length code, the machine's name, one 36-byte record per layer
@@ -53,6 +55,14 @@ pub const PREVIEW_SIZES: PreviewSizes = PreviewSizes {
 };
 
 pub(crate) const MAGIC: u32 = 0xBD3C_7AC8;
+pub(crate) const MAGIC_PHZ: u32 = 0x9FDA_83AE;
+
+/// Which of the 2 layouts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Variant {
+    Fdg,
+    Phz,
+}
 const HEADER_LENGTH: u64 = 216;
 const PREVIEW_TABLE_LENGTH: u64 = 32;
 const LAYER_RECORD_LENGTH: u64 = 36;
@@ -132,7 +142,10 @@ struct Offsets {
     layers: u32,
 }
 
-fn header(program: &PrintProgram, offsets: &Offsets) -> Vec<u8> {
+fn header(variant: Variant, program: &PrintProgram, offsets: &Offsets) -> Vec<u8> {
+    if variant == Variant::Phz {
+        return header_phz(program, offsets);
+    }
     let summary = ProgramSummary::of(program);
     let (b, n) = (summary.bottom, summary.normal);
     let raster = &program.raster;
@@ -208,6 +221,84 @@ fn header(program: &PrintProgram, offsets: &Offsets) -> Vec<u8> {
     out
 }
 
+/// The PHZ header: the FDG's fields in PHZ's order.
+fn header_phz(program: &PrintProgram, offsets: &Offsets) -> Vec<u8> {
+    let summary = ProgramSummary::of(program);
+    let (b, n) = (summary.bottom, summary.normal);
+    let raster = &program.raster;
+    let panel = raster.panel_resolution();
+    let (width_mm, height_mm) = raster.panel_size_mm();
+    let mirror = raster.mirror();
+    let print_height = program
+        .layers
+        .last()
+        .map_or(0.0, |l| round_height(l.slab_top_mm.value() as f32));
+    let minutes = (program.created_at.unix_sec / 60) as u32;
+    let mut out = Vec::with_capacity(HEADER_LENGTH as usize);
+    let u = |out: &mut Vec<u8>, value: u32| out.extend_from_slice(&value.to_le_bytes());
+    let f = |out: &mut Vec<u8>, value: f32| out.extend_from_slice(&value.to_le_bytes());
+    u(&mut out, MAGIC_PHZ);
+    u(&mut out, 2);
+    f(
+        &mut out,
+        round_height(program.layer_height_mm.value() as f32),
+    );
+    f(&mut out, round_away(n.exposure_sec, 2));
+    f(&mut out, round_away(b.exposure_sec, 2));
+    u(&mut out, program.bottom_layer_count);
+    u(&mut out, panel.x());
+    u(&mut out, panel.y());
+    u(&mut out, offsets.large);
+    u(&mut out, offsets.layers);
+    u(&mut out, program.layers.len() as u32);
+    u(&mut out, offsets.small);
+    u(&mut out, program.print_time_sec.value() as u32);
+    u(&mut out, u32::from(mirror.x || mirror.y));
+    u(&mut out, 1);
+    out.extend_from_slice(&u16::from(n.pwm).to_le_bytes());
+    out.extend_from_slice(&u16::from(b.pwm).to_le_bytes());
+    u(&mut out, 0);
+    u(&mut out, 0);
+    f(&mut out, print_height);
+    f(&mut out, round_display(width_mm as f32));
+    f(&mut out, round_display(height_mm as f32));
+    f(
+        &mut out,
+        round_away(raster.build_volume().z().value() as f32, 2),
+    );
+    u(&mut out, 0);
+    f(&mut out, light_off_sec(&b));
+    f(&mut out, light_off_sec(&n));
+    u(&mut out, program.bottom_layer_count);
+    u(&mut out, 0);
+    f(&mut out, round_away(b.total_lift_mm(), 2));
+    f(&mut out, round_away(b.lift_mm_min, 2));
+    f(&mut out, round_away(n.total_lift_mm(), 2));
+    f(&mut out, round_away(n.lift_mm_min, 2));
+    f(&mut out, round_away(n.retract_mm_min, 2));
+    f(
+        &mut out,
+        round_away((program.volume_mm3.value() / 1000.0) as f32, 3),
+    );
+    f(&mut out, round_away(program.mass_g.value() as f32, 3));
+    f(&mut out, 0.0);
+    u(&mut out, 0);
+    u(&mut out, offsets.machine_name);
+    u(&mut out, program.machine_name.as_str().len() as u32);
+    for _ in 0..6 {
+        u(&mut out, 0);
+    }
+    u(&mut out, 28);
+    u(&mut out, minutes);
+    u(&mut out, raster.aa().factor().into());
+    u(&mut out, SOFTWARE_VERSION);
+    for _ in 0..6 {
+        u(&mut out, 0);
+    }
+    debug_assert_eq!(out.len() as u64, HEADER_LENGTH);
+    out
+}
+
 fn preview_block(width: u32, height: u32, at: u64, data: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(PREVIEW_TABLE_LENGTH as usize + data.len());
     for value in [
@@ -235,6 +326,7 @@ fn preview_block(width: u32, height: u32, at: u64, data: &[u8]) -> Vec<u8> {
 /// when the file would pass the 4 GB its offsets reach, and
 /// [`WriteFailure::Io`] when the file cannot be written.
 pub fn write_file(
+    variant: Variant,
     program: &PrintProgram,
     previews: Option<&PrintPreviews>,
     stack: &ContourStack,
@@ -294,7 +386,7 @@ pub fn write_file(
         machine_name: name_at as u32,
         layers: records_at as u32,
     };
-    out.write_all(&header(program, &offsets))?;
+    out.write_all(&header(variant, program, &offsets))?;
     out.write_all(&preview_block(
         small.width(),
         small.height(),
@@ -319,7 +411,7 @@ pub fn write_file(
             (at % PAGE) as u32,
             images[image].len() as u32,
             (at / PAGE) as u32,
-            84,
+            if variant == Variant::Fdg { 84 } else { 0 },
             0,
             0,
         ] {
