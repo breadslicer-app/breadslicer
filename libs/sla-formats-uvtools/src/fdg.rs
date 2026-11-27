@@ -28,7 +28,6 @@
 //! layers share one image.
 
 use std::collections::HashMap;
-use std::io::Write;
 
 use sc_sl1cer::contour::ContourStack;
 use sc_sl1cer::raster::rle::RleRun;

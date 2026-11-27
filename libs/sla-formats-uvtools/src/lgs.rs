@@ -26,7 +26,7 @@
 //! high nibble (16 greys) with its length written 4 bits a byte, most
 //! significant first; the Orange 4K's layers are turned a quarter clockwise.
 
-use std::io::{self, Write};
+use std::io;
 
 use sc_sl1cer::contour::ContourStack;
 use sc_sl1cer::raster::rle::RleRun;

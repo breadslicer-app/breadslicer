@@ -48,9 +48,11 @@
 //! - [`fdg`]: Voxelab's FDG (Ceres 8.9, Polaris 5.5, Proxima 6).
 //! - [`jxs`]: UniFormation's JXS (GKone).
 //! - [`zcodex`]: Z-Suite's ZCodex (Zortrax Inkspire).
+//! - [`anet`]: Anet's `.n4` and `.n7`.
 //!
 //! [`read`] decodes them back, for tests and for checking a written file.
 
+pub mod anet;
 pub mod anycubic_binary;
 pub mod anycubic_zip;
 pub mod chitubox_zip;
@@ -111,6 +113,8 @@ impl PrinterFileWriter for UvtoolsWriters {
                         | OtherFormat::Photon
                         | OtherFormat::Jxs
                         | OtherFormat::Zcodex
+                        | OtherFormat::AnetN4
+                        | OtherFormat::AnetN7
                 )
         )
     }
@@ -134,6 +138,9 @@ impl PrinterFileWriter for UvtoolsWriters {
             ) => Some(lgs::PREVIEW_SIZES),
             PrinterFileFormat::Other(OtherFormat::Fdg) => Some(fdg::PREVIEW_SIZES),
             PrinterFileFormat::Other(OtherFormat::Zcodex) => Some(zcodex::PREVIEW_SIZES),
+            PrinterFileFormat::Other(OtherFormat::AnetN4 | OtherFormat::AnetN7) => {
+                Some(anet::PREVIEW_SIZES)
+            }
             _ => None,
         }
     }
@@ -164,6 +171,9 @@ impl PrinterFileWriter for UvtoolsWriters {
                 OtherFormat::Lgs | OtherFormat::Lgs30 | OtherFormat::Lgs120 | OtherFormat::Lgs4k,
             ) => lgs::stored_grey(grey),
             PrinterFileFormat::Other(OtherFormat::Fdg) => fdg::stored_grey(grey),
+            PrinterFileFormat::Other(OtherFormat::AnetN4 | OtherFormat::AnetN7) => {
+                anet::stored_grey(grey)
+            }
             PrinterFileFormat::Other(OtherFormat::Photon) => {
                 ctb_legacy::cbddlp_stored_grey(u32::from(raster.aa().factor()), grey)
             }
@@ -234,6 +244,9 @@ impl PrinterFileWriter for UvtoolsWriters {
             PrinterFileFormat::Other(OtherFormat::Jxs) => jxs::write_file(program, stack, out),
             PrinterFileFormat::Other(OtherFormat::Zcodex) => {
                 zcodex::write_file(program, previews, stack, out)
+            }
+            PrinterFileFormat::Other(other @ (OtherFormat::AnetN4 | OtherFormat::AnetN7)) => {
+                anet::write_file(other, program, previews, stack, out)
             }
             other => Err(WriteFailure::Unencodable(format!(
                 "\"{other}\" is not a format ported from UVtools"

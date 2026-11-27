@@ -27,7 +27,6 @@
 //! Coordinates are millimetres from the panel's centre, `y` growing down the
 //! image.
 
-use std::io::Write;
 
 use sc_print_primitives::PanelRotation;
 use sc_sl1cer::contour::{ClosedRing, ContourStack};
