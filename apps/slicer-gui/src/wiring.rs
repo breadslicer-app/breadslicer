@@ -84,6 +84,7 @@ pub(crate) fn wire_main_window(
     open_files: Rc<dyn Fn(Vec<PathBuf>)>,
 ) -> Result<(), slint::SetRenderingNotifierError> {
     install_rendering_notifier(ui, ctrl.clone())?;
+    crate::calibration_wizard::wire(ui, ctrl.clone(), prefs.clone(), open_files.clone());
     wire_open_file(
         ui,
         ctrl.clone(),

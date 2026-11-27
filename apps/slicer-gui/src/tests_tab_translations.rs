@@ -842,6 +842,10 @@ const DIALOG_SLINT: &[(&str, &str)] = &[
     ("setup-layer.slint", include_str!("../ui/setup-layer.slint")),
     ("dead-pixels-layer.slint", include_str!("../ui/dead-pixels-layer.slint")),
     (
+        "calibration-layer.slint",
+        include_str!("../ui/calibration-layer.slint"),
+    ),
+    (
         "about-window.slint",
         include_str!("../ui/about-window.slint"),
     ),
@@ -902,6 +906,7 @@ const DIALOG_SOURCES: &[(&str, &str)] = &[
     ("error_dialog.rs", include_str!("error_dialog.rs")),
     ("about_window.rs", include_str!("about_window.rs")),
     ("setup_window.rs", include_str!("setup_window.rs")),
+    ("calibration_wizard.rs", include_str!("calibration_wizard.rs")),
     ("setup_forms.rs", include_str!("setup_forms.rs")),
     ("send_to_printer.rs", include_str!("send_to_printer.rs")),
     ("show_in_folder.rs", include_str!("show_in_folder.rs")),

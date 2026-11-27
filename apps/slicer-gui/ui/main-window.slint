@@ -31,6 +31,8 @@ import "../assets/fonts/NotoSans-Variable.ttf";
 import { DeadPixels, DeadPixelsLayer } from "dead-pixels-layer.slint";
 import { SetupLayer, Picker, FormField, FormSection, PickPrinter, PickNav, PickResin, PickLayout } from "setup-layer.slint";
 export { Picker, FormField, FormSection, PickPrinter, PickNav, PickResin, PickLayout }
+import { CalibrationLayer, Calib, CalibLine } from "calibration-layer.slint";
+export { Calib, CalibLine }
 export { FrameState } from "kit/framed-window.slint";
 export { DeadPixels }
 import { TimelineMark } from "workspace/layer-timeline.slint";
@@ -984,6 +986,8 @@ export component MainWindow inherits Window {
     callback export-selection-requested();
     // File > Plate Checklist (#740).
     callback plate-sheet-requested();
+    // Tools → Calibrate resin (#78).
+    callback calibration-requested();
     callback scene-load-finished();
     callback import-notes-requested();
     callback show-about-requested();
@@ -1516,6 +1520,16 @@ export component MainWindow inherits Window {
                 title: @tr("MenuBar" => "Edit Dead Zones");
                 activated => {
                     root.dead-zone-tool-toggled(true);
+                }
+            }
+
+            MenuSeparator { }
+
+            MenuItem {
+                title: @tr("MenuBar" => "Calibrate Resin…");
+                enabled: !root.loading;
+                activated => {
+                    root.calibration-requested();
                 }
             }
         }
@@ -4129,6 +4143,16 @@ export component MainWindow inherits Window {
                         root.dead-zone-tool-toggled(true);
                     }
                 }
+
+                MenuSeparator { }
+
+                MenuItem {
+                    title: @tr("MenuBar" => "Calibrate Resin…");
+                    enabled: !root.loading;
+                    activated => {
+                        root.calibration-requested();
+                    }
+                }
             }
 
             Menu {
@@ -4492,6 +4516,12 @@ export component MainWindow inherits Window {
 
     // Find dead pixels (#783), a card like Calibrate resin.
     DeadPixelsLayer {
+        width: 100%;
+        height: 100%;
+    }
+
+    // Tools → Calibrate resin (#78), a card like Printer & resin.
+    CalibrationLayer {
         width: 100%;
         height: 100%;
     }

@@ -39,6 +39,7 @@ mod about_window;
 mod app_settings;
 mod app_state;
 mod arrange_run;
+mod calibration_wizard;
 mod controls_layout;
 mod setup_forms;
 mod setup_window;
