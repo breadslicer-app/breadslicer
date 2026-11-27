@@ -63,7 +63,7 @@ fn preview_bytes(image: &PreviewImage) -> Vec<u8> {
     let mut bgr = Vec::with_capacity(rgb.len());
     for row in (0..height as usize).rev() {
         let start = row * width as usize * 3;
-        for pixel in rgb[start..start + width as usize * 3].chunks_exact(3) {
+        for pixel in rgb[start..start + width as usize * 3].as_chunks::<3>().0 {
             bgr.extend_from_slice(&[pixel[2], pixel[1], pixel[0]]);
         }
     }

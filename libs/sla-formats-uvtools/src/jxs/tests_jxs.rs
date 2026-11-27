@@ -44,7 +44,7 @@ fn the_gcode_turns_into_layers_delays_and_lines() {
 
 #[test]
 fn a_panel_not_three_pixels_a_pixel_is_refused() {
-    if PIXELS_X % 3 == 0 {
+    if PIXELS_X.is_multiple_of(3) {
         return;
     }
     let program = program("GKone", raster(AaLevel::Off, Mirror::default()), 2);

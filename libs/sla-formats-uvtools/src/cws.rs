@@ -344,7 +344,7 @@ fn layer_png(
         // first grey is the blue sample.
         CwsVariant::Rgb => {
             let mut rgb = Vec::with_capacity(grey.len());
-            for triple in grey.chunks_exact(3) {
+            for triple in grey.as_chunks::<3>().0 {
                 rgb.extend_from_slice(&[triple[2], triple[1], triple[0]]);
             }
             (png::ColorType::Rgb, width / 3, rgb)

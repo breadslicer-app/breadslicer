@@ -85,7 +85,7 @@ fn u16_be(out: &mut Vec<u8>, value: u16) {
 
 fn rgb565(image: &PreviewImage) -> Vec<u8> {
     let mut out = Vec::with_capacity(image.rgb().len() / 3 * 2);
-    for pixel in image.rgb().chunks_exact(3) {
+    for pixel in image.rgb().as_chunks::<3>().0 {
         let (r, g, b) = (
             u16::from(pixel[0]),
             u16::from(pixel[1]),

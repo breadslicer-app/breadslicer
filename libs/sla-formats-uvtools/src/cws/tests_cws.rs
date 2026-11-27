@@ -51,7 +51,7 @@ fn a_cws_holds_its_conf_its_grey_layers_and_its_gcode() {
 
 #[test]
 fn an_rgb_cws_packs_three_greys_in_each_pixel() {
-    if PIXELS_X % 3 != 0 {
+    if !PIXELS_X.is_multiple_of(3) {
         return;
     }
     let (archive, expected) = written(CwsVariant::Rgb, 4);
@@ -60,7 +60,9 @@ fn an_rgb_cws_packs_three_greys_in_each_pixel() {
         assert_eq!(color, png::ColorType::Rgb);
         assert_eq!(width * 3, PIXELS_X);
         let unpacked: Vec<u8> = data
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .flat_map(|p| [p[2], p[1], p[0]])
             .collect();
         assert_eq!(&unpacked, image);
@@ -80,7 +82,7 @@ fn an_xml_cws_holds_its_manifest_profile_and_rgba_layers() {
     for (index, image) in expected.iter().enumerate() {
         let (_, color, data) = pixels(&archive, &layer_entry(index, 3));
         assert_eq!(color, png::ColorType::Rgba);
-        let grey: Vec<u8> = data.chunks_exact(4).map(|p| p[0]).collect();
+        let grey: Vec<u8> = data.as_chunks::<4>().0.iter().map(|p| p[0]).collect();
         assert_eq!(&grey, image);
     }
     let gcode = archive.text("breadslicer.gcode").unwrap();

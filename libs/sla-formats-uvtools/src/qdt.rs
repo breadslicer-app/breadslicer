@@ -132,7 +132,7 @@ pub(crate) fn layer_block(index: usize, rows: &[RleRun], width: u32, height: u32
         let (small, sw, sh) = tenth(&pixels, w, h);
         write_lines(&mut text, &scan_lines(&small, sw, sh, 0));
         text.push_str("FB\r\n");
-        let lines = if index % 2 != 0 {
+        let lines = if !index.is_multiple_of(2) {
             let mut flipped = vec![0_u8; pixels.len()];
             for y in 0..h {
                 for x in 0..w {

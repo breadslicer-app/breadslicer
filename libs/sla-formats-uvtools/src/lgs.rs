@@ -141,7 +141,7 @@ fn header(format: OtherFormat, program: &PrintProgram) -> Vec<u8> {
 /// A preview as big-endian RGB565.
 fn rgb565(image: &PreviewImage) -> Vec<u8> {
     let mut out = Vec::with_capacity(image.rgb().len() / 3 * 2);
-    for pixel in image.rgb().chunks_exact(3) {
+    for pixel in image.rgb().as_chunks::<3>().0 {
         let (r, g, b) = (
             u16::from(pixel[0]),
             u16::from(pixel[1]),

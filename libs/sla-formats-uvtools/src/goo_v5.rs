@@ -107,7 +107,7 @@ fn put_text(out: &mut Vec<u8>, text: &str, length: usize) {
 }
 
 fn rgb565(out: &mut Vec<u8>, image: &PreviewImage) {
-    for pixel in image.rgb().chunks_exact(3) {
+    for pixel in image.rgb().as_chunks::<3>().0 {
         let (r, g, b) = (
             u16::from(pixel[0]),
             u16::from(pixel[1]),
@@ -480,7 +480,7 @@ pub fn write_file(
     out: &mut dyn PrinterFileSink,
 ) -> Result<(), WriteFailure> {
     let width = program.raster.panel_resolution().x();
-    if width % PARTITIONS != 0 {
+    if !width.is_multiple_of(PARTITIONS) {
         return Err(WriteFailure::Unencodable(format!(
             "a GOO V5 layer is cut into 2 halves, and {width} pixels across is odd"
         )));

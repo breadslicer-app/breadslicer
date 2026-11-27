@@ -271,7 +271,7 @@ impl Dialect {
         self
     }
 
-    fn from_seconds(&self, seconds: f32) -> f32 {
+    fn time_in_unit(&self, seconds: f32) -> f32 {
         match self.time_unit {
             TimeUnit::Milliseconds => round_away(seconds * 1000.0, 2),
         }
@@ -283,7 +283,7 @@ impl Dialect {
         }
     }
 
-    fn from_mm_per_min(&self, mm_min: f32) -> f32 {
+    fn speed_in_unit(&self, mm_min: f32) -> f32 {
         match self.speed_unit {
             SpeedUnit::MillimetersPerMinute => mm_min,
         }
@@ -677,7 +677,7 @@ impl Builder {
                 layer.lift2_mm_min,
                 0.75,
             );
-            let time = self.dialect.from_seconds(seconds);
+            let time = self.dialect.time_in_unit(seconds);
             self.wait_sync_delay(time);
         }
         self.sync_movements();
@@ -703,7 +703,7 @@ impl Builder {
                     layer.retract2_mm_min,
                     0.75,
                 );
-                let time = self.dialect.from_seconds(seconds);
+                let time = self.dialect.time_in_unit(seconds);
                 self.wait_sync_delay(time);
             }
             self.sync_movements();
@@ -766,7 +766,7 @@ impl Builder {
             {
                 let last_lift = last.lift_mm.max(4.0);
                 let last_position = round_height(last.position_z + last_lift).min(job.machine_z_mm);
-                let lift_speed = self.dialect.from_mm_per_min(job.lift_mm_min);
+                let lift_speed = self.dialect.speed_in_unit(job.lift_mm_min);
                 let lift = match self.dialect.positioning {
                     Positioning::Absolute => (last_position, lift_speed, 0.0),
                     Positioning::Relative => (last_lift, lift_speed, 0.0),
@@ -780,7 +780,7 @@ impl Builder {
                         Positioning::Absolute => job.machine_z_mm,
                     };
                     if relative > 0.0 {
-                        let feed = self.dialect.from_mm_per_min(job.maximum_mm_min);
+                        let feed = self.dialect.speed_in_unit(job.maximum_mm_min);
                         let end_move = self.dialect.end_move;
                         self.move_gx(end_move, target, feed, None);
                         if self.dialect.wait_sync_delay.enabled {
@@ -791,7 +791,7 @@ impl Builder {
                                 0.0,
                                 0.75,
                             );
-                            let time = self.dialect.from_seconds(seconds);
+                            let time = self.dialect.time_in_unit(seconds);
                             if seconds > 0.0 {
                                 self.wait_sync_delay(time);
                             }
@@ -853,14 +853,14 @@ impl Builder {
         let count = job.layers.len();
         for (index, layer) in job.layers.iter().enumerate() {
             let d = &self.dialect;
-            let wait_before = d.from_seconds(layer.wait_before_cure_sec);
-            let exposure = d.from_seconds(layer.exposure_sec);
-            let wait_after_cure = d.from_seconds(layer.wait_after_cure_sec);
-            let wait_after_lift = d.from_seconds(layer.wait_after_lift_sec);
-            let lift_speed = d.from_mm_per_min(layer.lift_mm_min);
-            let lift2_speed = d.from_mm_per_min(layer.lift2_mm_min);
-            let retract_speed = d.from_mm_per_min(layer.retract_mm_min);
-            let retract2_speed = d.from_mm_per_min(layer.retract2_mm_min);
+            let wait_before = d.time_in_unit(layer.wait_before_cure_sec);
+            let exposure = d.time_in_unit(layer.exposure_sec);
+            let wait_after_cure = d.time_in_unit(layer.wait_after_cure_sec);
+            let wait_after_lift = d.time_in_unit(layer.wait_after_lift_sec);
+            let lift_speed = d.speed_in_unit(layer.lift_mm_min);
+            let lift2_speed = d.speed_in_unit(layer.lift2_mm_min);
+            let retract_speed = d.speed_in_unit(layer.retract_mm_min);
+            let retract2_speed = d.speed_in_unit(layer.retract2_mm_min);
             let lift_total = layer.lift_total_mm();
             let mut pwm = u16::from(layer.pwm);
             if d.max_led_power != 255 {

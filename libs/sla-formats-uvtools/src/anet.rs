@@ -93,7 +93,7 @@ fn preview(image: &PreviewImage) -> Vec<u8> {
     let mut out = vec![0_u8; PREVIEW_BYTES];
     out[..BMP_HEADER.len()].copy_from_slice(&BMP_HEADER);
     let mut at = BMP_HEADER.len();
-    for pixel in image.rgb().chunks_exact(3) {
+    for pixel in image.rgb().as_chunks::<3>().0 {
         let (r, g, b) = (
             u16::from(pixel[0]),
             u16::from(pixel[1]),

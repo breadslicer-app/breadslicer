@@ -52,7 +52,7 @@ fn layers_after(bytes: &[u8], at: usize, count: usize) -> Vec<Vec<u8>> {
 fn the_runs_read_back_as_the_layers_at_16_greys() {
     let (bytes, expected) = written(OtherFormat::Lgs30, 5);
     assert_eq!(&bytes[..8], NAME);
-    assert_eq!(bytes.len() > 180 + 120 * 150 * 2, true);
+    assert!(bytes.len() > 180 + 120 * 150 * 2);
     let layers = layers_after(&bytes, 180 + 120 * 150 * 2, 5);
     for (layer, image) in layers.iter().zip(&expected) {
         let quantised: Vec<u8> = image.iter().map(|&g| stored_grey(g)).collect();
