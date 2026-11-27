@@ -417,13 +417,7 @@ fn every_known_format_a_printer_declares_names_a_printer_file() {
 /// The bundled printers that cannot export yet: every format they declare
 /// still waits for its writer (#778). Each format that lands takes its
 /// printers off.
-const PRINTERS_WITHOUT_A_WRITER: [&str; 5] = [
-    "elegoo-jupiter-2",
-    "generic-machine",
-    "peopoly-phenom-forge",
-    "peopoly-phenom-xxl-v2",
-    "uniz-ibee",
-];
+const PRINTERS_WITHOUT_A_WRITER: [&str; 3] = ["elegoo-jupiter-2", "generic-machine", "uniz-ibee"];
 
 #[test]
 fn every_bundled_printer_exports_save_the_ones_still_waiting_for_a_writer() {

@@ -52,6 +52,7 @@
 //! - [`anet`]: Anet's `.n4` and `.n7`.
 //! - [`qdt`]: Emake3D's QDT (Galaxy 1).
 //! - [`nanodlp`]: NanoDLP's plate export (Concepts3D Athena 8K and 12K).
+//! - [`osf`]: Vlare's OSF (Peopoly Phenom Forge and XXL v2).
 //!
 //! [`read`] decodes them back, for tests and for checking a written file.
 
@@ -70,6 +71,7 @@ pub mod klipper_zip;
 mod layer_stats;
 pub mod lgs;
 pub mod nanodlp;
+pub mod osf;
 mod program;
 mod pw0;
 mod pws;
@@ -123,6 +125,7 @@ impl PrinterFileWriter for UvtoolsWriters {
                         | OtherFormat::Qdt
                         | OtherFormat::Phz
                         | OtherFormat::NanoDlp
+                        | OtherFormat::Osf
                 )
         )
     }
@@ -149,6 +152,7 @@ impl PrinterFileWriter for UvtoolsWriters {
             }
             PrinterFileFormat::Other(OtherFormat::Zcodex) => Some(zcodex::PREVIEW_SIZES),
             PrinterFileFormat::Other(OtherFormat::NanoDlp) => Some(nanodlp::PREVIEW_SIZES),
+            PrinterFileFormat::Other(OtherFormat::Osf) => Some(osf::PREVIEW_SIZES),
             PrinterFileFormat::Other(OtherFormat::AnetN4 | OtherFormat::AnetN7) => {
                 Some(anet::PREVIEW_SIZES)
             }
@@ -185,6 +189,7 @@ impl PrinterFileWriter for UvtoolsWriters {
             PrinterFileFormat::Other(
                 OtherFormat::AnetN4 | OtherFormat::AnetN7 | OtherFormat::Qdt,
             ) => anet::stored_grey(grey),
+            PrinterFileFormat::Other(OtherFormat::Osf) => osf::stored_grey(grey),
             PrinterFileFormat::Other(OtherFormat::Photon) => {
                 ctb_legacy::cbddlp_stored_grey(u32::from(raster.aa().factor()), grey)
             }
@@ -263,6 +268,9 @@ impl PrinterFileWriter for UvtoolsWriters {
                 anet::write_file(other, program, previews, stack, out)
             }
             PrinterFileFormat::Other(OtherFormat::Qdt) => qdt::write_file(program, stack, out),
+            PrinterFileFormat::Other(OtherFormat::Osf) => {
+                osf::write_file(program, previews, stack, out)
+            }
             PrinterFileFormat::Other(OtherFormat::NanoDlp) => {
                 nanodlp::write_file(program, previews, stack, out)
             }
