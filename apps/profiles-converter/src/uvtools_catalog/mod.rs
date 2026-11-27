@@ -74,10 +74,11 @@ const PINNED: [&str; 6] = [
     "elegoo-jupiter-se",
 ];
 
-/// The printers UVtools lists that are not resin printers anyone sells: a
-/// run never adds them. "CT-005 Pro" is Creality's inner name for the CR-5
-/// Pro, a filament printer.
-const LEFT_OUT: [&str; 1] = ["creality-ct-005-pro"];
+/// The printers UVtools lists that a run never adds. "CT-005 Pro" is
+/// Creality's inner name for the CR-5 Pro, a filament printer. The IBEE with
+/// its stock firmware reads only ZCode, whose lines are signed with a key
+/// only UniZ holds; the IBEE with Klipper firmware stays.
+const LEFT_OUT: [&str; 2] = ["creality-ct-005-pro", "uniz-ibee"];
 
 /// The printers UVtools names differently from the profile we ship for the
 /// machine: UVtools' name, and our id.

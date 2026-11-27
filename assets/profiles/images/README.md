@@ -54,7 +54,7 @@ and product names are trademarks of their respective owners:
 - phrozen: `phrozen-shuffle`, `phrozen-shuffle-4k`, `phrozen-shuffle-lite`, `phrozen-shuffle-xl`, `phrozen-shuffle-xl-lite`, `phrozen-sonic`, `phrozen-sonic-4k`, `phrozen-sonic-mega-8k`, `phrozen-sonic-mega-8k-s`, `phrozen-sonic-mega-8k-v2`, `phrozen-sonic-mighty-12k-upgrade`, `phrozen-sonic-mighty-4k`, `phrozen-sonic-mighty-8k`, `phrozen-sonic-mighty-revo`, `phrozen-sonic-mighty-revo-16k`, `phrozen-sonic-mini`, `phrozen-sonic-mini-4k`, `phrozen-sonic-mini-8k`, `phrozen-sonic-mini-8k-s`, `phrozen-sonic-xl-4k-2022`, `phrozen-transform`
 - prusa: `prusa-sl1`, `prusa-sl1s-speed`
 - qidi: `qidi-i-box-mono`, `qidi-s-box`, `qidi-shadow5-5`, `qidi-shadow6-0-pro`
-- uniz: `uniz-ibee`, `uniz-ibee-klipper`
+- uniz: `uniz-ibee-klipper`
 - voxelab: `voxelab-ceres-8-9`, `voxelab-polaris-5-5`, `voxelab-proxima-6`, `voxelab-proxima-6-svgx`
 - wanhao: `wanhao-d7`, `wanhao-d8`
 - zortrax: `zortrax-inkspire`
