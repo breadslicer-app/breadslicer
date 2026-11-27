@@ -414,13 +414,8 @@ fn every_known_format_a_printer_declares_names_a_printer_file() {
     }
 }
 
-/// The bundled printers that cannot export yet: every format they declare
-/// still waits for its writer (#778). Each format that lands takes its
-/// printers off.
-const PRINTERS_WITHOUT_A_WRITER: [&str; 2] = ["generic-machine", "uniz-ibee"];
-
 #[test]
-fn every_bundled_printer_exports_save_the_ones_still_waiting_for_a_writer() {
+fn every_bundled_printer_exports() {
     bread_sla_formats_uvtools::install();
     let mut unwritable: Vec<String> = bundled_printers()
         .iter()
@@ -434,12 +429,12 @@ fn every_bundled_printer_exports_save_the_ones_still_waiting_for_a_writer() {
         .map(|printer| printer.identity.id.as_str().to_owned())
         .collect();
     unwritable.sort();
-    assert_eq!(unwritable, PRINTERS_WITHOUT_A_WRITER);
+    assert!(unwritable.is_empty(), "no writer for {unwritable:?}");
 }
 
 /// The printers no photo can be shipped for: the image sources the
 /// library vendors (see `images/README.md`) have none of them, so their
-/// profiles name no image, as the generic machine does.
+/// profiles name no image.
 const PRINTERS_WITHOUT_A_SHIPPABLE_PHOTO: [&str; 3] = [
     "creality-halot-one",
     "creality-halot-one-plus",
@@ -504,11 +499,6 @@ fn every_shipped_photo_is_named_by_its_printer() {
 fn every_bundled_printer_id_is_the_machine_it_names() {
     for printer in bundled_printers() {
         let id = printer.identity.id.as_str();
-        // The generic machine is our own stand-in rather than a
-        // catalogued model, and its id is reserved in code.
-        if id == "generic-machine" {
-            continue;
-        }
         assert_eq!(
             id,
             slug_of(

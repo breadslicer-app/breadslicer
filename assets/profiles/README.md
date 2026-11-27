@@ -113,8 +113,9 @@ it states them: the Wanhao CGR Mono's 1620 x 2560 pixels on a 192 x 120 mm
 plate, and the Longer Orange 4K's 31.5 x 10.5 µm pixel. Neither format is
 written yet.
 
-`generic-machine` is ours. It describes no product: it is what a resin
-is calibrated against when the calibration is not tied to a machine.
+`generic-machine` names no printer in the library: a resin's
+`generic-machine` block holds the values for any printer without a block of
+its own.
 
 ## Resins
 
