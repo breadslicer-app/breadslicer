@@ -481,7 +481,7 @@ impl Wizard {
                 said
             ))
         });
-        calib.set_last(last.unwrap_or_default().into());
+        calib.set_last(last.unwrap_or_default());
         *self.pair.borrow_mut() = pair;
         calib.set_can_save(self.pair.borrow().is_some());
 
@@ -750,7 +750,7 @@ mod tests {
         let mesh = scene.leaf_mesh_arc(scene.roots()[0]).unwrap();
         assert!(mesh.is_sliceable(), "the coupon slices as it is");
         assert!(
-            sc_mesh_core::presupported::find_supports(&mesh).is_none(),
+            sc_mesh_core::presupported::find_supports(mesh).is_none(),
             "nothing on the coupon reads as supports"
         );
     }
