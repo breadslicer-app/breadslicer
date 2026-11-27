@@ -47,6 +47,7 @@
 //! - [`lgs`]: Longer's LGS (Orange 10, 30, 120 and 4K).
 //! - [`fdg`]: Voxelab's FDG (Ceres 8.9, Polaris 5.5, Proxima 6).
 //! - [`jxs`]: UniFormation's JXS (GKone).
+//! - [`zcodex`]: Z-Suite's ZCodex (Zortrax Inkspire).
 //!
 //! [`read`] decodes them back, for tests and for checking a written file.
 
@@ -70,6 +71,7 @@ pub mod read;
 mod resample;
 pub mod sl1;
 pub mod svgx;
+pub mod zcodex;
 
 use sc_sl1cer::contour::ContourStack;
 use sc_sla_formats::{
@@ -108,6 +110,7 @@ impl PrinterFileWriter for UvtoolsWriters {
                         | OtherFormat::Fdg
                         | OtherFormat::Photon
                         | OtherFormat::Jxs
+                        | OtherFormat::Zcodex
                 )
         )
     }
@@ -130,6 +133,7 @@ impl PrinterFileWriter for UvtoolsWriters {
                 OtherFormat::Lgs | OtherFormat::Lgs30 | OtherFormat::Lgs120 | OtherFormat::Lgs4k,
             ) => Some(lgs::PREVIEW_SIZES),
             PrinterFileFormat::Other(OtherFormat::Fdg) => Some(fdg::PREVIEW_SIZES),
+            PrinterFileFormat::Other(OtherFormat::Zcodex) => Some(zcodex::PREVIEW_SIZES),
             _ => None,
         }
     }
@@ -228,6 +232,9 @@ impl PrinterFileWriter for UvtoolsWriters {
                 ctb_legacy::write_photon(program, previews, stack, out)
             }
             PrinterFileFormat::Other(OtherFormat::Jxs) => jxs::write_file(program, stack, out),
+            PrinterFileFormat::Other(OtherFormat::Zcodex) => {
+                zcodex::write_file(program, previews, stack, out)
+            }
             other => Err(WriteFailure::Unencodable(format!(
                 "\"{other}\" is not a format ported from UVtools"
             ))),
