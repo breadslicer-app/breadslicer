@@ -31,30 +31,63 @@
 //! - [`anycubic_binary`]: the Anycubic binary family (`.pwmx`, `.pwma`, `.pm3`,
 //!   `.pws` and the rest Photon Workshop wrote before the ZIP).
 //! - [`ctb_legacy`]: ChiTuBox CTB versions 2 to 4 (version 5 is written by
-//!   `sc-sla-formats` itself).
+//!   `sc-sla-formats` itself), and version 4 for the UniFormation GKtwo
+//!   (`.gktwo.ctb`), and the layout before it for the Anycubic Photon
+//!   (`.photon`).
 //! - [`sl1`]: Prusa's SL1 archive (`.sl1` for the SL1, `.sl1s` for the SL1S).
 //! - [`cxdlpv4`]: Creality CXDLP version 4 (Halot Mage, Mage S, Play, R6 and
 //!   the Halot X1 family).
+//! - [`chitubox_zip`]: ChiTuBox's ZIP of layer images and G-code (Phrozen
+//!   Sonic and Shuffle, Wanhao CGR and D8, Kelant S400), and its Klipper
+//!   layout ([`klipper_zip`], UnizMaker IBEE).
+//! - [`cws`]: Creation Workshop's CWS, `.cws` and `.rgb.cws` for NovaMaker
+//!   (Nova3D) and `.xml.cws` for the Wanhao D7.
+//! - [`svgx`]: FlashForge's SVGX, layers as vector outlines (FlashForge Foto,
+//!   Focus, Hunter, Explorer Max; Voxelab Proxima 6).
+//! - [`lgs`]: Longer's LGS (Orange 10, 30, 120 and 4K).
+//! - [`fdg`]: Voxelab's FDG (Ceres 8.9, Polaris 5.5, Proxima 6) and ChiTuBox's
+//!   PHZ (Phrozen Sonic Mini).
+//! - [`jxs`]: UniFormation's JXS (GKone).
+//! - [`zcodex`]: Z-Suite's ZCodex (Zortrax Inkspire).
+//! - [`anet`]: Anet's `.n4` and `.n7`.
+//! - [`qdt`]: Emake3D's QDT (Galaxy 1).
+//! - [`nanodlp`]: NanoDLP's plate export (Concepts3D Athena 8K and 12K).
+//! - [`osf`]: Vlare's OSF (Peopoly Phenom Forge and XXL v2).
+//! - [`goo_v5`]: Elegoo's GOO V5.1 (Jupiter 2).
 //!
 //! [`read`] decodes them back, for tests and for checking a written file.
 
+pub mod anet;
 pub mod anycubic_binary;
 pub mod anycubic_zip;
+pub mod chitubox_zip;
 pub mod ctb_legacy;
+pub mod cws;
 pub mod cxdlp;
 pub mod cxdlpv4;
+pub mod fdg;
+mod gcode;
+pub mod goo_v5;
+pub mod jxs;
+pub mod klipper_zip;
 mod layer_stats;
+pub mod lgs;
+pub mod nanodlp;
+pub mod osf;
 mod program;
 mod pw0;
 mod pws;
+pub mod qdt;
 pub mod read;
 mod resample;
 pub mod sl1;
+pub mod svgx;
+pub mod zcodex;
 
 use sc_sl1cer::contour::ContourStack;
 use sc_sla_formats::{
-    CtbVariant, OtherFormat, PreviewSizes, PrintPreviews, PrintProgram, PrinterFileFormat,
-    PrinterFileSink, PrinterFileWriter, RasterSetup, WriteFailure,
+    CtbVariant, GooVersion, OtherFormat, PreviewSizes, PrintPreviews, PrintProgram,
+    PrinterFileFormat, PrinterFileSink, PrinterFileWriter, RasterSetup, WriteFailure,
 };
 
 /// The writer this crate installs.
@@ -68,33 +101,76 @@ impl PrinterFileWriter for UvtoolsWriters {
         matches!(
             format,
             PrinterFileFormat::Ctb(CtbVariant::V2 | CtbVariant::V3 | CtbVariant::V4)
+                | PrinterFileFormat::Goo(GooVersion::V5_1)
                 | PrinterFileFormat::Cxdlp(_)
                 | PrinterFileFormat::AnycubicZip(_)
                 | PrinterFileFormat::AnycubicBinary(_)
                 | PrinterFileFormat::Sl1(_)
-                | PrinterFileFormat::Other(OtherFormat::Cxdlpv4)
+                | PrinterFileFormat::Other(
+                    OtherFormat::Cxdlpv4
+                        | OtherFormat::GktwoCtb
+                        | OtherFormat::ChituboxZip
+                        | OtherFormat::KlipperZip
+                        | OtherFormat::Cws
+                        | OtherFormat::RgbCws
+                        | OtherFormat::XmlCws
+                        | OtherFormat::Svgx
+                        | OtherFormat::Lgs
+                        | OtherFormat::Lgs30
+                        | OtherFormat::Lgs120
+                        | OtherFormat::Lgs4k
+                        | OtherFormat::Fdg
+                        | OtherFormat::Photon
+                        | OtherFormat::Jxs
+                        | OtherFormat::Zcodex
+                        | OtherFormat::AnetN4
+                        | OtherFormat::AnetN7
+                        | OtherFormat::Qdt
+                        | OtherFormat::Phz
+                        | OtherFormat::NanoDlp
+                        | OtherFormat::Osf
+                )
         )
     }
 
     fn preview_sizes(&self, format: PrinterFileFormat) -> Option<PreviewSizes> {
         match format {
-            PrinterFileFormat::Ctb(CtbVariant::V2 | CtbVariant::V3 | CtbVariant::V4) => {
+            PrinterFileFormat::Ctb(CtbVariant::V2 | CtbVariant::V3 | CtbVariant::V4)
+            | PrinterFileFormat::Other(OtherFormat::GktwoCtb | OtherFormat::Photon) => {
                 Some(sc_sla_formats::ctb::PREVIEW_SIZES)
             }
+            PrinterFileFormat::Goo(GooVersion::V5_1) => Some(goo_v5::PREVIEW_SIZES),
             PrinterFileFormat::Cxdlp(_) => Some(cxdlp::PREVIEW_SIZES),
             PrinterFileFormat::AnycubicZip(_) => Some(anycubic_zip::PREVIEW_SIZES),
             PrinterFileFormat::AnycubicBinary(_) => Some(anycubic_binary::PREVIEW_SIZES),
             PrinterFileFormat::Sl1(_) => Some(sl1::PREVIEW_SIZES),
             PrinterFileFormat::Other(OtherFormat::Cxdlpv4) => Some(cxdlpv4::PREVIEW_SIZES),
+            PrinterFileFormat::Other(OtherFormat::ChituboxZip) => Some(chitubox_zip::PREVIEW_SIZES),
+            PrinterFileFormat::Other(OtherFormat::KlipperZip) => Some(klipper_zip::PREVIEW_SIZES),
+            PrinterFileFormat::Other(OtherFormat::Svgx) => Some(svgx::PREVIEW_SIZES),
+            PrinterFileFormat::Other(
+                OtherFormat::Lgs | OtherFormat::Lgs30 | OtherFormat::Lgs120 | OtherFormat::Lgs4k,
+            ) => Some(lgs::PREVIEW_SIZES),
+            PrinterFileFormat::Other(OtherFormat::Fdg | OtherFormat::Phz) => {
+                Some(fdg::PREVIEW_SIZES)
+            }
+            PrinterFileFormat::Other(OtherFormat::Zcodex) => Some(zcodex::PREVIEW_SIZES),
+            PrinterFileFormat::Other(OtherFormat::NanoDlp) => Some(nanodlp::PREVIEW_SIZES),
+            PrinterFileFormat::Other(OtherFormat::Osf) => Some(osf::PREVIEW_SIZES),
+            PrinterFileFormat::Other(OtherFormat::AnetN4 | OtherFormat::AnetN7) => {
+                Some(anet::PREVIEW_SIZES)
+            }
             _ => None,
         }
     }
 
     fn stored_grey(&self, format: PrinterFileFormat, raster: &RasterSetup, grey: u8) -> u8 {
         match format {
-            PrinterFileFormat::Ctb(CtbVariant::V2 | CtbVariant::V3 | CtbVariant::V4) => {
+            PrinterFileFormat::Ctb(CtbVariant::V2 | CtbVariant::V3 | CtbVariant::V4)
+            | PrinterFileFormat::Other(OtherFormat::GktwoCtb) => {
                 sc_sla_formats::ctb::rle7::stored_grey(grey)
             }
+            PrinterFileFormat::Goo(GooVersion::V5_1) => goo_v5::stored_grey(grey),
             PrinterFileFormat::AnycubicZip(_) => pw0::stored_grey(grey),
             PrinterFileFormat::AnycubicBinary(variant) => {
                 if anycubic_binary::uses_bit_planes(variant) {
@@ -110,6 +186,17 @@ impl PrinterFileWriter for UvtoolsWriters {
                 } else {
                     sc_sla_formats::ctb::rle7::stored_grey(grey)
                 }
+            }
+            PrinterFileFormat::Other(
+                OtherFormat::Lgs | OtherFormat::Lgs30 | OtherFormat::Lgs120 | OtherFormat::Lgs4k,
+            ) => lgs::stored_grey(grey),
+            PrinterFileFormat::Other(OtherFormat::Fdg | OtherFormat::Phz) => fdg::stored_grey(grey),
+            PrinterFileFormat::Other(
+                OtherFormat::AnetN4 | OtherFormat::AnetN7 | OtherFormat::Qdt,
+            ) => anet::stored_grey(grey),
+            PrinterFileFormat::Other(OtherFormat::Osf) => osf::stored_grey(grey),
+            PrinterFileFormat::Other(OtherFormat::Photon) => {
+                ctb_legacy::cbddlp_stored_grey(u32::from(raster.aa().factor()), grey)
             }
             _ => grey,
         }
@@ -141,6 +228,59 @@ impl PrinterFileWriter for UvtoolsWriters {
             }
             PrinterFileFormat::Other(OtherFormat::Cxdlpv4) => {
                 cxdlpv4::write_file(program, previews, stack, out)
+            }
+            PrinterFileFormat::Other(OtherFormat::GktwoCtb) => {
+                ctb_legacy::write_gktwo(program, previews, stack, out)
+            }
+            PrinterFileFormat::Other(OtherFormat::ChituboxZip) => {
+                chitubox_zip::write_file(program, previews, stack, out)
+            }
+            PrinterFileFormat::Other(OtherFormat::KlipperZip) => {
+                klipper_zip::write_file(program, previews, stack, out)
+            }
+            PrinterFileFormat::Other(OtherFormat::Cws) => {
+                cws::write_file(cws::CwsVariant::Cws, program, stack, out)
+            }
+            PrinterFileFormat::Other(OtherFormat::RgbCws) => {
+                cws::write_file(cws::CwsVariant::Rgb, program, stack, out)
+            }
+            PrinterFileFormat::Other(OtherFormat::XmlCws) => {
+                cws::write_file(cws::CwsVariant::Xml, program, stack, out)
+            }
+            PrinterFileFormat::Other(OtherFormat::Svgx) => {
+                svgx::write_file(program, previews, stack, out)
+            }
+            PrinterFileFormat::Other(
+                other @ (OtherFormat::Lgs
+                | OtherFormat::Lgs30
+                | OtherFormat::Lgs120
+                | OtherFormat::Lgs4k),
+            ) => lgs::write_file(other, program, previews, stack, out),
+            PrinterFileFormat::Other(OtherFormat::Fdg) => {
+                fdg::write_file(fdg::Variant::Fdg, program, previews, stack, out)
+            }
+            PrinterFileFormat::Other(OtherFormat::Phz) => {
+                fdg::write_file(fdg::Variant::Phz, program, previews, stack, out)
+            }
+            PrinterFileFormat::Other(OtherFormat::Photon) => {
+                ctb_legacy::write_photon(program, previews, stack, out)
+            }
+            PrinterFileFormat::Other(OtherFormat::Jxs) => jxs::write_file(program, stack, out),
+            PrinterFileFormat::Other(OtherFormat::Zcodex) => {
+                zcodex::write_file(program, previews, stack, out)
+            }
+            PrinterFileFormat::Other(other @ (OtherFormat::AnetN4 | OtherFormat::AnetN7)) => {
+                anet::write_file(other, program, previews, stack, out)
+            }
+            PrinterFileFormat::Other(OtherFormat::Qdt) => qdt::write_file(program, stack, out),
+            PrinterFileFormat::Other(OtherFormat::Osf) => {
+                osf::write_file(program, previews, stack, out)
+            }
+            PrinterFileFormat::Goo(GooVersion::V5_1) => {
+                goo_v5::write_file(program, previews, stack, out)
+            }
+            PrinterFileFormat::Other(OtherFormat::NanoDlp) => {
+                nanodlp::write_file(program, previews, stack, out)
             }
             other => Err(WriteFailure::Unencodable(format!(
                 "\"{other}\" is not a format ported from UVtools"

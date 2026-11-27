@@ -8,7 +8,7 @@ authors = [
     "Tiago Conceição (sn4k3) and UVtools contributors",
     "SynrgStudio",
 ]
-description = "SLA printer-file writers ported from UVtools: Creality CXDLP, ChiTuBox CTB 2 to 4, the Anycubic ZIP and binary families, and Prusa SL1."
+description = "SLA printer-file writers ported from UVtools, for the resin printers whose files Breadslicer writes beyond GOO V3 and CTB 5."
 categories = ["rendering::data-formats"]
 keywords = ["3d", "slicer", "resin", "sla"]
 repository.workspace = true
@@ -21,6 +21,7 @@ sc-print-primitives.workspace = true
 sc-sl1cer.workspace = true
 sc-sla-formats.workspace = true
 
+md-5 = "0.10.6"
 png = "0.18.1"
 serde.workspace = true
 serde_json.workspace = true

@@ -15,9 +15,13 @@ const PAYLOAD_MAGIC: u8 = 0x55;
 /// Append `runs` to `out` as one layer image: the magic byte, the run
 /// chunks, then a checksum byte covering everything after the magic.
 pub fn encode_payload(runs: &[RleRun], out: &mut Vec<u8>) {
+    encode_payload_with(RunEncoder::default(), runs, out);
+}
+
+/// [`encode_payload`] with `encoder`'s chunks.
+pub fn encode_payload_with(mut encoder: RunEncoder, runs: &[RleRun], out: &mut Vec<u8>) {
     out.push(PAYLOAD_MAGIC);
     let body = out.len();
-    let mut encoder = RunEncoder::default();
     for run in runs {
         encoder.push_run(run.value, run.length, out);
     }

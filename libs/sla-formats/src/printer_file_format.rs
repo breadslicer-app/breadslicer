@@ -687,7 +687,9 @@ impl PrinterFileFormat {
     pub(crate) fn has_builtin_writer(self) -> bool {
         matches!(
             self,
-            Self::Goo(GooVersion::V3_0) | Self::Ctb(CtbVariant::PlainV5 | CtbVariant::EncryptedV5)
+            Self::Goo(GooVersion::V3_0)
+                | Self::Ctb(CtbVariant::PlainV5 | CtbVariant::EncryptedV5)
+                | Self::Other(OtherFormat::Prz)
         )
     }
 
@@ -701,7 +703,9 @@ impl PrinterFileFormat {
     /// carries its own, so what it reports is the size its writer renders at.
     pub fn preview_sizes(self) -> Option<PreviewSizes> {
         match self {
-            Self::Goo(GooVersion::V3_0) => Some(GOO_V3_0_PREVIEW_SIZES),
+            Self::Goo(GooVersion::V3_0) | Self::Other(OtherFormat::Prz) => {
+                Some(GOO_V3_0_PREVIEW_SIZES)
+            }
             Self::Ctb(CtbVariant::PlainV5 | CtbVariant::EncryptedV5) => Some(CTB_PREVIEW_SIZES),
             Self::Goo(GooVersion::V5_1)
             | Self::Ctb(CtbVariant::V2 | CtbVariant::V3 | CtbVariant::V4)
