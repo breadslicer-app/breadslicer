@@ -417,7 +417,7 @@ fn every_known_format_a_printer_declares_names_a_printer_file() {
 /// The bundled printers that cannot export yet: every format they declare
 /// still waits for its writer (#778). Each format that lands takes its
 /// printers off.
-const PRINTERS_WITHOUT_A_WRITER: [&str; 30] = [
+const PRINTERS_WITHOUT_A_WRITER: [&str; 17] = [
     "anet-n4",
     "anet-n7",
     "anycubic-photon",
@@ -425,19 +425,7 @@ const PRINTERS_WITHOUT_A_WRITER: [&str; 30] = [
     "concepts3d-athena-8k",
     "elegoo-jupiter-2",
     "emake3d-galaxy-1",
-    "flashforge-explorer-max",
-    "flashforge-focus-13-3",
-    "flashforge-focus-8-9",
-    "flashforge-foto-13-3",
-    "flashforge-foto-6-0",
-    "flashforge-foto-8-9",
-    "flashforge-foto-8-9s",
-    "flashforge-hunter",
     "generic-machine",
-    "longer-orange-10",
-    "longer-orange-120",
-    "longer-orange-30",
-    "longer-orange-4k",
     "peopoly-phenom-forge",
     "peopoly-phenom-xxl-v2",
     "phrozen-sonic-mini",
@@ -446,7 +434,6 @@ const PRINTERS_WITHOUT_A_WRITER: [&str; 30] = [
     "voxelab-ceres-8-9",
     "voxelab-polaris-5-5",
     "voxelab-proxima-6",
-    "voxelab-proxima-6-svgx",
     "zortrax-inkspire",
 ];
 

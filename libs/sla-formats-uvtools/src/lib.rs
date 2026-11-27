@@ -41,6 +41,9 @@
 //!   layout ([`klipper_zip`], UnizMaker IBEE).
 //! - [`cws`]: Creation Workshop's CWS, `.cws` and `.rgb.cws` for NovaMaker
 //!   (Nova3D) and `.xml.cws` for the Wanhao D7.
+//! - [`svgx`]: FlashForge's SVGX, layers as vector outlines (FlashForge Foto,
+//!   Focus, Hunter, Explorer Max; Voxelab Proxima 6).
+//! - [`lgs`]: Longer's LGS (Orange 10, 30, 120 and 4K).
 //!
 //! [`read`] decodes them back, for tests and for checking a written file.
 
@@ -54,12 +57,14 @@ pub mod cxdlpv4;
 mod gcode;
 pub mod klipper_zip;
 mod layer_stats;
+pub mod lgs;
 mod program;
 mod pw0;
 mod pws;
 pub mod read;
 mod resample;
 pub mod sl1;
+pub mod svgx;
 
 use sc_sl1cer::contour::ContourStack;
 use sc_sla_formats::{
@@ -90,6 +95,11 @@ impl PrinterFileWriter for UvtoolsWriters {
                         | OtherFormat::Cws
                         | OtherFormat::RgbCws
                         | OtherFormat::XmlCws
+                        | OtherFormat::Svgx
+                        | OtherFormat::Lgs
+                        | OtherFormat::Lgs30
+                        | OtherFormat::Lgs120
+                        | OtherFormat::Lgs4k
                 )
         )
     }
@@ -107,6 +117,10 @@ impl PrinterFileWriter for UvtoolsWriters {
             PrinterFileFormat::Other(OtherFormat::Cxdlpv4) => Some(cxdlpv4::PREVIEW_SIZES),
             PrinterFileFormat::Other(OtherFormat::ChituboxZip) => Some(chitubox_zip::PREVIEW_SIZES),
             PrinterFileFormat::Other(OtherFormat::KlipperZip) => Some(klipper_zip::PREVIEW_SIZES),
+            PrinterFileFormat::Other(OtherFormat::Svgx) => Some(svgx::PREVIEW_SIZES),
+            PrinterFileFormat::Other(
+                OtherFormat::Lgs | OtherFormat::Lgs30 | OtherFormat::Lgs120 | OtherFormat::Lgs4k,
+            ) => Some(lgs::PREVIEW_SIZES),
             _ => None,
         }
     }
@@ -133,6 +147,9 @@ impl PrinterFileWriter for UvtoolsWriters {
                     sc_sla_formats::ctb::rle7::stored_grey(grey)
                 }
             }
+            PrinterFileFormat::Other(
+                OtherFormat::Lgs | OtherFormat::Lgs30 | OtherFormat::Lgs120 | OtherFormat::Lgs4k,
+            ) => lgs::stored_grey(grey),
             _ => grey,
         }
     }
@@ -182,6 +199,15 @@ impl PrinterFileWriter for UvtoolsWriters {
             PrinterFileFormat::Other(OtherFormat::XmlCws) => {
                 cws::write_file(cws::CwsVariant::Xml, program, stack, out)
             }
+            PrinterFileFormat::Other(OtherFormat::Svgx) => {
+                svgx::write_file(program, previews, stack, out)
+            }
+            PrinterFileFormat::Other(
+                other @ (OtherFormat::Lgs
+                | OtherFormat::Lgs30
+                | OtherFormat::Lgs120
+                | OtherFormat::Lgs4k),
+            ) => lgs::write_file(other, program, previews, stack, out),
             other => Err(WriteFailure::Unencodable(format!(
                 "\"{other}\" is not a format ported from UVtools"
             ))),
