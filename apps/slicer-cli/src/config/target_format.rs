@@ -25,7 +25,7 @@ use sc_sla_formats::{
 
 /// Every spelling the flag accepts, in help-text order. A family name may also
 /// carry the revision a profile would declare, as in `ctb@v5`.
-pub(crate) const ACCEPTED_TARGET_FORMATS: &str = "svg-per-layer, svg-combined, png-per-layer, 3mf, goo, ctb, cxdlp, azf, aff, sl1, cxdlpv4, prz, gktwo.ctb@v4";
+pub(crate) const ACCEPTED_TARGET_FORMATS: &str = "svg-per-layer, svg-combined, png-per-layer, 3mf, goo, ctb, cxdlp, azf, aff, sl1, cxdlpv4, prz, gktwo.ctb@v4, photon@v2, zip, zip@klipper, phz, cws, rgb.cws, xml.cws, svgx, fdg, lgs, lgs30, lgs120, lgs4k, osf, nanodlp, qdt, jxs, n4, n7, zcodex";
 
 /// A `--target-format` flag value: a slice output, a printer file, or the
 /// family of one whose revision the printer still has to name.

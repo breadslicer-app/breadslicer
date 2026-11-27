@@ -5,7 +5,7 @@
 
 use sc_print_primitives::{AaLevel, Mirror};
 use sc_sla_formats::{
-    AnycubicBinaryVariant, AnycubicZipVariant, CtbVariant, CxdlpVersion, GooVersion,
+    AnycubicBinaryVariant, AnycubicZipVariant, CtbVariant, CxdlpVersion, GooVersion, OtherFormat,
     PrinterFileFormat, Sl1Variant, write_printer_file,
 };
 
@@ -101,7 +101,9 @@ fn installing_makes_the_ported_formats_writable_with_their_previews() {
         assert!(format.has_writer(), "{format}");
         assert!(format.preview_sizes().is_some(), "{format}");
     }
-    assert!(!PrinterFileFormat::Goo(GooVersion::V5_1).has_writer());
+    // Its lines are signed with a key only its maker holds.
+    assert!(!PrinterFileFormat::Other(OtherFormat::Zcode).has_writer());
+    assert!(PrinterFileFormat::Goo(GooVersion::V5_1).has_writer());
 }
 
 #[test]

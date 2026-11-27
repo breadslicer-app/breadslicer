@@ -53,6 +53,7 @@
 //! - [`qdt`]: Emake3D's QDT (Galaxy 1).
 //! - [`nanodlp`]: NanoDLP's plate export (Concepts3D Athena 8K and 12K).
 //! - [`osf`]: Vlare's OSF (Peopoly Phenom Forge and XXL v2).
+//! - [`goo_v5`]: Elegoo's GOO V5.1 (Jupiter 2).
 //!
 //! [`read`] decodes them back, for tests and for checking a written file.
 
@@ -66,6 +67,7 @@ pub mod cxdlp;
 pub mod cxdlpv4;
 pub mod fdg;
 mod gcode;
+pub mod goo_v5;
 pub mod jxs;
 pub mod klipper_zip;
 mod layer_stats;
@@ -84,8 +86,8 @@ pub mod zcodex;
 
 use sc_sl1cer::contour::ContourStack;
 use sc_sla_formats::{
-    CtbVariant, OtherFormat, PreviewSizes, PrintPreviews, PrintProgram, PrinterFileFormat,
-    PrinterFileSink, PrinterFileWriter, RasterSetup, WriteFailure,
+    CtbVariant, GooVersion, OtherFormat, PreviewSizes, PrintPreviews, PrintProgram,
+    PrinterFileFormat, PrinterFileSink, PrinterFileWriter, RasterSetup, WriteFailure,
 };
 
 /// The writer this crate installs.
@@ -99,6 +101,7 @@ impl PrinterFileWriter for UvtoolsWriters {
         matches!(
             format,
             PrinterFileFormat::Ctb(CtbVariant::V2 | CtbVariant::V3 | CtbVariant::V4)
+                | PrinterFileFormat::Goo(GooVersion::V5_1)
                 | PrinterFileFormat::Cxdlp(_)
                 | PrinterFileFormat::AnycubicZip(_)
                 | PrinterFileFormat::AnycubicBinary(_)
@@ -136,6 +139,7 @@ impl PrinterFileWriter for UvtoolsWriters {
             | PrinterFileFormat::Other(OtherFormat::GktwoCtb | OtherFormat::Photon) => {
                 Some(sc_sla_formats::ctb::PREVIEW_SIZES)
             }
+            PrinterFileFormat::Goo(GooVersion::V5_1) => Some(goo_v5::PREVIEW_SIZES),
             PrinterFileFormat::Cxdlp(_) => Some(cxdlp::PREVIEW_SIZES),
             PrinterFileFormat::AnycubicZip(_) => Some(anycubic_zip::PREVIEW_SIZES),
             PrinterFileFormat::AnycubicBinary(_) => Some(anycubic_binary::PREVIEW_SIZES),
@@ -166,6 +170,7 @@ impl PrinterFileWriter for UvtoolsWriters {
             | PrinterFileFormat::Other(OtherFormat::GktwoCtb) => {
                 sc_sla_formats::ctb::rle7::stored_grey(grey)
             }
+            PrinterFileFormat::Goo(GooVersion::V5_1) => goo_v5::stored_grey(grey),
             PrinterFileFormat::AnycubicZip(_) => pw0::stored_grey(grey),
             PrinterFileFormat::AnycubicBinary(variant) => {
                 if anycubic_binary::uses_bit_planes(variant) {
@@ -270,6 +275,9 @@ impl PrinterFileWriter for UvtoolsWriters {
             PrinterFileFormat::Other(OtherFormat::Qdt) => qdt::write_file(program, stack, out),
             PrinterFileFormat::Other(OtherFormat::Osf) => {
                 osf::write_file(program, previews, stack, out)
+            }
+            PrinterFileFormat::Goo(GooVersion::V5_1) => {
+                goo_v5::write_file(program, previews, stack, out)
             }
             PrinterFileFormat::Other(OtherFormat::NanoDlp) => {
                 nanodlp::write_file(program, previews, stack, out)
