@@ -49,6 +49,7 @@
 //! - [`jxs`]: UniFormation's JXS (GKone).
 //! - [`zcodex`]: Z-Suite's ZCodex (Zortrax Inkspire).
 //! - [`anet`]: Anet's `.n4` and `.n7`.
+//! - [`qdt`]: Emake3D's QDT (Galaxy 1).
 //!
 //! [`read`] decodes them back, for tests and for checking a written file.
 
@@ -69,6 +70,7 @@ pub mod lgs;
 mod program;
 mod pw0;
 mod pws;
+pub mod qdt;
 pub mod read;
 mod resample;
 pub mod sl1;
@@ -115,6 +117,7 @@ impl PrinterFileWriter for UvtoolsWriters {
                         | OtherFormat::Zcodex
                         | OtherFormat::AnetN4
                         | OtherFormat::AnetN7
+                        | OtherFormat::Qdt
                 )
         )
     }
@@ -171,9 +174,9 @@ impl PrinterFileWriter for UvtoolsWriters {
                 OtherFormat::Lgs | OtherFormat::Lgs30 | OtherFormat::Lgs120 | OtherFormat::Lgs4k,
             ) => lgs::stored_grey(grey),
             PrinterFileFormat::Other(OtherFormat::Fdg) => fdg::stored_grey(grey),
-            PrinterFileFormat::Other(OtherFormat::AnetN4 | OtherFormat::AnetN7) => {
-                anet::stored_grey(grey)
-            }
+            PrinterFileFormat::Other(
+                OtherFormat::AnetN4 | OtherFormat::AnetN7 | OtherFormat::Qdt,
+            ) => anet::stored_grey(grey),
             PrinterFileFormat::Other(OtherFormat::Photon) => {
                 ctb_legacy::cbddlp_stored_grey(u32::from(raster.aa().factor()), grey)
             }
@@ -248,6 +251,7 @@ impl PrinterFileWriter for UvtoolsWriters {
             PrinterFileFormat::Other(other @ (OtherFormat::AnetN4 | OtherFormat::AnetN7)) => {
                 anet::write_file(other, program, previews, stack, out)
             }
+            PrinterFileFormat::Other(OtherFormat::Qdt) => qdt::write_file(program, stack, out),
             other => Err(WriteFailure::Unencodable(format!(
                 "\"{other}\" is not a format ported from UVtools"
             ))),

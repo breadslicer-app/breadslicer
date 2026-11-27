@@ -27,7 +27,6 @@
 //! Coordinates are millimetres from the panel's centre, `y` growing down the
 //! image.
 
-
 use sc_print_primitives::PanelRotation;
 use sc_sl1cer::contour::{ClosedRing, ContourStack};
 use sc_sla_formats::layer_images::plate_pixel_map;

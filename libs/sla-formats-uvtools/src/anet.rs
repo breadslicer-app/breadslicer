@@ -23,7 +23,6 @@
 //! the exposure and lift, a 260 x 140 BGR565 bitmap, then each layer's lit
 //! count, bounds and a bit stream of black-and-white runs (no greys).
 
-
 use sc_sl1cer::contour::ContourStack;
 use sc_sl1cer::raster::rle::RleRun;
 use sc_sla_formats::layer_images::write_layer_images;
