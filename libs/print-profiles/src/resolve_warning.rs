@@ -44,7 +44,7 @@ pub enum ResolveWarning {
     /// The material calibrates a second travel stage for a printer
     /// that does not split its travel, so the stage was dropped and
     /// the platform makes the whole move at once.
-    SecondTravelStageUnsupported,
+    SecondTravelStageJoined,
 }
 
 /// Where a value came from when no calibration supplied it.
@@ -142,8 +142,8 @@ impl std::fmt::Display for ResolveWarning {
             Self::GenericCalibrationUsed => f.write_str(
                 "no calibration block for this printer; the generic machine block was used",
             ),
-            Self::SecondTravelStageUnsupported => f.write_str(
-                "this printer does not split its travel; the calibrated second stage was dropped",
+            Self::SecondTravelStageJoined => f.write_str(
+                "this printer lifts in one stage; the calibrated two stages were joined into one as far as both, at the slower speed",
             ),
         }
     }

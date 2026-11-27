@@ -191,6 +191,29 @@ fn a_delta_is_taken_only_where_it_is_shorter_than_the_grey_chunk() {
     }
 }
 
+/// A `.prz` never steps from the grey before: the same ramp the delta
+/// would shorten goes as grey chunks, and reads back the same.
+#[test]
+fn an_encoder_without_deltas_writes_every_grey_whole() {
+    let ramp: Vec<(u8, u32)> = (0x40..0x50).map(|grey| (grey, 1)).collect();
+    let mut plain = Vec::new();
+    let mut encoder = RunEncoder::without_deltas();
+    for &(value, length) in &ramp {
+        encoder.push_run(value, length, &mut plain);
+    }
+    assert!(plain.iter().step_by(2).all(|&tag| tag >> 6 == 0b01));
+    assert_eq!(plain.len(), 2 * ramp.len());
+    assert_eq!(decode(&plain), ramp);
+
+    let mut stepped = Vec::new();
+    let mut encoder = RunEncoder::default();
+    for &(value, length) in &ramp {
+        encoder.push_run(value, length, &mut stepped);
+    }
+    assert!(stepped.len() < plain.len());
+    assert_eq!(decode(&stepped), ramp);
+}
+
 #[test]
 fn black_and_white_runs_keep_their_own_chunk_types() {
     assert_eq!(encoded_after(0x01, 0x00, 1), vec![0x01]);

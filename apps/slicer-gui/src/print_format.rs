@@ -152,6 +152,7 @@ fn automatic_label(format: PrinterFileFormat) -> String {
             ctr!("SlicePanel", "Anycubic (automatic)")
         }
         PrinterFileFormat::Sl1(_) => ctr!("SlicePanel", "Prusa (automatic)"),
+        PrinterFileFormat::Other(_) => return format!(".{}", format.extension()),
     }
     .to_string()
 }
@@ -172,11 +173,12 @@ pub(crate) fn format_label(format: PrinterFileFormat) -> String {
         }
         PrinterFileFormat::Cxdlp(CxdlpVersion::V2) => ctr!("SlicePanel", ".cxdlp (v2)"),
         PrinterFileFormat::Cxdlp(CxdlpVersion::V3) => ctr!("SlicePanel", ".cxdlp (v3)"),
-        // Each Anycubic and Prusa variant has an extension of its own, which
-        // says it all.
+        // Each Anycubic and Prusa variant, and each format a printer names by
+        // its extension, has an extension of its own, which says it all.
         PrinterFileFormat::AnycubicZip(_)
         | PrinterFileFormat::AnycubicBinary(_)
-        | PrinterFileFormat::Sl1(_) => {
+        | PrinterFileFormat::Sl1(_)
+        | PrinterFileFormat::Other(_) => {
             return format!(".{}", format.extension());
         }
     }
@@ -211,6 +213,11 @@ mod print_format_tests {
         OutputFormatBindings::try_from_vec(bindings.to_vec()).expect("test list is non-empty")
     }
 
+    /// A printer file no build writes: its lines are signed with its maker's key.
+    fn zcode() -> OutputFormatBinding {
+        binding(FormatKind::Unknown("zcode".to_owned()), None)
+    }
+
     #[test]
     fn a_writable_binding_becomes_the_selected_option() {
         let model = print_format_model(&declared(&[goo_v3_0()]), None);
@@ -227,14 +234,14 @@ mod print_format_tests {
 
     #[test]
     fn a_declared_format_without_a_writer_is_named_in_the_note_not_the_dropdown() {
-        let declared = declared(&[binding(FormatKind::Goo, Some("v5.1")), goo_v3_0()]);
+        let declared = declared(&[zcode(), goo_v3_0()]);
         let model = print_format_model(&declared, None);
 
         assert_eq!(model.options.len(), 1);
         assert_eq!(model.options[0].binding, goo_v3_0());
         assert_eq!(
             model.refusals,
-            vec!["goo@v5.1: this build cannot write it yet"],
+            vec!["zcode: this build cannot write it yet"],
         );
     }
 
@@ -261,7 +268,7 @@ mod print_format_tests {
     fn a_printer_with_nothing_writable_offers_nothing_and_explains_every_binding() {
         let declared = declared(&[
             binding(FormatKind::Unknown("aff".to_owned()), Some("pws")),
-            binding(FormatKind::Goo, Some("v5.1")),
+            zcode(),
         ]);
         let model = print_format_model(&declared, None);
 
@@ -284,7 +291,7 @@ mod print_format_tests {
 
     #[test]
     fn a_remembered_binding_without_a_writer_falls_back_to_the_first_writable() {
-        let unwritable = binding(FormatKind::Goo, Some("v5.1"));
+        let unwritable = zcode();
         let declared = declared(&[goo_v3_0(), unwritable.clone()]);
         let model = print_format_model(&declared, Some(&unwritable));
 
@@ -295,7 +302,7 @@ mod print_format_tests {
 
     #[test]
     fn a_remembered_binding_the_printer_no_longer_declares_falls_back_to_the_first_writable() {
-        let stale = binding(FormatKind::Goo, Some("v5.1"));
+        let stale = zcode();
         let model = print_format_model(&declared(&[goo_v3_0()]), Some(&stale));
 
         assert_eq!(model.selected, 0);
@@ -305,7 +312,7 @@ mod print_format_tests {
     #[test]
     fn the_dropdown_keeps_the_order_the_profile_declares() {
         let declared = declared(&[
-            binding(FormatKind::Goo, Some("v5.1")),
+            zcode(),
             goo_v3_0(),
             binding(FormatKind::Unknown("lumen".to_owned()), Some("v1")),
         ]);
@@ -315,7 +322,7 @@ mod print_format_tests {
         assert_eq!(
             model.refusals,
             vec![
-                "goo@v5.1: this build cannot write it yet".to_owned(),
+                "zcode: this build cannot write it yet".to_owned(),
                 "lumen@v1: unknown format \"lumen\"".to_owned(),
             ],
         );

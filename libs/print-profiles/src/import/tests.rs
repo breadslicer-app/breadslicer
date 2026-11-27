@@ -137,6 +137,39 @@ fn lychee_file(tsmc: bool) -> Vec<u8> {
 }
 
 #[test]
+fn speeds_in_mm_per_second_and_times_in_ms_come_in_our_units() {
+    let resin = map(&[
+        ("brand", Value::Str("Default".to_owned())),
+        ("name", Value::Str("Default".to_owned())),
+        ("normalLayerExposureTime", with_unit(1800.0, "ms")),
+        ("burnLayerExposureTime", with_unit(25.0, "s")),
+        ("normalLayerLiftSpeed", with_unit(6.0, "mm/s")),
+        ("normalLayerBottomSpeed", with_unit(150.0, "mm/m")),
+        ("normalLayerZLiftDistance", with_unit(8.0, "mm")),
+    ]);
+    let file = Value::Array(vec![map(&[
+        (
+            "printer",
+            map(&[
+                ("name", Value::Str("Photon".to_owned())),
+                ("resWidth", Value::Int(1440)),
+                ("resHeight", Value::Int(2560)),
+                ("x", with_unit(68.04, "mm")),
+                ("y", with_unit(120.96, "mm")),
+            ]),
+        ),
+        ("resins", Value::Array(vec![resin])),
+    ])]);
+    let mut bytes = Vec::new();
+    encode(&file, &mut bytes);
+    let printers = read_lychee(&lychee::raised(&bytes)).unwrap();
+    let s = &printers[0].resins[0].settings;
+    assert_eq!(s.normal_exposure_sec.unwrap().value(), 1.8);
+    assert_eq!(s.lift_speed_mm_min.unwrap().value(), 360.0);
+    assert_eq!(s.retract_speed_mm_min.unwrap().value(), 150.0);
+}
+
+#[test]
 fn a_lychee_export_gives_its_printer_and_resin_settings() {
     let printers = read_lychee(&lychee_file(true)).unwrap();
     assert_eq!(printers.len(), 1);

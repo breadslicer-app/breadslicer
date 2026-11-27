@@ -41,6 +41,11 @@ struct Uniforms {
     // Its bands, four to a lane: the share of what the most loaded tip on
     // each height holds.
     stress: array<vec4<f32>, 128>,
+    // The dead zones of the printer's screen (#783): x how many count of
+    // `dead_zones`, each its front left (xy) and back right (zw) corners,
+    // mm from its plate's middle.
+    dead_zone_count: vec4<f32>,
+    dead_zones: array<vec4<f32>, 64>,
 };
 
 struct ModelEntry {
@@ -413,7 +418,20 @@ fn outside_plates(p: vec3<f32>) -> bool {
         return true;
     }
     let local = p - vec3<f32>(col * u.plates.x, row * u.plates.y, 0.0);
-    return any(local < u.env_min.xyz) || any(local > u.env_max.xyz);
+    return any(local < u.env_min.xyz) || any(local > u.env_max.xyz) || on_dead_zone(local.xy);
+}
+
+// Whether `local` (mm from its plate's middle) stands over a dead zone of the
+// screen (#783): what is there does not cure, as if it were off the plate.
+fn on_dead_zone(local: vec2<f32>) -> bool {
+    let count = u32(u.dead_zone_count.x);
+    for (var k = 0u; k < count; k = k + 1u) {
+        let z = u.dead_zones[k];
+        if all(local >= z.xy) && all(local <= z.zw) {
+            return true;
+        }
+    }
+    return false;
 }
 
 @fragment

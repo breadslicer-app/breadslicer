@@ -10,6 +10,7 @@
 
 mod outline;
 mod pdf;
+pub(crate) mod screen;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -503,7 +504,7 @@ fn show_status(weak: &slint::Weak<MainWindow>, text: String) {
 
 /// Writes `bytes` to `path` through a file beside it, so a failed write
 /// leaves what was there.
-fn write_atomically(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_atomically(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     let mut temp = path.as_os_str().to_owned();
     temp.push(".part");
     let temp = PathBuf::from(temp);
@@ -514,7 +515,7 @@ fn write_atomically(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()>
 }
 
 /// Opens the PDF with what the system opens PDFs with.
-fn open_file(path: &std::path::Path) {
+pub(crate) fn open_file(path: &std::path::Path) {
     if cfg!(test) {
         return;
     }

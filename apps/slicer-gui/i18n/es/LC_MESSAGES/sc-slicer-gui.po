@@ -1525,8 +1525,8 @@ msgstr "El dispositivo gráfico rechazó la imagen de salida: {}"
 #: crates/render/src/mesh_render/error.rs
 #, rust-format
 msgctxt "ErrorDialog"
-msgid "The graphics device refused the slice cap texture: {}"
-msgstr "El dispositivo gráfico rechazó la textura de la tapa de corte: {}"
+msgid "The graphics device refused the slice cap: {}"
+msgstr "El dispositivo gráfico rechazó la tapa del corte: {}"
 
 #: crates/render/src/mesh_render/error.rs
 #, rust-format
@@ -11262,8 +11262,8 @@ msgid "Pick your printer first: the dead zones are its own."
 msgstr "Elegí primero tu impresora: las zonas muertas son de ella."
 
 msgctxt "DeadZones"
-msgid "Drag on the plate where the screen's pixels are dead; click a zone to take it away."
-msgstr "Arrastrá sobre la cama donde la pantalla tiene píxeles muertos; un clic sobre una zona la quita."
+msgid "Mark the screen's dead pixels cell by cell: click a cell, or drag over several. A drag that starts on a marked cell clears. Esc or Done ends."
+msgstr "Marcá los píxeles muertos de la pantalla celda por celda: un clic marca una celda, arrastrar marca varias. Si el arrastre empieza en una celda marcada, borra. Esc o Listo termina."
 
 msgctxt "Inspector"
 msgid "SCREEN"
@@ -11274,12 +11274,12 @@ msgid "Mark dead zones"
 msgstr "Marcar zonas muertas"
 
 msgctxt "Inspector"
-msgid "{} dead zones on this printer's screen: Arrange keeps away from them, and Slice warns about what lands on one."
-msgstr "{} zonas muertas en la pantalla de esta impresora: Acomodar las esquiva y Laminar avisa si algo cae en una."
+msgid "{} dead zones on this printer's screen: Arrange keeps away from them, and Slice does not slice what stands on one."
+msgstr "{} zonas muertas en la pantalla de esta impresora: Acomodar las esquiva y Laminar no lamina lo que esté encima de una."
 
 msgctxt "Inspector"
-msgid "Where the screen's pixels are dead, nothing is placed: drag on the plate to mark them, click one to take it away."
-msgstr "Donde la pantalla tiene píxeles muertos no se pone nada: arrastrá sobre la cama para marcarlos, un clic sobre una zona la quita."
+msgid "Where the screen's pixels are dead, nothing is placed: mark them on the plate in 5 mm cells."
+msgstr "Donde la pantalla tiene píxeles muertos no se pone nada: marcalos sobre la cama en celdas de 5 mm."
 
 #: ui/preferences/preferences-layer.slint
 msgctxt "PreferencesLayer"
@@ -11428,6 +11428,174 @@ msgid "{n} layer"
 msgid_plural "{n} layers"
 msgstr[0] "{n} capa"
 msgstr[1] "{n} capas"
+
+#, rust-format
+msgctxt "DeadZones"
+msgid "Cell {}"
+msgstr "Celda {}"
+
+msgctxt "SliceDialog"
+msgid "Models on a dead zone"
+msgstr "Modelos sobre una zona muerta"
+
+#, rust-format
+msgctxt "SliceDialog"
+msgid "{} model(s), their supports or rafts stand on a dead zone of the screen, where nothing cures. Press Arrange all to move them off, then slice."
+msgstr "{} modelo(s), sus soportes o balsas quedan sobre una zona muerta de la pantalla, donde nada cura. Tocá Acomodar todo para sacarlos de ahí y después laminá."
+
+msgctxt "ScreenSheet"
+msgid "Dead pixel sheet"
+msgstr "Hoja de píxeles muertos"
+
+msgctxt "ScreenSheet"
+msgid "Print at actual size (100 %): this ruler measures 50 mm."
+msgstr "Imprimila a tamaño real (100 %): esta regla mide 50 mm."
+
+msgctxt "ScreenSheet"
+msgid "Cut along the dashed line. Lay the sheet on the screen with the vat out, its thick edge on the lit edge of the screen, and run the printer's cleaning or exposure test: the dead pixels show dark."
+msgstr "Recortá por la línea punteada. Poné la hoja sobre la pantalla sin la cuba, con el borde grueso sobre el borde iluminado de la pantalla, y corré la prueba de limpieza o de exposición de la impresora: los píxeles muertos se ven oscuros."
+
+msgctxt "ScreenSheet"
+msgid "Cut the edges with no band exactly on their line and butt them against the next page."
+msgstr "Los bordes sin franja se cortan justo sobre su línea y se apoyan contra la hoja siguiente."
+
+msgctxt "ScreenSheet"
+msgid "dead pixels"
+msgstr "píxeles muertos"
+
+#, rust-format
+msgctxt "DeadPixels"
+msgid "Saved: {}. It opens to print."
+msgstr "Guardada: {}. Se abre para imprimir."
+
+#, rust-format
+msgctxt "DeadPixels"
+msgid "The sheet was not saved: {}"
+msgstr "La hoja no se guardó: {}"
+
+msgctxt "MenuBar"
+msgid "Find Dead Pixels…"
+msgstr "Buscar píxeles muertos…"
+
+msgctxt "Inspector"
+msgid "Find dead pixels…"
+msgstr "Buscar píxeles muertos…"
+
+msgctxt "DeadPixels"
+msgid "Find dead pixels"
+msgstr "Buscar píxeles muertos"
+
+msgctxt "DeadPixels"
+msgid "Close"
+msgstr "Cerrar"
+
+msgctxt "DeadPixels"
+msgid "Step {} of {}"
+msgstr "Paso {} de {}"
+
+msgctxt "DeadPixels"
+msgid "A sheet of paper finds them"
+msgstr "Una hoja de papel los encuentra"
+
+msgctxt "DeadPixels"
+msgid "A screen with a few dead pixels still prints for years, as long as nothing stands on them. Breadslicer prints your screen at its real size with the plate's grid; you lay it on the screen, light the screen, and mark on the plate the cells that stay dark."
+msgstr "Una pantalla con algunos píxeles muertos sigue imprimiendo años, mientras no se ponga nada encima de ellos. Breadslicer imprime tu pantalla en tamaño real con la grilla de la cama; la apoyás sobre la pantalla, la prendés y marcás en la cama las celdas que quedan oscuras."
+
+msgctxt "DeadPixels"
+msgid "From then on Arrange and Fill bed keep away from them, what stands on one is painted like what is off the plate, and Slice does not slice it."
+msgstr "Desde ahí Acomodar y Llenar plataforma las esquivan, lo que quede encima se pinta como lo que sale de la cama y Laminar no lo lamina."
+
+msgctxt "DeadPixels"
+msgid "You need: a paper printer, scissors and a pencil."
+msgstr "Necesitás: una impresora de papel, una tijera y un lápiz."
+
+msgctxt "DeadPixels"
+msgid "Pick your printer first: the sheet is its screen."
+msgstr "Elegí primero tu impresora: la hoja es su pantalla."
+
+msgctxt "DeadPixels"
+msgid "{} zones are marked on this printer already; the sheet shows them."
+msgstr "Esta impresora ya tiene {} zonas marcadas; la hoja las muestra."
+
+msgctxt "DeadPixels"
+msgid "Print the sheet"
+msgstr "Imprimí la hoja"
+
+msgctxt "DeadPixels"
+msgid "Save it and print it at actual size: 100 %, with no fit to page. The screen may take more than one page."
+msgstr "Guardala e imprimila a tamaño real: 100 %, sin ajustar a la página. La pantalla puede ocupar más de una hoja."
+
+msgctxt "DeadPixels"
+msgid "Check it with a ruler: the one at the top of the sheet measures 50 mm. If it does not, print it again at actual size."
+msgstr "Controlala con una regla: la de arriba de la hoja mide 50 mm. Si no, volvé a imprimirla a tamaño real."
+
+msgctxt "DeadPixels"
+msgid "Save the sheet (PDF)…"
+msgstr "Guardar la hoja (PDF)…"
+
+msgctxt "DeadPixels"
+msgid "Cut it out"
+msgstr "Recortala"
+
+msgctxt "DeadPixels"
+msgid "Cut along the dashed line. The thick line inside it is the edge of the screen; the band with the letters and numbers stays, it rests on the frame round the screen."
+msgstr "Recortá por la línea punteada. La línea gruesa de adentro es el borde de la pantalla; la franja con letras y números queda, se apoya sobre el marco de la pantalla."
+
+msgctxt "DeadPixels"
+msgid "On more than one page, cut the edges with no band right on their line and butt them together, the names of the cells lined up."
+msgstr "Si son varias hojas, los bordes sin franja se cortan justo sobre su línea y se juntan, con los nombres de las celdas alineados."
+
+msgctxt "DeadPixels"
+msgid "Lay it on the screen"
+msgstr "Apoyala sobre la pantalla"
+
+msgctxt "DeadPixels"
+msgid "Take the vat out and wipe the screen clean. Lay the sheet on it with FRONT toward the front of the printer."
+msgstr "Sacá la cuba y limpiá la pantalla. Apoyá la hoja con FRENTE hacia el frente de la impresora."
+
+msgctxt "DeadPixels"
+msgid "Do not press on the screen. A strip of tape on the band holds the sheet still."
+msgstr "No apretes la pantalla. Un poco de cinta sobre la franja sostiene la hoja quieta."
+
+msgctxt "DeadPixels"
+msgid "Light the screen"
+msgstr "Prendé la pantalla"
+
+msgctxt "DeadPixels"
+msgid "Run the printer's cleaning or exposure test: the whole screen lights up behind the paper. Slide the sheet until its thick edge meets the edge of the light."
+msgstr "Corré la prueba de limpieza o de exposición de la impresora: toda la pantalla se ilumina detrás del papel. Corré la hoja hasta que el borde grueso coincida con el borde de la luz."
+
+msgctxt "DeadPixels"
+msgid "Where it stays dark, the pixels are dead: circle them lightly with the pencil. Do not look at the light for long, and turn the test off when you are done."
+msgstr "Donde queda oscuro, los píxeles están muertos: marcalos suave con el lápiz, con un círculo. No mires la luz mucho rato y apagá la prueba cuando termines."
+
+msgctxt "DeadPixels"
+msgid "Mark the same cells on the plate"
+msgstr "Marcá las mismas celdas en la cama"
+
+msgctxt "DeadPixels"
+msgid "Click a cell to mark it, or drag over several. The status bar names the cell under the cursor as the sheet does: C7 is the third column from the left, the seventh row from the front."
+msgstr "Un clic marca una celda, arrastrar marca varias. La barra de abajo dice qué celda está bajo el cursor, con el mismo nombre que en la hoja: C7 es la tercera columna desde la izquierda y la séptima fila desde el frente."
+
+msgctxt "DeadPixels"
+msgid "A drag that starts on a marked cell clears the cells it covers. The zones are this printer's own; Mark dead zones, in Scene settings, puts the tool away."
+msgstr "Un arrastre que empieza en una celda marcada borra las que cubre. Las zonas son de esta impresora; Marcar zonas muertas, en Ajustes de escena, guarda la herramienta."
+
+msgctxt "DeadPixels"
+msgid "Mark them on the plate"
+msgstr "Marcarlas en la cama"
+
+msgctxt "DeadPixels"
+msgid "Back"
+msgstr "Atrás"
+
+msgctxt "DeadPixels"
+msgid "Start"
+msgstr "Empezar"
+
+msgctxt "DeadPixels"
+msgid "Next"
+msgstr "Siguiente"
 
 #: src/calibration_wizard.rs
 msgctxt "Calibration"
@@ -11842,3 +12010,23 @@ msgstr "Agujero de {} mm, por dentro"
 msgctxt "Calibration"
 msgid "Thinnest hole the light comes through"
 msgstr "Agujero más fino por el que pasa la luz"
+
+msgctxt "Inspector"
+msgid "MARKING DEAD PIXELS"
+msgstr "MARCANDO PÍXELES MUERTOS"
+
+msgctxt "Inspector"
+msgid "Click or drag cells · from a marked cell, a drag clears · Esc ends"
+msgstr "Clic o arrastre marca celdas · desde una marcada, borra · Esc termina"
+
+msgctxt "Inspector"
+msgid "Done: leave marking"
+msgstr "Listo: salir del modo"
+
+msgctxt "MenuBar"
+msgid "Edit Dead Zones"
+msgstr "Editar zonas muertas"
+
+msgctxt "DeadPixels"
+msgid "I have the sheet: go to marking"
+msgstr "Ya tengo la hoja: ir a marcar"

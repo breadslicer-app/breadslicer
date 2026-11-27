@@ -791,9 +791,11 @@ dependencies = [
  "bread-gui-base",
  "bread-gui-ui",
  "bytemuck",
+ "earcutr",
  "float-cmp 0.10.0",
  "glam",
  "harfrust 0.8.4",
+ "i_overlay",
  "image",
  "pollster",
  "rayon",
@@ -905,6 +907,7 @@ dependencies = [
 name = "bread-sla-formats-uvtools"
 version = "0.1.0"
 dependencies = [
+ "md-5",
  "png 0.18.1",
  "proptest",
  "sc-print-primitives",

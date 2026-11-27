@@ -591,8 +591,10 @@ fn apply_intent_derivation(
     }
 }
 
-/// Drop what the printer cannot act on, so a resin calibrated for a
-/// machine that splits its travel stays usable on one that does not.
+/// Fit what the printer cannot act on (#785): on a printer that lifts in
+/// one stage, a resin calibrated for two stages lifts in one that rises as
+/// far as both, at the slower of their speeds, so the plate never rises less
+/// than the resin asks and the peel stays as gentle as calibrated.
 pub(crate) fn apply_capabilities(
     capabilities: &PrinterCapabilities,
     picked: &mut PickedValues,
@@ -603,9 +605,51 @@ pub(crate) fn apply_capabilities(
     }
     let normal = picked.second_travel.take();
     let bottom = picked.bottom_second_travel.take();
-    if normal.is_some() || bottom.is_some() {
-        warnings.push(ResolveWarning::SecondTravelStageUnsupported);
+    if let Some(stage) = normal {
+        join_stage(
+            stage,
+            &mut picked.lift_distance_mm,
+            &mut picked.lift_speed_mm_min,
+            &mut picked.retract_speed_mm_min,
+        );
     }
+    if let Some(stage) = bottom {
+        join_stage(
+            stage,
+            &mut picked.bottom_lift_distance_mm,
+            &mut picked.bottom_lift_speed_mm_min,
+            &mut picked.bottom_retract_speed_mm_min,
+        );
+    }
+    if normal.is_some() || bottom.is_some() {
+        warnings.push(ResolveWarning::SecondTravelStageJoined);
+    }
+}
+
+/// `stage` joined onto the first stage: the distances added, each speed the
+/// slower of the two.
+fn join_stage(
+    stage: SecondTravelStage,
+    distance: &mut Option<PositiveFiniteMm>,
+    lift_speed: &mut Option<PositiveFiniteMmPerMin>,
+    retract_speed: &mut Option<PositiveFiniteMmPerMin>,
+) {
+    let total = distance.map_or(stage.lift_distance_mm.value(), |d| {
+        d.value() + stage.lift_distance_mm.value()
+    });
+    *distance =
+        Some(PositiveFiniteMm::new(total).expect("a sum of positive distances is positive"));
+    let slower = |first: Option<PositiveFiniteMmPerMin>, second: PositiveFiniteMmPerMin| {
+        Some(first.map_or(second, |f| {
+            if f.value() <= second.value() {
+                f
+            } else {
+                second
+            }
+        }))
+    };
+    *lift_speed = slower(*lift_speed, stage.lift_speed_mm_min);
+    *retract_speed = slower(*retract_speed, stage.retract_speed_mm_min);
 }
 
 pub(crate) fn apply_constraints(

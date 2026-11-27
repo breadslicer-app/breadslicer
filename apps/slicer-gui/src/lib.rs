@@ -31,6 +31,8 @@ pub(crate) const APP_NAME: &str = if update_check::is_dev_version(VERSION) {
 } else {
     "Breadslicer"
 };
+mod dead_pixel_pictures;
+mod dead_pixels;
 mod dead_zones;
 mod plate_sheet;
 mod about_window;

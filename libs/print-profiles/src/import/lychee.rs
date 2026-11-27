@@ -27,7 +27,8 @@ fn lowered(bytes: &[u8]) -> Vec<u8> {
 }
 
 /// A number's value in `unit` (`{value, unit}` or a bare number), or
-/// `None`. Micrometres are given in millimetres.
+/// `None`, in our units: micrometres as millimetres, milliseconds as
+/// seconds, millimetres per second as millimetres per minute.
 fn number(value: &Value, key: &str) -> Option<f64> {
     let field = value.get(key)?;
     if let Some(n) = field.as_f64() {
@@ -36,6 +37,8 @@ fn number(value: &Value, key: &str) -> Option<f64> {
     let n = field.get("value")?.as_f64()?;
     Some(match field.get("unit").and_then(Value::as_str) {
         Some("um") => n / 1000.0,
+        Some("ms") => n / 1000.0,
+        Some("mm/s") => n * 60.0,
         _ => n,
     })
 }

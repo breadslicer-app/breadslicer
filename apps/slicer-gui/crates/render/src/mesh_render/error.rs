@@ -162,7 +162,7 @@ impl fmt::Display for AllocationRefusal {
             ),
             RenderAllocation::CapTexture => ctr!(
                 "ErrorDialog",
-                "The graphics device refused the slice cap texture: {}",
+                "The graphics device refused the slice cap: {}",
                 cause
             ),
             RenderAllocation::LabelTexture => ctr!(
@@ -339,7 +339,7 @@ mod error_display_tests {
         );
         assert_eq!(
             sentence(RenderAllocation::CapTexture),
-            "The graphics device refused the slice cap texture: Validation Error: x"
+            "The graphics device refused the slice cap: Validation Error: x"
         );
         assert_eq!(
             sentence(RenderAllocation::LabelTexture),

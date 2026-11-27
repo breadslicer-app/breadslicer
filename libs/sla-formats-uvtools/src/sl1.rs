@@ -282,13 +282,17 @@ fn encode(rows: &[RleRun], width: u32, height: u32, area_fill_pct: f64) -> Encod
     }
 }
 
-fn grey_png(pixels: &[u8], width: u32, height: u32) -> Result<Vec<u8>, png::EncodingError> {
+pub(crate) fn grey_png(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, png::EncodingError> {
     let mut bytes = Vec::new();
     {
         let mut encoder = png::Encoder::new(&mut bytes, width, height);
         encoder.set_color(png::ColorType::Grayscale);
         encoder.set_depth(png::BitDepth::Eight);
-        encoder.set_compression(png::Compression::Fast);
+        encoder.set_compression(png::Compression::Balanced);
         let mut writer = encoder.write_header()?;
         writer.write_image_data(pixels)?;
         writer.finish()?;
@@ -296,7 +300,7 @@ fn grey_png(pixels: &[u8], width: u32, height: u32) -> Result<Vec<u8>, png::Enco
     Ok(bytes)
 }
 
-fn entry<W: Write + io::Seek>(
+pub(crate) fn entry<W: Write + io::Seek>(
     zip: &mut ZipWriter<W>,
     name: &str,
     bytes: &[u8],
@@ -307,7 +311,7 @@ fn entry<W: Write + io::Seek>(
     Ok(())
 }
 
-fn zip_failure(err: zip::result::ZipError) -> WriteFailure {
+pub(crate) fn zip_failure(err: zip::result::ZipError) -> WriteFailure {
     match err {
         zip::result::ZipError::Io(err) => WriteFailure::Io(err),
         other => WriteFailure::Io(io::Error::other(other)),

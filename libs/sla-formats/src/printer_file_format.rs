@@ -41,6 +41,145 @@ pub enum PrinterFileFormat {
     AnycubicBinary(AnycubicBinaryVariant),
     /// Prusa's SL1 archive, for the SL1 and the SL1S.
     Sl1(Sl1Variant),
+    /// A container a printer names by its own extension.
+    Other(OtherFormat),
+}
+
+/// A printer file a profile names by its extension, with the version a few
+/// add to tell 2 files apart. Each is its own container, so 2 different ones
+/// are incomparable.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OtherFormat {
+    /// `.cxdlpv4`, Creality's CXDLP version 4 (Halot Mage, Halot X1, ...).
+    Cxdlpv4,
+    /// `.gktwo.ctb`, CTB version 4 under the UniFormation GKtwo's magic.
+    GktwoCtb,
+    /// `.prz`, the GOO layout the Phrozen Sonic Mini 8K S and its kin read.
+    Prz,
+    /// `.photon`, the ChiTuBox Photon file.
+    Photon,
+    /// `.zip`, ChiTuBox's ZIP of layer images and G-code.
+    ChituboxZip,
+    /// `.zip`, the Klipper layout.
+    KlipperZip,
+    /// `.phz`, ChiTuBox PHZ.
+    Phz,
+    /// `.cws`, NovaMaker CWS.
+    Cws,
+    /// `.rgb.cws`, NovaMaker CWS for panels that pack 3 pixels in one.
+    RgbCws,
+    /// `.xml.cws`, Creation Workshop X.
+    XmlCws,
+    /// `.svgx`, FlashForge SVGX.
+    Svgx,
+    /// `.fdg`, Voxelab FDG.
+    Fdg,
+    /// `.lgs`, Longer Orange 10.
+    Lgs,
+    /// `.lgs30`, Longer Orange 30.
+    Lgs30,
+    /// `.lgs120`, Longer Orange 120.
+    Lgs120,
+    /// `.lgs4k`, Longer Orange 4K.
+    Lgs4k,
+    /// `.osf`, the Vlare open file format.
+    Osf,
+    /// `.nanodlp`, NanoDLP.
+    NanoDlp,
+    /// `.qdt`, Emake3D Galaxy 1.
+    Qdt,
+    /// `.jxs`, UniFormation GKone.
+    Jxs,
+    /// `.n4`, Anet N4.
+    AnetN4,
+    /// `.n7`, Anet N7.
+    AnetN7,
+    /// `.zcode`, UnizMaker IBEE.
+    Zcode,
+    /// `.zcodex`, Z-Suite.
+    Zcodex,
+}
+
+impl OtherFormat {
+    /// Every one.
+    pub const ALL: [Self; 24] = [
+        Self::Cxdlpv4,
+        Self::GktwoCtb,
+        Self::Prz,
+        Self::Photon,
+        Self::ChituboxZip,
+        Self::KlipperZip,
+        Self::Phz,
+        Self::Cws,
+        Self::RgbCws,
+        Self::XmlCws,
+        Self::Svgx,
+        Self::Fdg,
+        Self::Lgs,
+        Self::Lgs30,
+        Self::Lgs120,
+        Self::Lgs4k,
+        Self::Osf,
+        Self::NanoDlp,
+        Self::Qdt,
+        Self::Jxs,
+        Self::AnetN4,
+        Self::AnetN7,
+        Self::Zcode,
+        Self::Zcodex,
+    ];
+
+    /// The family a profile declares it as, and the version it adds if any.
+    pub fn declared(self) -> (&'static str, Option<&'static str>) {
+        match self {
+            Self::GktwoCtb => ("gktwo.ctb", Some("v4")),
+            Self::Photon => ("photon", Some("v2")),
+            Self::KlipperZip => ("zip", Some("klipper")),
+            other => (other.extension(), None),
+        }
+    }
+
+    /// The file extension, without a leading dot.
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Cxdlpv4 => "cxdlpv4",
+            Self::GktwoCtb => "gktwo.ctb",
+            Self::Prz => "prz",
+            Self::Photon => "photon",
+            Self::ChituboxZip | Self::KlipperZip => "zip",
+            Self::Phz => "phz",
+            Self::Cws => "cws",
+            Self::RgbCws => "rgb.cws",
+            Self::XmlCws => "xml.cws",
+            Self::Svgx => "svgx",
+            Self::Fdg => "fdg",
+            Self::Lgs => "lgs",
+            Self::Lgs30 => "lgs30",
+            Self::Lgs120 => "lgs120",
+            Self::Lgs4k => "lgs4k",
+            Self::Osf => "osf",
+            Self::NanoDlp => "nanodlp",
+            Self::Qdt => "qdt",
+            Self::Jxs => "jxs",
+            Self::AnetN4 => "n4",
+            Self::AnetN7 => "n7",
+            Self::Zcode => "zcode",
+            Self::Zcodex => "zcodex",
+        }
+    }
+
+    /// Names the one a profile's family and version declare, ignoring case.
+    pub fn from_declared(family: &str, version: Option<&str>) -> Option<Self> {
+        Self::ALL.into_iter().find(|format| {
+            let (name, wanted) = format.declared();
+            name.eq_ignore_ascii_case(family)
+                && match (wanted, version) {
+                    (Some(wanted), Some(version)) => wanted.eq_ignore_ascii_case(version),
+                    (None, None) => true,
+                    _ => false,
+                }
+        })
+    }
 }
 
 /// A variant of Prusa's SL1 archive. The 2 are one layout written for
@@ -283,6 +422,9 @@ impl PartialOrd for PrinterFileFormat {
                 (variant == other).then_some(Ordering::Equal)
             }
             (Self::Sl1(variant), Self::Sl1(other)) => (variant == other).then_some(Ordering::Equal),
+            (Self::Other(format), Self::Other(other)) => {
+                (format == other).then_some(Ordering::Equal)
+            }
             _ => None,
         }
     }
@@ -450,6 +592,11 @@ impl PrinterFileFormat {
                 .ok_or_else(|| UnresolvedBinding {
                     binding: binding.clone(),
                 }),
+            (FormatKind::Unknown(family), version) => OtherFormat::from_declared(family, version)
+                .map(Self::Other)
+                .ok_or_else(|| UnresolvedBinding {
+                    binding: binding.clone(),
+                }),
             _ => Err(UnresolvedBinding {
                 binding: binding.clone(),
             }),
@@ -472,6 +619,13 @@ impl PrinterFileFormat {
             Self::AnycubicZip(variant) => (FormatKind::Azf, variant.extension()),
             Self::AnycubicBinary(variant) => (FormatKind::Aff, variant.extension()),
             Self::Sl1(variant) => (FormatKind::Sl1, variant.extension()),
+            Self::Other(other) => {
+                let (family, version) = other.declared();
+                return OutputFormatBinding {
+                    format: FormatKind::Unknown(family.to_owned()),
+                    version: version.and_then(|version| NonEmptyString::new(version).ok()),
+                };
+            }
         };
         OutputFormatBinding {
             format,
@@ -533,7 +687,9 @@ impl PrinterFileFormat {
     pub(crate) fn has_builtin_writer(self) -> bool {
         matches!(
             self,
-            Self::Goo(GooVersion::V3_0) | Self::Ctb(CtbVariant::PlainV5 | CtbVariant::EncryptedV5)
+            Self::Goo(GooVersion::V3_0)
+                | Self::Ctb(CtbVariant::PlainV5 | CtbVariant::EncryptedV5)
+                | Self::Other(OtherFormat::Prz)
         )
     }
 
@@ -547,14 +703,17 @@ impl PrinterFileFormat {
     /// carries its own, so what it reports is the size its writer renders at.
     pub fn preview_sizes(self) -> Option<PreviewSizes> {
         match self {
-            Self::Goo(GooVersion::V3_0) => Some(GOO_V3_0_PREVIEW_SIZES),
+            Self::Goo(GooVersion::V3_0) | Self::Other(OtherFormat::Prz) => {
+                Some(GOO_V3_0_PREVIEW_SIZES)
+            }
             Self::Ctb(CtbVariant::PlainV5 | CtbVariant::EncryptedV5) => Some(CTB_PREVIEW_SIZES),
             Self::Goo(GooVersion::V5_1)
             | Self::Ctb(CtbVariant::V2 | CtbVariant::V3 | CtbVariant::V4)
             | Self::Cxdlp(_)
             | Self::AnycubicZip(_)
             | Self::AnycubicBinary(_)
-            | Self::Sl1(_) => {
+            | Self::Sl1(_)
+            | Self::Other(_) => {
                 external::writer_for(self).and_then(|writer| writer.preview_sizes(self))
             }
         }
@@ -573,6 +732,7 @@ impl PrinterFileFormat {
             Self::AnycubicZip(variant) => variant.extension(),
             Self::AnycubicBinary(variant) => variant.extension(),
             Self::Sl1(variant) => variant.extension(),
+            Self::Other(other) => other.extension(),
         }
     }
 }
@@ -593,6 +753,9 @@ pub fn printer_file_family_from_path(path: &Path) -> Option<FormatKind> {
         other if AnycubicZipVariant::from_extension(other).is_some() => Some(FormatKind::Azf),
         other if AnycubicBinaryVariant::from_extension(other).is_some() => Some(FormatKind::Aff),
         other if Sl1Variant::from_extension(other).is_some() => Some(FormatKind::Sl1),
+        other if OtherFormat::ALL.iter().any(|f| f.extension() == other) => {
+            Some(FormatKind::Unknown(other.to_owned()))
+        }
         _ => None,
     }
 }

@@ -19,14 +19,13 @@ use std::str::FromStr;
 use sc_print_primitives::{FormatKind, OutputFormatBinding, OutputFormatBindings};
 use sc_sla_formats::format::format_from_path;
 use sc_sla_formats::{
-    AnycubicBinaryVariant, AnycubicZipVariant, Format, PrinterFileFormat, Sl1Variant,
+    AnycubicBinaryVariant, AnycubicZipVariant, Format, OtherFormat, PrinterFileFormat, Sl1Variant,
     UnwritableFamily, printer_file_family_from_path,
 };
 
 /// Every spelling the flag accepts, in help-text order. A family name may also
 /// carry the revision a profile would declare, as in `ctb@v5`.
-pub(crate) const ACCEPTED_TARGET_FORMATS: &str =
-    "svg-per-layer, svg-combined, png-per-layer, 3mf, goo, ctb, cxdlp, azf, aff, sl1";
+pub(crate) const ACCEPTED_TARGET_FORMATS: &str = "svg-per-layer, svg-combined, png-per-layer, 3mf, goo, ctb, cxdlp, azf, aff, sl1, cxdlpv4, prz, gktwo.ctb@v4, photon@v2, zip, zip@klipper, phz, cws, rgb.cws, xml.cws, svgx, fdg, lgs, lgs30, lgs120, lgs4k, osf, nanodlp, qdt, jxs, n4, n7, zcodex";
 
 /// A `--target-format` flag value: a slice output, a printer file, or the
 /// family of one whose revision the printer still has to name.
@@ -45,7 +44,9 @@ impl TargetFormat {
     /// binary families and Prusa's SL1, where each variant has its own
     /// extension and the extension names it.
     pub(crate) fn from_path(path: &Path) -> Option<Self> {
-        if let Some(format) = anycubic_format_from_path(path) {
+        if let Some(format) =
+            anycubic_format_from_path(path).or_else(|| other_format_from_path(path))
+        {
             return Some(Self::PrinterFile(format));
         }
         format_from_path(path)
@@ -72,6 +73,19 @@ fn anycubic_format_from_path(path: &Path) -> Option<PrinterFileFormat> {
             AnycubicBinaryVariant::from_extension(extension).map(PrinterFileFormat::AnycubicBinary)
         })
         .or_else(|| Sl1Variant::from_extension(extension).map(PrinterFileFormat::Sl1))
+}
+
+/// Names the printer file an output path's own extension is, for the formats
+/// a printer names by extension alone. A `.zip` names several, so it is left
+/// to the printer.
+fn other_format_from_path(path: &Path) -> Option<PrinterFileFormat> {
+    let name = path.file_name()?.to_str()?.to_ascii_lowercase();
+    OtherFormat::ALL
+        .into_iter()
+        .filter(|format| format.extension() != "zip")
+        .filter(|format| name.ends_with(&format!(".{}", format.extension())))
+        .max_by_key(|format| format.extension().len())
+        .map(PrinterFileFormat::Other)
 }
 
 impl fmt::Display for TargetFormat {
@@ -213,7 +227,12 @@ impl FromStr for TargetFormat {
             {
                 Ok(Self::PrinterFamily(binding.format))
             }
-            None => Err(unknown()),
+            None => match &binding.format {
+                FormatKind::Unknown(family) => OtherFormat::from_declared(family, None)
+                    .map(|format| Self::PrinterFile(PrinterFileFormat::Other(format)))
+                    .ok_or_else(unknown),
+                _ => Err(unknown()),
+            },
         }
     }
 }
@@ -482,6 +501,16 @@ mod target_format_tests {
         for accepted in ACCEPTED_TARGET_FORMATS.split(", ") {
             assert!(message.contains(accepted), "{accepted} in: {message}");
         }
+    }
+
+    #[test]
+    fn a_format_named_by_its_extension_is_its_printer_file() {
+        let v4 = TargetFormat::PrinterFile(PrinterFileFormat::Other(OtherFormat::Cxdlpv4));
+        assert_eq!(TargetFormat::from_str("cxdlpv4"), Ok(v4.clone()));
+        assert_eq!(
+            TargetFormat::from_path(&PathBuf::from("out/mini.cxdlpv4")),
+            Some(v4)
+        );
     }
 
     #[test]

@@ -37,6 +37,8 @@ pub(crate) struct LayerStats {
     /// The lit fraction of each pixel summed over the layer, in pixels: a
     /// pixel at full exposure counts 1, an anti-aliased edge pixel its share.
     pub covered_pixels: f64,
+    /// How many pixels are lit at all.
+    pub lit_pixels: u64,
 }
 
 impl LayerStats {
@@ -53,12 +55,14 @@ impl LayerStats {
         let width = u64::from(width);
         let mut position = 0_u64;
         let mut covered = 0_u64;
+        let mut lit = 0_u64;
         let mut bounds: Option<PixelRect> = None;
 
         for run in runs {
             let length = u64::from(run.length);
             if run.value >= dimmest.max(1) && length > 0 {
                 covered += u64::from(run.value) * length;
+                lit += length;
                 let first = position;
                 let last = position + length - 1;
                 let (first_row, first_col) = (first / width, first % width);
@@ -91,6 +95,7 @@ impl LayerStats {
         Self {
             bounds,
             covered_pixels: covered as f64 / 255.0,
+            lit_pixels: lit,
         }
     }
 }

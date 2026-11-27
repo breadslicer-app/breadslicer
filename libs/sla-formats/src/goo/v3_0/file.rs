@@ -12,8 +12,9 @@ use std::io::Write;
 
 use sc_sl1cer::contour::ContourStack;
 
+use super::chunk::RunEncoder;
 use super::header::{FILE_MAGIC, SizedPreviews, write_header};
-use super::payload::encode_payload;
+use super::payload::encode_payload_with;
 use super::record::write_layer;
 use crate::error::WriteFailure;
 use crate::layer_images::write_layer_images;
@@ -47,6 +48,32 @@ pub fn write_file(
     stack: &ContourStack,
     out: &mut impl Write,
 ) -> Result<(), WriteFailure> {
+    write_coded(RunEncoder::default, program, previews, stack, out)
+}
+
+/// Write `stack` as a `.prz`, the GOO V3.0 file the Phrozen Sonic Mini 8K S
+/// and its kin read: [`write_file`]'s file whose layer images never step a
+/// grey from the one before (no delta chunks).
+///
+/// # Errors
+///
+/// As [`write_file`].
+pub fn write_prz(
+    program: &PrintProgram,
+    previews: Option<&PrintPreviews>,
+    stack: &ContourStack,
+    out: &mut impl Write,
+) -> Result<(), WriteFailure> {
+    write_coded(RunEncoder::without_deltas, program, previews, stack, out)
+}
+
+fn write_coded(
+    encoder: fn() -> RunEncoder,
+    program: &PrintProgram,
+    previews: Option<&PrintPreviews>,
+    stack: &ContourStack,
+    out: &mut impl Write,
+) -> Result<(), WriteFailure> {
     let stack_layers = stack.layers().len();
     if program.layers.len() != stack_layers {
         return Err(WriteFailure::LayerCountMismatch {
@@ -65,7 +92,7 @@ pub fn write_file(
         1,
         |_, rows| {
             let mut image = Vec::new();
-            encode_payload(rows, &mut image);
+            encode_payload_with(encoder(), rows, &mut image);
             image
         },
         |index, image| -> Result<(), WriteFailure> {

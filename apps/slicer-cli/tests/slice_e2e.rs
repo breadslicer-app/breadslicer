@@ -1236,9 +1236,9 @@ fn a_revision_without_a_writer_is_refused_by_name() {
         .arg("--source")
         .arg(fixture_path("cube.stl"))
         .arg("--target")
-        .arg(dir.path().join("plate.goo"))
+        .arg(dir.path().join("plate.zcode"))
         .arg("--target-format")
-        .arg("goo@v5.1")
+        .arg("zcode")
         .arg("--printer-profile")
         .arg("slicer-cli-e2e-test")
         .arg("--material-profile")
@@ -1246,7 +1246,7 @@ fn a_revision_without_a_writer_is_refused_by_name() {
         .env("SC_SLICER_ASSETS_DIR", profiles_dir())
         .assert()
         .failure()
-        .stderr(predicate::str::contains("goo@v5.1"));
+        .stderr(predicate::str::contains("zcode"));
 }
 
 /// Names the encrypted revision for a printer that declares the plain one,

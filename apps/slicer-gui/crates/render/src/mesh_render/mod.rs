@@ -15,7 +15,7 @@ use slint::wgpu_30::wgpu;
 use crate::build_volume::BuildVolume;
 use crate::camera::{DEFAULT_DISTANCE_FACTOR, OrbitCamera};
 use crate::front_label::{LabelRaster, MarksRaster};
-use crate::slice_cap::CapRaster;
+use crate::slice_cap::CapShape;
 
 mod device_loss;
 mod device_ops;
@@ -286,13 +286,15 @@ impl Pipelines {
     }
 }
 
-/// State of the slice-view cap texture, keyed by the layer it was last built
-/// for. The bind group keeps the texture and its view alive.
+/// State of the slice-view cap, keyed by the layer it was last built for: its
+/// triangles (none for an empty layer, which still closes no cut with back
+/// faces) and how many vertices they hold.
 enum CapState {
     Off,
     Shown {
         key: u64,
-        bind_group: wgpu::BindGroup,
+        vertices: Option<wgpu::Buffer>,
+        count: u32,
     },
     Refused {
         key: u64,
@@ -389,6 +391,8 @@ pub struct Renderer {
     hints: overlay::OverlaySlot,
     /// The scene's plates (#545): every plate piece is drawn once for each.
     plates: crate::plates::Plates,
+    /// The dead zones of the printer's screen (#783), mm from a plate's middle.
+    dead_zones: Vec<[f32; 4]>,
     /// Out of focus dims even with nothing in focus ([`Self::set_dim_all`]).
     dim_all: bool,
     /// The active plate's tools (#545): shown or not, and the one under the
@@ -409,6 +413,8 @@ pub struct Renderer {
     /// The islands' paint where something stands in front of it (#542):
     /// seen through the models, never laid over what shows.
     island_hidden: overlay::OverlaySlot,
+    /// Marks on the plate's floor (#783), hidden by what stands in front.
+    floor_marks: overlay::OverlaySlot,
     /// The marks last handed to [`Self::set_hint_marks`], split between
     /// `hints` and `island_marks`.
     hint_source: Option<Overlay>,
@@ -528,6 +534,7 @@ impl Renderer {
             overlay: overlay::OverlaySlot::default(),
             hints: overlay::OverlaySlot::default(),
             plates: crate::plates::Plates::one(),
+            dead_zones: Vec::new(),
             dim_all: false,
             plate_tools: None,
             plate_names: (Vec::new(), None),
@@ -535,6 +542,7 @@ impl Renderer {
             cap_plate: 0,
             island_marks: overlay::OverlaySlot::default(),
             island_hidden: overlay::OverlaySlot::default(),
+            floor_marks: overlay::OverlaySlot::default(),
             hint_source: None,
             stress_bands: None,
             stress_marks: overlay::OverlaySlot::default(),
@@ -760,15 +768,16 @@ impl Renderer {
         Ok(self.pipelines.plate_buffers.insert(buffers).clone())
     }
 
-    /// Refresh the slice-view cap texture. `key` identifies the layer being
-    /// capped; `None` clears the cap. When `key` matches the current cap (shown
-    /// or refused) nothing happens, so a camera orbit (same layer) skips the
-    /// rasterise. Otherwise `build` produces the coverage raster, which is
-    /// uploaded as an R8 texture; a `build` yielding `None` clears the cap.
+    /// Refresh the slice-view cap. `key` identifies the layer being capped;
+    /// `None` clears the cap. When `key` matches the current cap (shown or
+    /// refused) nothing happens, so a camera orbit (same layer) skips the
+    /// triangulation. Otherwise `build` produces the cap's triangles, which
+    /// are uploaded as a vertex buffer; a `build` yielding `None` clears the
+    /// cap.
     pub(crate) fn update_cap(
         &mut self,
         key: Option<u64>,
-        build: &mut dyn FnMut() -> Option<CapRaster>,
+        build: &mut dyn FnMut() -> Option<CapShape>,
     ) -> Result<(), RenderError> {
         let Some(key) = key else {
             self.pipelines.cap_state = CapState::Off;
@@ -780,13 +789,17 @@ impl Renderer {
         if self.core.device_loss.is_lost() {
             return Err(RenderError::DeviceLost);
         }
-        let Some(raster) = build() else {
+        let Some(shape) = build() else {
             self.pipelines.cap_state = CapState::Off;
             return Ok(());
         };
-        match self.upload_cap_texture(&raster) {
-            Ok(bind_group) => {
-                self.pipelines.cap_state = CapState::Shown { key, bind_group };
+        match self.upload_cap_vertices(&shape) {
+            Ok(vertices) => {
+                self.pipelines.cap_state = CapState::Shown {
+                    key,
+                    vertices,
+                    count: shape.len() as u32,
+                };
                 Ok(())
             }
             Err(err) => {
@@ -904,21 +917,23 @@ impl Renderer {
         }
     }
 
-    /// Upload a coverage raster as an RG8 texture (coverage, highlight) and
-    /// build the cap's group-1 bind group.
-    fn upload_cap_texture(&self, raster: &CapRaster) -> Result<wgpu::BindGroup, RenderError> {
-        let bytes = raster.texture_bytes();
+    /// Upload the cap's triangles as a vertex buffer; an empty layer needs
+    /// none.
+    fn upload_cap_vertices(&self, shape: &CapShape) -> Result<Option<wgpu::Buffer>, RenderError> {
+        if shape.is_empty() {
+            return Ok(None);
+        }
         scoped(&self.core.device, || {
-            self.coverage_bind_group(
-                "cap",
-                wgpu::TextureFormat::Rg8Unorm,
-                &bytes,
-                raster.width,
-                raster.height,
-                &self.pipelines.cap.texture_bind_group_layout,
-                &self.pipelines.cap.sampler,
+            wgpu::util::DeviceExt::create_buffer_init(
+                &self.core.device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("mesh-viewer cap vbo"),
+                    contents: bytemuck::cast_slice(&shape.vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                },
             )
         })
+        .map(Some)
         .map_err(|source| RenderError::DeviceRefused {
             what: RenderAllocation::CapTexture,
             source,
@@ -1118,6 +1133,16 @@ impl Renderer {
     /// The scene's plates for the frames to come (#545).
     pub fn set_plates(&mut self, plates: crate::plates::Plates) {
         self.plates = plates;
+    }
+
+    /// The dead zones of the printer's screen (#783), each its front left
+    /// and back right corners, mm from its plate's middle: what stands over
+    /// one is painted like what is off the plate. Past
+    /// [`frame::MAX_DEAD_ZONES`] they are not painted.
+    pub fn set_dead_zones(&mut self, zones: &[[f32; 4]]) {
+        if self.dead_zones.as_slice() != zones {
+            self.dead_zones = zones.to_vec();
+        }
     }
 
     /// Whether what is not in focus dims even when nothing is (#545): with
@@ -1571,6 +1596,14 @@ impl Renderer {
                 (Some(bands), true) => bands.packed(),
                 _ => [[0.0; 4]; STRESS_BANDS / 4],
             },
+            dead_zone_count: [self.dead_zones.len().min(frame::MAX_DEAD_ZONES) as f32, 0.0, 0.0, 0.0],
+            dead_zones: {
+                let mut zones = [[0.0; 4]; frame::MAX_DEAD_ZONES];
+                for (slot, zone) in zones.iter_mut().zip(&self.dead_zones) {
+                    *slot = *zone;
+                }
+                zones
+            },
         };
         self.core.queue.write_buffer(
             &self.pipelines.mesh.uniform_buffer,
@@ -1703,6 +1736,11 @@ impl Renderer {
                 }
             }
             if contents == FrameContents::Workspace {
+                self.floor_marks.record(
+                    &mut pass,
+                    &self.pipelines.mesh.hint_pipeline,
+                    &self.pipelines.mesh.uniforms_bind_group,
+                );
                 self.hints.record(
                     &mut pass,
                     &self.pipelines.mesh.hint_pipeline,
@@ -1781,20 +1819,24 @@ impl Renderer {
         );
     }
 
-    /// Slice-view cap: a flat quad at the clip height textured with the current
-    /// layer's coverage, filling the mesh cut so it reads solid. Drawn only
-    /// when a cap texture is set (Slice section with a held slice). The clip
-    /// height and build corners come from the shared uniform buffer, so no
-    /// per-cap vertex data is bound.
+    /// Slice-view cap: the current layer's polygons, flat at the clip height,
+    /// filling the mesh cut so it reads solid (#776). Drawn only when a cap is
+    /// set (Slice section with a held slice). The clip height comes from the
+    /// shared uniform buffer.
     fn record_cap(&self, pass: &mut wgpu::RenderPass<'_>) {
-        let CapState::Shown { bind_group, .. } = &self.pipelines.cap_state else {
+        let CapState::Shown {
+            vertices: Some(vertices),
+            count,
+            ..
+        } = &self.pipelines.cap_state
+        else {
             return;
         };
         pass.set_pipeline(&self.pipelines.cap.pipeline);
         pass.set_bind_group(0, &self.pipelines.cap.uniforms_bind_group, &[]);
-        pass.set_bind_group(1, bind_group, &[]);
+        pass.set_vertex_buffer(0, vertices.slice(..));
         pass.set_stencil_reference(0);
-        pass.draw(0..6, self.cap_plate..self.cap_plate + 1);
+        pass.draw(0..*count, self.cap_plate..self.cap_plate + 1);
     }
 
     /// The plate the held slice was cut for, whose cut the slice view shows

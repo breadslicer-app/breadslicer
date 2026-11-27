@@ -840,6 +840,7 @@ fn the_scene_settings_chip_reads_whole_in_spanish() {
 const DIALOG_SLINT: &[(&str, &str)] = &[
     ("message-layer.slint", MESSAGE_LAYER),
     ("setup-layer.slint", include_str!("../ui/setup-layer.slint")),
+    ("dead-pixels-layer.slint", include_str!("../ui/dead-pixels-layer.slint")),
     (
         "calibration-layer.slint",
         include_str!("../ui/calibration-layer.slint"),
@@ -926,6 +927,7 @@ const DIALOG_SOURCES: &[(&str, &str)] = &[
     ("app_state.rs", include_str!("app_state.rs")),
     ("reload_from_disk.rs", include_str!("reload_from_disk.rs")),
     ("dead_zones.rs", include_str!("dead_zones.rs")),
+    ("dead_pixels.rs", include_str!("dead_pixels.rs")),
     ("plate_sheet/mod.rs", include_str!("plate_sheet/mod.rs")),
     ("update_check.rs", include_str!("update_check.rs")),
     ("repair_on_import.rs", include_str!("repair_on_import.rs")),
