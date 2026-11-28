@@ -258,17 +258,42 @@ impl Pipelines {
     /// Builds every pipeline of the viewport against `device`.
     fn create(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Self, RendererInitError> {
         let at = |stage: RendererStage| move |source| RendererInitError { stage, source };
-        let mesh = MeshPipeline::create(device, queue).map_err(at(RendererStage::Mesh))?;
-        let outline = OutlinePipeline::create(device).map_err(at(RendererStage::Outline))?;
-        let gizmo_buffers =
-            GizmoBuffers::create(device, queue).map_err(at(RendererStage::GizmoBuffers))?;
-        let gizmo =
-            GizmoPipeline::create(device, &gizmo_buffers).map_err(at(RendererStage::Gizmo))?;
-        let plate = PlatePipeline::create(device, &mesh).map_err(at(RendererStage::Plate))?;
-        let cap = CapPipeline::create(device, &mesh).map_err(at(RendererStage::Cap))?;
-        let label = LabelPipeline::create(device, &mesh).map_err(at(RendererStage::Label))?;
-        let surface_paint =
-            SurfacePaintPipeline::create(device, &mesh).map_err(at(RendererStage::SurfacePaint))?;
+        // Their shaders compile on several threads at once: with FXC on DX12
+        // each stage takes tens of milliseconds (#359). All but the paint
+        // pipeline need nothing from the mesh pipeline but the uniforms
+        // buffer, made first, so they build beside it.
+        let uniform_buffer = MeshPipeline::uniform_buffer(device);
+        let (mesh, outline, gizmo, plate, cap, label) = std::thread::scope(|scope| {
+            let uniforms = &uniform_buffer;
+            let outline = beside(scope, || OutlinePipeline::create(device));
+            let gizmo = beside(scope, || {
+                let buffers =
+                    GizmoBuffers::create(device, queue).map_err(at(RendererStage::GizmoBuffers))?;
+                let pipeline =
+                    GizmoPipeline::create(device, &buffers).map_err(at(RendererStage::Gizmo))?;
+                Ok::<_, RendererInitError>((buffers, pipeline))
+            });
+            let plate = beside(scope, move || PlatePipeline::create(device, uniforms));
+            let cap = beside(scope, move || CapPipeline::create(device, uniforms));
+            let label = beside(scope, move || LabelPipeline::create(device, uniforms));
+            let mesh = MeshPipeline::create_with(device, queue, uniforms.clone());
+            (
+                mesh,
+                outline.finish(),
+                gizmo.finish(),
+                plate.finish(),
+                cap.finish(),
+                label.finish(),
+            )
+        });
+        let mesh = mesh.map_err(at(RendererStage::Mesh))?;
+        let outline = outline.map_err(at(RendererStage::Outline))?;
+        let (gizmo_buffers, gizmo) = gizmo?;
+        let plate = plate.map_err(at(RendererStage::Plate))?;
+        let cap = cap.map_err(at(RendererStage::Cap))?;
+        let label = label.map_err(at(RendererStage::Label))?;
+        let surface_paint = SurfacePaintPipeline::create(device, &mesh);
+        let surface_paint = surface_paint.map_err(at(RendererStage::SurfacePaint))?;
         Ok(Self {
             mesh,
             outline,
@@ -283,6 +308,40 @@ impl Pipelines {
             surface_paint,
             plate_buffers: None,
         })
+    }
+}
+
+/// Work started on its own thread by [`beside`], or already done here when
+/// no thread could start.
+enum Beside<'scope, T> {
+    Running(std::thread::ScopedJoinHandle<'scope, T>),
+    Done(T),
+}
+
+impl<T> Beside<'_, T> {
+    /// What the work made, waiting for it if it is still running.
+    fn finish(self) -> T {
+        match self {
+            Self::Running(handle) => handle
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
+            Self::Done(value) => value,
+        }
+    }
+}
+
+/// Starts `work` on its own thread in `scope`, or does it here when no thread
+/// can start.
+fn beside<'scope, T: Send + 'scope>(
+    scope: &'scope std::thread::Scope<'scope, '_>,
+    work: impl FnOnce() -> T + Send + Clone + 'scope,
+) -> Beside<'scope, T> {
+    match std::thread::Builder::new()
+        .name("viewport-pipelines".into())
+        .spawn_scoped(scope, work.clone())
+    {
+        Ok(handle) => Beside::Running(handle),
+        Err(_) => Beside::Done(work()),
     }
 }
 
@@ -1596,7 +1655,12 @@ impl Renderer {
                 (Some(bands), true) => bands.packed(),
                 _ => [[0.0; 4]; STRESS_BANDS / 4],
             },
-            dead_zone_count: [self.dead_zones.len().min(frame::MAX_DEAD_ZONES) as f32, 0.0, 0.0, 0.0],
+            dead_zone_count: [
+                self.dead_zones.len().min(frame::MAX_DEAD_ZONES) as f32,
+                0.0,
+                0.0,
+                0.0,
+            ],
             dead_zones: {
                 let mut zones = [[0.0; 4]; frame::MAX_DEAD_ZONES];
                 for (slot, zone) in zones.iter_mut().zip(&self.dead_zones) {

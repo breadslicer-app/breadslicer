@@ -35,12 +35,11 @@ use bytemuck::{Pod, Zeroable};
 use glam::Vec2;
 use slint::wgpu_30::wgpu;
 
-use super::super::device_ops::{scoped, upload_static_buffer};
+use super::super::device_ops::{scoped, scoped_in_parallel, upload_static_buffer};
 use super::super::error::{RenderAllocation, RenderError};
 use super::super::frame::Uniforms;
 use super::super::{DEPTH_FORMAT, SAMPLE_COUNT, TEXTURE_FORMAT};
 use super::label::{LabelVertex, label_quad, underside_label_quad};
-use super::mesh::MeshPipeline;
 use crate::build_volume::BuildVolume;
 
 const PLATE_SHADER_SOURCE: &str = include_str!("../shaders/plate.wgsl");
@@ -230,12 +229,15 @@ pub(in crate::mesh_render) struct PlatePipeline {
 impl PlatePipeline {
     pub(in crate::mesh_render) fn create(
         device: &wgpu::Device,
-        mesh: &MeshPipeline,
+        uniform_buffer: &wgpu::Buffer,
     ) -> Result<Self, wgpu::Error> {
-        scoped(device, || Self::create_unscoped(device, mesh))
+        scoped(device, || Self::create_unscoped(device, uniform_buffer)).and_then(|built| built)
     }
 
-    fn create_unscoped(device: &wgpu::Device, mesh: &MeshPipeline) -> Self {
+    fn create_unscoped(
+        device: &wgpu::Device,
+        uniform_buffer: &wgpu::Buffer,
+    ) -> Result<Self, wgpu::Error> {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh-viewer plate shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(PLATE_SHADER_SOURCE)),
@@ -334,25 +336,31 @@ impl PlatePipeline {
             })
         };
 
-        let top_pipeline = make_pipeline(
-            "mesh-viewer plate top pipeline",
-            wgpu::PrimitiveTopology::TriangleList,
-            // Top face does not write depth: a model resting at
-            // Z = 0 always wins z-fighting against the plate.
-            false,
-        );
-        let solid_pipeline = make_pipeline(
-            "mesh-viewer plate solid pipeline",
-            wgpu::PrimitiveTopology::TriangleList,
-            // Sides + bottom write depth so they occlude content
-            // behind them when the camera orbits low.
-            true,
-        );
-        let line_pipeline = make_pipeline(
-            "mesh-viewer plate cage pipeline",
-            wgpu::PrimitiveTopology::LineList,
-            true,
-        );
+        let top_pipeline = || {
+            make_pipeline(
+                "mesh-viewer plate top pipeline",
+                wgpu::PrimitiveTopology::TriangleList,
+                // Top face does not write depth: a model resting at
+                // Z = 0 always wins z-fighting against the plate.
+                false,
+            )
+        };
+        let solid_pipeline = || {
+            make_pipeline(
+                "mesh-viewer plate solid pipeline",
+                wgpu::PrimitiveTopology::TriangleList,
+                // Sides + bottom write depth so they occlude content
+                // behind them when the camera orbits low.
+                true,
+            )
+        };
+        let line_pipeline = || {
+            make_pipeline(
+                "mesh-viewer plate cage pipeline",
+                wgpu::PrimitiveTopology::LineList,
+                true,
+            )
+        };
 
         // Bottom face has its own descriptor: alpha blending, no
         // depth write, and back-face culling. The bottom-fan winding
@@ -360,70 +368,83 @@ impl PlatePipeline {
         // below the plate and CW (back-facing) from above. With
         // `cull_mode = Back`, the GPU draws it only from below; from
         // above it's culled and the top face stays opaque.
-        let bottom_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("mesh-viewer plate bottom pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: size_of::<PlateVertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Uint32],
-                })],
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::Less),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: SAMPLE_COUNT,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: TEXTURE_FORMAT,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        let bottom_pipeline = || {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("mesh-viewer plate bottom pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: size_of::<PlateVertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Uint32],
+                    })],
+                },
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: Some(wgpu::Face::Back),
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: SAMPLE_COUNT,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: TEXTURE_FORMAT,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+
+        // Side by side, as the mesh pipelines are.
+        let [top_pipeline, solid_pipeline, line_pipeline, bottom_pipeline] = scoped_in_parallel(
+            device,
+            [
+                &top_pipeline,
+                &solid_pipeline,
+                &line_pipeline,
+                &bottom_pipeline,
+            ],
+        )?;
 
         let uniforms_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("mesh-viewer plate uniforms bg"),
             layout: &uniforms_bgl,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: mesh.uniform_buffer.as_entire_binding(),
+                resource: uniform_buffer.as_entire_binding(),
             }],
         });
 
-        Self {
+        Ok(Self {
             top_pipeline,
             solid_pipeline,
             bottom_pipeline,
             line_pipeline,
             uniforms_bind_group,
-        }
+        })
     }
 }
 

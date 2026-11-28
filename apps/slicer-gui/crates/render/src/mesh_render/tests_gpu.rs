@@ -2954,3 +2954,37 @@ fn the_bread_thumbnail_shows_the_model() {
         "the model should be in its thumbnail",
     );
 }
+
+/// How long the viewport's pipelines take to build on a fresh DX12 device,
+/// the backend Windows ships; startup waits for them (#359). Run by hand.
+#[cfg(windows)]
+#[test]
+#[ignore = "timing, run by hand"]
+fn pipeline_build_time_on_dx12() {
+    use std::time::Instant;
+    for round in 0..3 {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::DX12,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
+        let Ok(adapter) =
+            pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+        else {
+            eprintln!("skipping: no DX12 wgpu adapter available in this environment");
+            return;
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("pipeline timing device"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            memory_hints: wgpu::MemoryHints::default(),
+            experimental_features: wgpu::ExperimentalFeatures::default(),
+            trace: wgpu::Trace::Off,
+        }))
+        .unwrap();
+        let t = Instant::now();
+        let built = Pipelines::create(&device, &queue);
+        eprintln!("round {round}: every pipeline {:?}", t.elapsed());
+        assert!(built.is_ok());
+    }
+}

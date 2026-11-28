@@ -13,7 +13,7 @@ use std::num::NonZeroU64;
 
 use slint::wgpu_30::wgpu;
 
-use super::super::device_ops::scoped;
+use super::super::device_ops::{scoped, scoped_in_parallel};
 use super::super::frame::Uniforms;
 use super::super::scene_upload::{GpuVertex, MODEL_ENTRY_SIZE};
 use super::super::support_lines::DASH_STRIDE;
@@ -95,14 +95,42 @@ pub(in crate::mesh_render) struct MeshPipeline {
 }
 
 impl MeshPipeline {
+    #[cfg(test)]
     pub(in crate::mesh_render) fn create(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> Result<Self, wgpu::Error> {
-        scoped(device, || Self::create_unscoped(device, queue))
+        Self::create_with(device, queue, Self::uniform_buffer(device))
     }
 
-    fn create_unscoped(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+    /// The buffer of the uniforms every viewport pass reads, for
+    /// [`MeshPipeline::create_with`] and the passes built beside it.
+    pub(in crate::mesh_render) fn uniform_buffer(device: &wgpu::Device) -> wgpu::Buffer {
+        device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("mesh-viewer uniforms"),
+            size: size_of::<Uniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
+    }
+
+    /// Like [`MeshPipeline::create`], with the uniforms in `uniform_buffer`.
+    pub(in crate::mesh_render) fn create_with(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        uniform_buffer: wgpu::Buffer,
+    ) -> Result<Self, wgpu::Error> {
+        scoped(device, || {
+            Self::create_unscoped(device, queue, uniform_buffer)
+        })
+        .and_then(|built| built)
+    }
+
+    fn create_unscoped(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        uniform_buffer: wgpu::Buffer,
+    ) -> Result<Self, wgpu::Error> {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh-viewer shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(MESH_SHADER_SOURCE)),
@@ -244,87 +272,97 @@ impl MeshPipeline {
                 cache: None,
             })
         };
-        let pipeline = solid_pipeline(
-            "mesh-viewer pipeline",
-            wgpu::Face::Back,
-            "vs_main",
-            &plain_buffers,
-            "fs_main",
-        );
-        let map_pipeline = solid_pipeline(
-            "mesh-viewer overhang map pipeline",
-            wgpu::Face::Back,
-            "vs_mapped",
-            &mapped_buffers,
-            "fs_main",
-        );
-        let cap_pipeline = solid_pipeline(
-            "mesh-viewer support cap pipeline",
-            wgpu::Face::Front,
-            "vs_main",
-            &plain_buffers,
-            "fs_cap",
-        );
-        let layer_cut_pipeline = solid_pipeline(
-            "mesh-viewer layer cut pipeline",
-            wgpu::Face::Front,
-            "vs_main",
-            &plain_buffers,
-            "fs_layer_cut",
-        );
+        let pipeline = || {
+            solid_pipeline(
+                "mesh-viewer pipeline",
+                wgpu::Face::Back,
+                "vs_main",
+                &plain_buffers,
+                "fs_main",
+            )
+        };
+        let map_pipeline = || {
+            solid_pipeline(
+                "mesh-viewer overhang map pipeline",
+                wgpu::Face::Back,
+                "vs_mapped",
+                &mapped_buffers,
+                "fs_main",
+            )
+        };
+        let cap_pipeline = || {
+            solid_pipeline(
+                "mesh-viewer support cap pipeline",
+                wgpu::Face::Front,
+                "vs_main",
+                &plain_buffers,
+                "fs_cap",
+            )
+        };
+        let layer_cut_pipeline = || {
+            solid_pipeline(
+                "mesh-viewer layer cut pipeline",
+                wgpu::Face::Front,
+                "vs_main",
+                &plain_buffers,
+                "fs_layer_cut",
+            )
+        };
 
-        let overlay_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("mesh-viewer overlay pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: size_of::<GpuVertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
-                })],
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None,
-                polygon_mode: wgpu::PolygonMode::Fill,
-                unclipped_depth: false,
-                conservative: false,
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::Always),
-                stencil: wgpu::StencilState {
-                    front: wgpu::StencilFaceState::IGNORE,
-                    back: wgpu::StencilFaceState::IGNORE,
-                    read_mask: 0,
-                    write_mask: 0,
+        let overlay_pipeline = || {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("mesh-viewer overlay pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: size_of::<GpuVertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
+                    })],
                 },
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: SAMPLE_COUNT,
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_overlay"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: TEXTURE_FORMAT,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    strip_index_format: None,
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: None,
+                    polygon_mode: wgpu::PolygonMode::Fill,
+                    unclipped_depth: false,
+                    conservative: false,
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::Always),
+                    stencil: wgpu::StencilState {
+                        front: wgpu::StencilFaceState::IGNORE,
+                        back: wgpu::StencilFaceState::IGNORE,
+                        read_mask: 0,
+                        write_mask: 0,
+                    },
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: SAMPLE_COUNT,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false,
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_overlay"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: TEXTURE_FORMAT,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
 
         let depth_tested = wgpu::DepthStencilState {
             format: DEPTH_FORMAT,
@@ -369,93 +407,101 @@ impl MeshPipeline {
             bind_group_layouts: &[Some(&uniforms_bind_group_layout)],
             immediate_size: 0,
         });
-        let line_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("mesh-viewer support line pipeline"),
-            layout: Some(&lines_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_support_line"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: DASH_STRIDE,
-                    step_mode: wgpu::VertexStepMode::Instance,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
-                })],
-            },
-            primitive: open,
-            depth_stencil: Some(depth_tested.clone()),
-            multisample,
-            fragment: Some(blended("fs_support_line")),
-            multiview_mask: None,
-            cache: None,
-        });
-        let ball_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("mesh-viewer support ball pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: size_of::<GpuVertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
-                })],
-            },
-            primitive: open,
-            depth_stencil: Some(depth_tested.clone()),
-            multisample,
-            fragment: Some(blended("fs_support_ball")),
-            multiview_mask: None,
-            cache: None,
-        });
+        let line_pipeline = || {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("mesh-viewer support line pipeline"),
+                layout: Some(&lines_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_support_line"),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: DASH_STRIDE,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
+                    })],
+                },
+                primitive: open,
+                depth_stencil: Some(depth_tested.clone()),
+                multisample,
+                fragment: Some(blended("fs_support_line")),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let ball_pipeline = || {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("mesh-viewer support ball pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: size_of::<GpuVertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
+                    })],
+                },
+                primitive: open,
+                depth_stencil: Some(depth_tested.clone()),
+                multisample,
+                fragment: Some(blended("fs_support_ball")),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
 
-        let hint_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("mesh-viewer hint mark pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: size_of::<GpuVertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
-                })],
-            },
-            primitive: open,
-            depth_stencil: Some(depth_tested.clone()),
-            multisample,
-            fragment: Some(blended("fs_overlay")),
-            multiview_mask: None,
-            cache: None,
-        });
+        let hint_pipeline = || {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("mesh-viewer hint mark pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: size_of::<GpuVertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
+                    })],
+                },
+                primitive: open,
+                depth_stencil: Some(depth_tested.clone()),
+                multisample,
+                fragment: Some(blended("fs_overlay")),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
 
-        let island_mark_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("mesh-viewer island mark pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: size_of::<GpuVertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
-                })],
-            },
-            primitive: open,
-            depth_stencil: Some(wgpu::DepthStencilState {
-                depth_compare: Some(wgpu::CompareFunction::Always),
-                ..depth_tested.clone()
-            }),
-            multisample,
-            fragment: Some(blended("fs_overlay")),
-            multiview_mask: None,
-            cache: None,
-        });
+        let island_mark_pipeline = || {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("mesh-viewer island mark pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: size_of::<GpuVertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
+                    })],
+                },
+                primitive: open,
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    depth_compare: Some(wgpu::CompareFunction::Always),
+                    ..depth_tested.clone()
+                }),
+                multisample,
+                fragment: Some(blended("fs_overlay")),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
 
-        let island_hidden_pipeline =
+        let island_hidden_pipeline = || {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("mesh-viewer island paint hidden pipeline"),
                 layout: Some(&pipeline_layout),
@@ -478,7 +524,8 @@ impl MeshPipeline {
                 fragment: Some(blended("fs_overlay")),
                 multiview_mask: None,
                 cache: None,
-            });
+            })
+        };
 
         let fade_depth = |label: &'static str, marking: bool| {
             let face = if marking {
@@ -536,32 +583,34 @@ impl MeshPipeline {
                 cache: None,
             })
         };
-        let fade_depth_pipeline = fade_depth("mesh-viewer support fade depth pipeline", false);
+        let fade_depth_pipeline = || fade_depth("mesh-viewer support fade depth pipeline", false);
         let fade_depth_marking_pipeline =
-            fade_depth("mesh-viewer support fade depth marking pipeline", true);
-        let fade_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("mesh-viewer support fade pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: size_of::<GpuVertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
-                })],
-            },
-            primitive: wgpu::PrimitiveState {
-                cull_mode: Some(wgpu::Face::Back),
-                ..open
-            },
-            depth_stencil: Some(depth_tested),
-            multisample,
-            fragment: Some(blended("fs_support_fade")),
-            multiview_mask: None,
-            cache: None,
-        });
+            || fade_depth("mesh-viewer support fade depth marking pipeline", true);
+        let fade_pipeline = || {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("mesh-viewer support fade pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: size_of::<GpuVertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
+                    })],
+                },
+                primitive: wgpu::PrimitiveState {
+                    cull_mode: Some(wgpu::Face::Back),
+                    ..open
+                },
+                depth_stencil: Some(depth_tested.clone()),
+                multisample,
+                fragment: Some(blended("fs_support_fade")),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
 
         let mark_face = wgpu::StencilFaceState {
             compare: wgpu::CompareFunction::Always,
@@ -569,53 +618,86 @@ impl MeshPipeline {
             depth_fail_op: wgpu::StencilOperation::Keep,
             pass_op: wgpu::StencilOperation::Replace,
         };
-        let mark_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("mesh-viewer selection mark pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: size_of::<GpuVertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
-                })],
-            },
-            primitive: open,
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::Always),
-                stencil: wgpu::StencilState {
-                    front: mark_face,
-                    back: mark_face,
-                    read_mask: 0xFF,
-                    write_mask: 0xFF,
+        let mark_pipeline = || {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("mesh-viewer selection mark pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: size_of::<GpuVertex>() as u64,
+                        step_mode: wgpu::VertexStepMode::Vertex,
+                        attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
+                    })],
                 },
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample,
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_mark"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: TEXTURE_FORMAT,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::empty(),
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+                primitive: open,
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(false),
+                    depth_compare: Some(wgpu::CompareFunction::Always),
+                    stencil: wgpu::StencilState {
+                        front: mark_face,
+                        back: mark_face,
+                        read_mask: 0xFF,
+                        write_mask: 0xFF,
+                    },
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample,
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_mark"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: TEXTURE_FORMAT,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::empty(),
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
 
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("mesh-viewer uniforms"),
-            size: size_of::<Uniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        // Each pipeline compiles its own shader stages (with FXC on DX12, tens
+        // of milliseconds each): built side by side, they cost about as long
+        // as the slowest one rather than all of them in a row.
+        let [
+            pipeline,
+            map_pipeline,
+            cap_pipeline,
+            layer_cut_pipeline,
+            overlay_pipeline,
+            line_pipeline,
+            ball_pipeline,
+            hint_pipeline,
+            island_mark_pipeline,
+            island_hidden_pipeline,
+            fade_depth_pipeline,
+            fade_depth_marking_pipeline,
+            fade_pipeline,
+            mark_pipeline,
+        ] = scoped_in_parallel(
+            device,
+            [
+                &pipeline,
+                &map_pipeline,
+                &cap_pipeline,
+                &layer_cut_pipeline,
+                &overlay_pipeline,
+                &line_pipeline,
+                &ball_pipeline,
+                &hint_pipeline,
+                &island_mark_pipeline,
+                &island_hidden_pipeline,
+                &fade_depth_pipeline,
+                &fade_depth_marking_pipeline,
+                &fade_pipeline,
+                &mark_pipeline,
+            ],
+        )?;
 
         let uniforms_bind_group = uniforms_bind_group(
             device,
@@ -624,7 +706,7 @@ impl MeshPipeline {
             &CoverageTextures::create(device, queue, None),
         );
 
-        Self {
+        Ok(Self {
             pipeline,
             map_pipeline,
             cap_pipeline,
@@ -643,7 +725,7 @@ impl MeshPipeline {
             uniforms_bind_group,
             uniforms_bind_group_layout,
             models_bind_group_layout,
-        }
+        })
     }
 
     /// Binds the support tips of `grid` for the overhang map to read (#484);

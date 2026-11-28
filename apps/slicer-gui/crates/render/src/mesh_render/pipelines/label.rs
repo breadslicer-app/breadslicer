@@ -25,7 +25,6 @@ use slint::wgpu_30::wgpu;
 use super::super::device_ops::scoped;
 use super::super::frame::Uniforms;
 use super::super::{DEPTH_FORMAT, SAMPLE_COUNT, TEXTURE_FORMAT};
-use super::mesh::MeshPipeline;
 
 const LABEL_SHADER_SOURCE: &str = include_str!("../shaders/label.wgsl");
 
@@ -129,12 +128,12 @@ pub(in crate::mesh_render) struct LabelPipeline {
 impl LabelPipeline {
     pub(in crate::mesh_render) fn create(
         device: &wgpu::Device,
-        mesh: &MeshPipeline,
+        uniform_buffer: &wgpu::Buffer,
     ) -> Result<Self, wgpu::Error> {
-        scoped(device, || Self::create_unscoped(device, mesh))
+        scoped(device, || Self::create_unscoped(device, uniform_buffer))
     }
 
-    fn create_unscoped(device: &wgpu::Device, mesh: &MeshPipeline) -> Self {
+    fn create_unscoped(device: &wgpu::Device, uniform_buffer: &wgpu::Buffer) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh-viewer label shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(LABEL_SHADER_SOURCE)),
@@ -244,7 +243,7 @@ impl LabelPipeline {
             layout: &uniforms_bgl,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: mesh.uniform_buffer.as_entire_binding(),
+                resource: uniform_buffer.as_entire_binding(),
             }],
         });
 

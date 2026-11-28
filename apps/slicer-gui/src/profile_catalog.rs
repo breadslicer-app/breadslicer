@@ -18,6 +18,7 @@
 //! a profile, builds a new catalog, so callers hold it behind a refreshable
 //! handle.
 
+use rayon::prelude::*;
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -287,12 +288,22 @@ fn load_printers(roots: &[(PathBuf, ProfileSource)]) -> Vec<PrinterCatalogEntry>
                 continue;
             }
         };
-        for id in ids {
-            if !seen.insert(id.clone()) {
-                continue;
-            }
-            match load_printer_profile_from_library(root, &id) {
-                Ok(profile) => entries.push(printer_entry(root, *source, profile)),
+        // The first root that lists an id owns it, so which ids this root
+        // reads is settled in order; the files themselves read side by side.
+        let owned: Vec<PrinterId> = ids
+            .into_iter()
+            .filter(|id| seen.insert(id.clone()))
+            .collect();
+        let read: Vec<_> = owned
+            .par_iter()
+            .map(|id| {
+                load_printer_profile_from_library(root, id)
+                    .map(|profile| printer_entry(root, *source, profile))
+            })
+            .collect();
+        for entry in read {
+            match entry {
+                Ok(entry) => entries.push(entry),
                 Err(err) => eprintln!("warning: {err}"),
             }
         }
@@ -325,12 +336,21 @@ fn load_materials(roots: &[(PathBuf, ProfileSource)]) -> Vec<MaterialCatalogEntr
                 continue;
             }
         };
-        for id in ids {
-            if !seen.insert(id.clone()) {
-                continue;
-            }
-            match load_material_profile_from_library(root, &id) {
-                Ok(profile) => entries.push(material_entry(*source, profile)),
+        // As in `load_printers`: ownership in order, the reading side by side.
+        let owned: Vec<MaterialId> = ids
+            .into_iter()
+            .filter(|id| seen.insert(id.clone()))
+            .collect();
+        let read: Vec<_> = owned
+            .par_iter()
+            .map(|id| {
+                load_material_profile_from_library(root, id)
+                    .map(|profile| material_entry(*source, profile))
+            })
+            .collect();
+        for entry in read {
+            match entry {
+                Ok(entry) => entries.push(entry),
                 Err(err) => eprintln!("warning: {err}"),
             }
         }
@@ -432,11 +452,7 @@ fn printer_entry(
 /// `images/<id>.png` when the library ships one, so a photo is added
 /// to the library by copying the file in, without touching the
 /// profiles the converter generates.
-fn photo_named_for(
-    root: &Path,
-    source: ProfileSource,
-    id: &PrinterId,
-) -> Option<PathBuf> {
+fn photo_named_for(root: &Path, source: ProfileSource, id: &PrinterId) -> Option<PathBuf> {
     if source != ProfileSource::Bundled {
         return None;
     }
@@ -455,5 +471,26 @@ fn material_entry(source: ProfileSource, profile: MaterialProfile) -> MaterialCa
         family: identity.family.as_str().to_owned(),
         calibrated_printers,
         source,
+    }
+}
+
+#[cfg(test)]
+mod load_time {
+    /// How long the bundled and user libraries take to read; startup waits
+    /// for it when the graphics device is quicker (#359). Run by hand.
+    #[test]
+    #[ignore = "timing, run by hand"]
+    fn the_catalog_load_time() {
+        let libraries = sc_print_profiles::ProfileLibraries::platform_default();
+        for round in 0..3 {
+            let t = std::time::Instant::now();
+            let catalog = super::ProfileCatalog::from_libraries(&libraries);
+            eprintln!(
+                "round {round}: {} printers, {} materials in {:?}",
+                catalog.printers.len(),
+                catalog.materials.len(),
+                t.elapsed()
+            );
+        }
     }
 }

@@ -6,7 +6,8 @@
 //! The viewport's pipelines, built on a worker thread ahead of the first
 //! window (#359).
 //!
-//! Compiling the shaders takes about 100 ms. The first window only asks for
+//! Compiling the shaders takes about 200 ms on DX12, with the pipelines built
+//! side by side (one after another it was about 600 ms). The first window only asks for
 //! its renderer once its surface exists, near the end of the launch, so
 //! [`prepare_pipelines`] starts on them as soon as the shared device does, and
 //! the first [`Renderer::new`](super::Renderer::new) on that device takes them.
