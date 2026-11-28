@@ -136,13 +136,23 @@ fn install_rendering_notifier(
     ui: &MainWindow,
     ctrl: Rc<ViewportController>,
 ) -> Result<(), slint::SetRenderingNotifierError> {
+    // Counts the window's setups and teardowns, so a renderer still waiting
+    // for its pipelines is dropped when the surface it was for is gone.
+    let setups = Rc::new(std::cell::Cell::new(0_u64));
+    let window = ui.as_weak();
     ui.window()
         .set_rendering_notifier(move |state, api| match state {
             slint::RenderingState::RenderingSetup => match api {
                 slint::GraphicsAPI::WGPU30 { device, queue, .. } => {
                     crate::startup_timing::mark("window surface");
-                    ctrl.handle_rendering_setup(device.clone(), queue.clone());
-                    crate::startup_timing::mark("viewport renderer");
+                    setups.set(setups.get() + 1);
+                    set_up_when_ready(
+                        Rc::downgrade(&ctrl),
+                        window.clone(),
+                        device.clone(),
+                        queue.clone(),
+                        setups.clone(),
+                    );
                 }
                 // Slint hands over whatever API the surface it built runs on,
                 // and the viewport is drawn with wgpu, so any other API leaves
@@ -158,10 +168,55 @@ fn install_rendering_notifier(
                 crate::startup_timing::frame_presented();
             }
             slint::RenderingState::RenderingTeardown => {
+                setups.set(setups.get() + 1);
                 ctrl.handle_rendering_teardown();
             }
             _ => {}
         })
+}
+
+/// How often a window whose viewport pipelines are still compiling looks
+/// again.
+const PIPELINES_POLL: std::time::Duration = std::time::Duration::from_millis(4);
+
+/// Builds the viewport's renderer on `device` once its pipelines are ready.
+/// Until then the window draws without its viewport, so the first frame does
+/// not wait for the shaders (#796); the viewport comes in on the frame after.
+/// Gives up if the window set up or tore down its surface again meanwhile.
+fn set_up_when_ready(
+    ctrl: std::rc::Weak<ViewportController>,
+    window: slint::Weak<MainWindow>,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    setups: Rc<std::cell::Cell<u64>>,
+) {
+    let this_setup = setups.get();
+    let attempt = move || {
+        if setups.get() != this_setup {
+            return true;
+        }
+        if !crate::mesh_render::pipelines_ready(&device) {
+            return false;
+        }
+        if let Some(ctrl) = ctrl.upgrade() {
+            ctrl.handle_rendering_setup(device.clone(), queue.clone());
+            crate::startup_timing::mark("viewport renderer");
+            crate::startup_timing::viewport_ready();
+        }
+        if let Some(window) = window.upgrade() {
+            window.window().request_redraw();
+        }
+        true
+    };
+    poll(attempt);
+}
+
+/// Runs `attempt` now and then every [`PIPELINES_POLL`] until it says done.
+fn poll(mut attempt: impl FnMut() -> bool + 'static) {
+    if attempt() {
+        return;
+    }
+    slint::Timer::single_shot(PIPELINES_POLL, move || poll(attempt));
 }
 
 fn wire_viewport_resized(ui: &MainWindow, ctrl: Rc<ViewportController>) {

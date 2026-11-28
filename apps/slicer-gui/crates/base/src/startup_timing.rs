@@ -39,6 +39,10 @@ struct Timeline {
 static TIMELINE: Mutex<Option<Timeline>> = Mutex::new(None);
 static FRAMES: AtomicU32 = AtomicU32::new(0);
 static REPORTED: AtomicBool = AtomicBool::new(false);
+/// Set once the first window's viewport can draw; the next frame presented
+/// is the first one with it (#796).
+static VIEWPORT_READY: AtomicBool = AtomicBool::new(false);
+static VIEWPORT_SHOWN: AtomicBool = AtomicBool::new(false);
 
 /// Work that waits for the window to take input; `None` once it has.
 type Waiting = Option<Vec<Box<dyn FnOnce()>>>;
@@ -102,10 +106,19 @@ pub fn frame_starting() {
     }
 }
 
+/// Called once a window's viewport renderer is built: the next frame
+/// presented is marked as the first with the viewport in it.
+pub fn viewport_ready() {
+    VIEWPORT_READY.store(true, Ordering::Relaxed);
+}
+
 /// Called after every frame a window presents; marks the first two. The
 /// first one schedules the interactive mark for the next turn of the event
 /// loop, the first one free to handle input.
 pub fn frame_presented() {
+    if VIEWPORT_READY.load(Ordering::Relaxed) && !VIEWPORT_SHOWN.swap(true, Ordering::Relaxed) {
+        mark("first frame with the viewport");
+    }
     match FRAMES.fetch_add(1, Ordering::Relaxed) {
         0 => {
             mark("first frame");

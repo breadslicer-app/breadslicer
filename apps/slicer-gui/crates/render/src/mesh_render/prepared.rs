@@ -45,6 +45,19 @@ pub fn prepare_pipelines(device: &wgpu::Device, queue: &wgpu::Queue) {
     }
 }
 
+/// Whether the first renderer on `device` can be built without waiting: true
+/// once the pipelines prepared for it are done, and when none were prepared
+/// for it (the renderer then builds its own, as before).
+pub fn pipelines_ready(device: &wgpu::Device) -> bool {
+    let Ok(prepared) = PREPARED.lock() else {
+        return true;
+    };
+    match prepared.as_ref() {
+        Some(prepared) if prepared.device == *device => prepared.worker.is_finished(),
+        _ => true,
+    }
+}
+
 /// The pipelines prepared for `device`, waiting for them if they are not
 /// ready yet. `None` when none were prepared for it, or the worker panicked:
 /// the caller builds them. Whatever was prepared is taken either way.

@@ -79,7 +79,7 @@ use pipelines::mesh::{MeshBindGroup, MeshPipeline};
 use pipelines::outline::{OutlineBindGroup, OutlinePipeline};
 use pipelines::plate::{FrontTab, PlateBindGroup, PlateBuffers, PlatePipeline};
 use pipelines::surface_paint::SurfacePaintPipeline;
-pub use prepared::prepare_pipelines;
+pub use prepared::{pipelines_ready, prepare_pipelines};
 pub use readback::FramePixels;
 use render_size::clamp_render_size;
 pub use renderer_trait::MeshRenderer;

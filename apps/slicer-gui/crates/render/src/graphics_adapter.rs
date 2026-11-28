@@ -1062,3 +1062,51 @@ mod describe_adapter_failures_tests {
         );
     }
 }
+
+/// Where the launch's time with the graphics device goes on DX12 (#359):
+/// listing the adapters, then opening the device on the one picked. Run by hand.
+#[cfg(all(test, windows))]
+mod launch_time {
+    use std::time::Instant;
+
+    use slint::wgpu_30::wgpu;
+
+    #[test]
+    #[ignore = "timing, run by hand"]
+    fn the_adapter_and_device_times() {
+        for round in 0..3 {
+            let t = Instant::now();
+            let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+                backends: wgpu::Backends::DX12,
+                ..wgpu::InstanceDescriptor::new_without_display_handle()
+            });
+            let made = t.elapsed();
+            let t = Instant::now();
+            let adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::DX12));
+            let listed = t.elapsed();
+            let names: Vec<String> = adapters
+                .iter()
+                .map(|adapter| {
+                    let info = adapter.get_info();
+                    format!("{} ({:?})", info.name, info.device_type)
+                })
+                .collect();
+            let t = Instant::now();
+            let picked =
+                pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    ..Default::default()
+                }))
+                .unwrap();
+            let requested = t.elapsed();
+            let t = Instant::now();
+            let _device =
+                pollster::block_on(picked.request_device(&wgpu::DeviceDescriptor::default()))
+                    .unwrap();
+            let opened = t.elapsed();
+            eprintln!(
+                "round {round}: instance {made:?}, list {listed:?} {names:?}, request one {requested:?}, device {opened:?}"
+            );
+        }
+    }
+}
